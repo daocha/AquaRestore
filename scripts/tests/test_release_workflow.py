@@ -155,7 +155,7 @@ class EnsureCoreTest(unittest.TestCase):
         seed = self.base / "seed"
         (seed / "android/main").mkdir(parents=True)
         (seed / "android/main/Grade.kt").write_text("// core\n")
-        self.git(self.base, "init", "-q", "--bare", str(remote))
+        self.git(self.base, "init", "-q", "--bare", "-b", "main", str(remote))
         self.git(seed, "init", "-q", "-b", "main")
         self.git(seed, "add", ".")
         self.git(seed, "commit", "-qm", "core")
