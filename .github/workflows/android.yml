@@ -1,0 +1,38 @@
+name: Android
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      # The tuned grading is a private submodule. Fork PRs get no secrets and build with the basic stub.
+      - name: Fetch the private grading core
+        if: env.HAS_CORE == 'true'
+        env:
+          CORE_DEPLOY_KEY: ${{ secrets.CORE_DEPLOY_KEY }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/core_key"
+          printf '%s\n' "$CORE_DEPLOY_KEY" > "$RUNNER_TEMP/core_key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/core_key -o IdentitiesOnly=yes" git submodule update --init --depth 1 core
+          rm "$RUNNER_TEMP/core_key"
+      - name: Use the basic stub core
+        if: env.HAS_CORE != 'true'
+        run: scripts/use-core-stub.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          # v3 defaults to "tools platform-tools"; the obsolete "tools" package makes newer sdkmanager fail.
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@v4
+      - run: python3 -m unittest discover -s scripts/tests -v
+      - run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        working-directory: android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AquaRestore-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk

@@ -1,0 +1,65 @@
+package com.aquarestore.app
+
+import kotlin.math.*
+
+data class ExportOptions(
+    val original: Boolean = true,
+    val longEdge: Int = 1920, // 0 = source dimensions
+    val fps: Int = 0, // 0 = original timestamps; other values cap, never invent frames
+    val quality: Int = 90,
+    val png: Boolean = false,
+    val speed: Float = 1f,
+    val startMs: Long = 0, // video trim in source time
+    val endMs: Long = 0, // 0 = to the end
+) {
+    fun trimmedMs(durationMs: Long): Long =
+        ((if (endMs > 0) min(endMs, durationMs) else durationMs) - startMs).coerceAtLeast(0)
+}
+
+object ExportSizing {
+    fun dimensions(width: Int, height: Int, longEdge: Int, even: Boolean = false): Pair<Int, Int> {
+        require(width > 0 && height > 0)
+        val scale = if (longEdge <= 0) 1.0 else min(1.0, longEdge.toDouble() / max(width, height))
+        fun size(v: Int): Int {
+            val n = max(1, (v * scale).roundToInt())
+            return if (even) max(2, n / 2 * 2) else n
+        }
+        return size(width) to size(height)
+    }
+
+    /** [sourcePixelRate] is the source's width × height × fps, used to scale [source] to the output. */
+    fun bitrate(width: Int, height: Int, fps: Float, quality: Int, source: Int, original: Boolean, sourcePixelRate: Double = 0.0): Int {
+        // Prefer the measured source rate; only estimate when metadata is unavailable.
+        if (original && source > 0) return source
+        val q = quality.coerceIn(1, 100) / 100.0
+        if (source > 0 && sourcePixelRate > 0) {
+            // 100% at source size and frame rate equals Original. Smaller outputs need more bits per pixel,
+            // so the rate falls slower than the pixel count; it never exceeds the source. The floor guards
+            // heavy downscales but stays below the quality share, so the slider always has an effect.
+            val ratio = (width.toDouble() * height * fps.coerceIn(1f, 240f) / sourcePixelRate).coerceIn(0.0, 1.0)
+            return (source * ratio.pow(0.75) * q).coerceIn(min(500_000.0, source * q), source.toDouble()).roundToInt()
+        }
+        return (width.toDouble() * height * fps.coerceIn(1f, 240f) * (0.05 + q * 0.2))
+            .coerceIn(500_000.0, Int.MAX_VALUE.toDouble()).roundToInt()
+    }
+}
+
+/** Shared by the export pipeline and its size preview. Decimal MB/GB match the UI. */
+data class VideoExportPlan(val bitrate: Int, val estimatedBytes: Long?)
+
+fun videoExportPlan(width: Int, height: Int, fps: Float, sourceBitrate: Int,
+    audioBitrate: Int, durationMs: Long, options: ExportOptions, mixedAudio: Boolean = false): VideoExportPlan {
+    val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)
+    // Faster playback drops frames to stay at the source rate; slower playback spreads them out.
+    val effectiveFps = fps * min(options.speed, 1f)
+    val outputFps = if (options.original || options.fps == 0) effectiveFps else min(effectiveFps, options.fps.toFloat())
+    val sourceRate = (sourceBitrate.toDouble() * min(options.speed, 1f)).coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt()
+    val rate = ExportSizing.bitrate(w, h, outputFps, if (options.original) 100 else options.quality, sourceRate, options.original,
+        width.toDouble() * height * effectiveFps.coerceIn(1f, 240f))
+    // Audio is transcoded on speed changes and when mixing or changing volume. Use a conservative estimate then.
+    val audioRate = if (mixedAudio) max(audioBitrate, 192_000)
+        else if (audioBitrate > 0 && options.speed != 1f) max(audioBitrate, 192_000) else audioBitrate
+    val length = options.trimmedMs(durationMs)
+    val bytes = if (length > 0) ((rate.toDouble() + audioRate) * length / options.speed / 8000 * 1.01).toLong() else null
+    return VideoExportPlan(rate, bytes)
+}

@@ -1,0 +1,33 @@
+name: iOS
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      # The tuned grading is a private submodule. Fork PRs get no secrets and build with the basic stub.
+      - name: Fetch the private grading core
+        if: env.HAS_CORE == 'true'
+        env:
+          CORE_DEPLOY_KEY: ${{ secrets.CORE_DEPLOY_KEY }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/core_key"
+          printf '%s\n' "$CORE_DEPLOY_KEY" > "$RUNNER_TEMP/core_key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/core_key -o IdentitiesOnly=yes" git submodule update --init --depth 1 core
+          rm "$RUNNER_TEMP/core_key"
+      - name: Use the basic stub core
+        if: env.HAS_CORE != 'true'
+        run: scripts/use-core-stub.sh
+      - name: Core tests (grading, recommendations, export sizing)
+        run: swift test
+        working-directory: ios
+      - name: Generate the Xcode project
+        run: brew install xcodegen && xcodegen generate
+        working-directory: ios
+      - name: Build for the simulator
+        run: |
+          xcodebuild build -project AquaRestore.xcodeproj -scheme AquaRestore -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+        working-directory: ios

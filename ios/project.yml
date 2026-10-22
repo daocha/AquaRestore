@@ -1,0 +1,82 @@
+# Generate the Xcode project with XcodeGen: `xcodegen generate` (brew install xcodegen), or run scripts/build-ios-debug.sh.
+name: AquaRestore
+options:
+  bundleIdPrefix: com.aquarestore
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+configs:
+  Debug: debug
+  Release: release
+targets:
+  AquaRestore:
+    type: application
+    platform: iOS
+    sources:
+      # Core/Tuning is a symlink into core/ for Package.swift; Xcode takes the files from core/ directly.
+      - path: AquaRestore
+        excludes: ["Core/Tuning"]
+      - path: ../core/ios/Core
+      - path: ../core/ios/App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app
+        PRODUCT_NAME: AquaRestore
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_PREVIEWS: YES
+      configs:
+        # Like the Android debug build: its own bundle id and name, so it installs next to the release app.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app.debug
+          INFOPLIST_KEY_CFBundleDisplayName: AquaRestore Dev
+        Release:
+          INFOPLIST_KEY_CFBundleDisplayName: AquaRestore
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: $(INFOPLIST_KEY_CFBundleDisplayName)
+        CFBundleLocalizations: [en, zh-Hant]
+        CFBundleDevelopmentRegion: en
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        ITSAppUsesNonExemptEncryption: false
+        # The app has no network access and only ever adds to the Photos library.
+        NSPhotoLibraryAddUsageDescription: AquaRestore saves your restored photos and videos to your Photos library. It never reads your library.
+  AquaRestoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/AquaCoreTests
+        excludes: ["Tuning"]
+      - path: ../core/ios/Tests
+    dependencies:
+      - target: AquaRestore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  AquaRestore:
+    build:
+      targets:
+        AquaRestore: all
+        AquaRestoreTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [AquaRestoreTests]
+    archive:
+      config: Release

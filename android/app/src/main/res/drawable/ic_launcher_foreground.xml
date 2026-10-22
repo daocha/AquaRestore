@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The same manta seen twice: blue-cast on the left, true charcoal and white on the right,
+     split by a compare seam with its handle. Generated from a mirrored outline. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group>
+        <clip-path android:pathData="M0,0h54v108h-54z" />
+        <path android:fillColor="#FF143E6E" android:pathData="M54.00,39.60 L56.50,39.00 C56.90,36.20 57.00,33.60 56.60,31.60 C59.60,32.00 61.60,34.60 61.60,38.20 C68.00,38.60 77.50,42.20 86.00,50.00 C78.50,53.20 69.50,55.20 63.00,61.60 C60.20,65.00 58.00,67.00 55.90,68.20 L54.70,83.00 L54.00,84.00 L53.30,83.00 L52.10,68.20 C50.00,67.00 47.80,65.00 45.00,61.60 C38.50,55.20 29.50,53.20 22.00,50.00 C30.50,42.20 40.00,38.60 46.40,38.20 C46.40,34.60 48.40,32.00 51.40,31.60 C51.00,33.60 51.10,36.20 51.50,39.00 L54.00,39.60 Z" />
+        <path android:fillColor="#FF5F95C8" android:pathData="M46.50,43.60 C40.50,42.90 34.20,44.60 29.40,48.40 C35.40,47.00 40.80,47.20 45.80,48.90 Z" />
+    </group>
+    <group>
+        <clip-path android:pathData="M54,0h54v108h-54z" />
+        <path android:fillColor="#FF263238" android:pathData="M54.00,39.60 L56.50,39.00 C56.90,36.20 57.00,33.60 56.60,31.60 C59.60,32.00 61.60,34.60 61.60,38.20 C68.00,38.60 77.50,42.20 86.00,50.00 C78.50,53.20 69.50,55.20 63.00,61.60 C60.20,65.00 58.00,67.00 55.90,68.20 L54.70,83.00 L54.00,84.00 L53.30,83.00 L52.10,68.20 C50.00,67.00 47.80,65.00 45.00,61.60 C38.50,55.20 29.50,53.20 22.00,50.00 C30.50,42.20 40.00,38.60 46.40,38.20 C46.40,34.60 48.40,32.00 51.40,31.60 C51.00,33.60 51.10,36.20 51.50,39.00 L54.00,39.60 Z" />
+        <path android:fillColor="#FFF4F1EA" android:pathData="M61.50,43.60 C67.50,42.90 73.80,44.60 78.60,48.40 C72.60,47.00 67.20,47.20 62.20,48.90 Z" />
+    </group>
+    <path android:fillColor="#E6FFFFFF" android:pathData="M53.4,18h1.2v72h-1.2z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,75.5a5,5 0,1 1,0 10a5,5 0,1 1,0 -10z" />
+    <path android:fillColor="#FF2C7BC4" android:pathData="M52.6,78.4L50.6,80.5L52.6,82.6z" />
+    <path android:fillColor="#FF2BAE9A" android:pathData="M55.4,78.4L57.4,80.5L55.4,82.6z" />
+</vector>
