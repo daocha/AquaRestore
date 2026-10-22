@@ -10,8 +10,8 @@ android {
         applicationId = "com.aquarestore.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "2026.10.24"
+        versionCode = 5
+        versionName = "2026.10.25"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appLabel"] = "AquaRestore"
     }
