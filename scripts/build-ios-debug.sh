@@ -6,8 +6,7 @@
 # --run installs and launches on the booted simulator (default: the first available iPhone).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/.." && pwd)"
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+. "$here/_signing-common.sh"
 run_tests=1; device=0; run=0
 for arg in "$@"; do
   case "$arg" in
@@ -19,6 +18,7 @@ for arg in "$@"; do
   esac
 done
 [ "$(uname)" = Darwin ] || die 'iOS builds need macOS.'
+ensure_core
 xcodebuild -version >/dev/null 2>&1 || die 'Install Xcode and run: sudo xcode-select -s /Applications/Xcode.app'
 if ! command -v xcodegen >/dev/null 2>&1; then
   command -v brew >/dev/null 2>&1 || die 'Install XcodeGen: brew install xcodegen'

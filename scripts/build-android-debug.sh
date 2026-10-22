@@ -15,6 +15,7 @@ for arg in "$@"; do
     *) die "Unknown option: $arg" ;;
   esac
 done
+ensure_core
 find_toolchain
 tasks=(:app:assembleDebug :app:lintDebug)
 [ "$run_tests" = 0 ] || tasks+=(:app:testDebugUnitTest)

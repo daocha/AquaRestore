@@ -15,6 +15,26 @@ lineage="${AQUARESTORE_LINEAGE:-$HOME/.aquarestore-signing/lineage.bin}"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# The tuned grading is the private core/ submodule; fetch it when a fresh clone lacks it.
+# --release also refuses the public stub and any core commit AquaRestore-Core does not have,
+# so every published version can be rebuilt from its tag.
+ensure_core() {
+  if [ ! -d "$root/core/android/main" ] && [ -f "$root/.gitmodules" ]; then
+    git -C "$root" submodule update --init core \
+      || die 'Cannot fetch the private core/. Without access, debug builds can use scripts/use-core-stub.sh.'
+  fi
+  [ -d "$root/core/android/main" ] \
+    || die 'core/ is empty. Run git submodule update --init, or scripts/use-core-stub.sh without access.'
+  [ "${1:-}" = --release ] || return 0
+  [ -e "$root/core/.git" ] || die 'core/ holds the public stub. Releases need the private core: git submodule update --init.'
+  case "$(git -C "$root" submodule status core)" in
+    [+-U]*) die 'core/ is not at the commit this repository records. Commit the core/ update, or run git submodule update.' ;;
+  esac
+  [ -z "$(git -C "$root/core" status --porcelain)" ] || die 'core/ has uncommitted changes. Commit and push them to AquaRestore-Core first.'
+  git -C "$root/core" fetch --quiet origin || die 'Cannot reach AquaRestore-Core to check the core/ commit.'
+  [ -n "$(git -C "$root/core" branch -r --contains HEAD)" ] || die 'The core/ commit is not on AquaRestore-Core. Push it there first.'
+}
+
 find_toolchain() {
   if [ -z "${JAVA_HOME:-}" ] && [ -x /usr/libexec/java_home ]; then
     JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"

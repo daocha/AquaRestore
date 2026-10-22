@@ -15,6 +15,7 @@ for arg in "$@"; do
     *) die "Unknown option: $arg" ;;
   esac
 done
+ensure_core --release
 find_toolchain
 find_signing_tools
 read_version

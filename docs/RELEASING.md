@@ -10,6 +10,14 @@
 
 ## 1. 在另一台電腦準備環境
 
+經過調校的調色核心是私人 submodule `core/`（`daocha/AquaRestore-Core`），這台電腦的 SSH 金鑰需能讀取它：
+
+```bash
+git clone --recurse-submodules git@github.com:daocha/AquaRestore.git
+```
+
+建置腳本在 `core/` 為空時會自動抓取。發布版本拒絕使用 `core-stub/` 的基本調色，並要求 `core/` 沒有未提交的修改、與本儲存庫記錄的 commit 一致，且該 commit 已推送到 AquaRestore-Core。修改調色時，先在 `core/` 提交並推送，再在本儲存庫提交 `core` 的新指標。
+
 需要 Bash、JDK 17+、Android SDK 36、Build-Tools 35／36，以及 GitHub CLI。macOS 可直接執行：
 
 ```bash
