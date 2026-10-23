@@ -7,7 +7,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,19 +29,28 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import kotlinx.coroutines.launch
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.positionInRoot
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,6 +64,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -66,6 +75,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
@@ -143,6 +153,8 @@ private fun Editor(model: EditorModel, s: Strings) {
     val source by model.source.collectAsStateWithLifecycle()
     val grade by model.grade.collectAsStateWithLifecycle()
     val speed by model.speed.collectAsStateWithLifecycle()
+    val photoExportSelection by model.photoExportSelection.collectAsStateWithLifecycle()
+    val videoExportSelection by model.videoExportSelection.collectAsStateWithLifecycle()
     val trim by model.trim.collectAsStateWithLifecycle()
     val filmstrip by model.filmstrip.collectAsStateWithLifecycle()
     // Kept as State and read only while drawing, so playback ticks redraw the trim bar without recomposing.
@@ -156,8 +168,14 @@ private fun Editor(model: EditorModel, s: Strings) {
     var showExport by rememberSaveable { mutableStateOf(false) }
     var showProgress by rememberSaveable { mutableStateOf(false) }
     var speedExpanded by rememberSaveable { mutableStateOf(false) }
+    var trimPicked by remember { mutableStateOf<Long?>(null) }
+    var overlayBounds by remember { mutableStateOf<Rect?>(null) }
+    var scaffoldOrigin by remember { mutableStateOf(Offset.Zero) }
+    LaunchedEffect(source?.uri) { speedExpanded = false; trimPicked = null; overlayBounds = null }
+    var mediaLibrary by rememberSaveable { mutableStateOf(false) }
+    var musicLibrary by rememberSaveable { mutableStateOf(false) }
+    var editorPlayer by remember { mutableStateOf<Player?>(null) }
     var restoreExpanded by rememberSaveable { mutableStateOf(false) }
-    var trimExpanded by rememberSaveable { mutableStateOf(false) }
     var audioExpanded by rememberSaveable { mutableStateOf(false) }
     var confirmClose by rememberSaveable { mutableStateOf(false) }
     // While exporting, closing just leaves the editor: the export continues in the background.
@@ -167,6 +185,10 @@ private fun Editor(model: EditorModel, s: Strings) {
     var maximized by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(source, phase) { if (source == null || phase != null) maximized = false }
     BackHandler(enabled = maximized) { maximized = false }
+    BackHandler(enabled = speedExpanded || trimPicked != null) {
+        speedExpanded = false
+        trimPicked = null
+    }
     DisposableEffect(maximized) {
         val window = activity?.window
         val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, it.decorView) }
@@ -193,12 +215,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         } catch (_: Exception) { model.error.value = "openFailed" }
     }
     LaunchedEffect(export.busy) { if (export.busy) showProgress = true }
-    // Android's photo picker: a gallery grid that needs no storage permission. It falls back to the file browser
-    // on phones without it, and "Browse files" opens that browser for media outside the gallery.
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { it?.let(model::import) }
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(model::import) }
-    fun pickMedia() = picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-    val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(model::addMusic) }
+    fun pickMedia() { mediaLibrary = true }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val busy = phase != null || export.busy
     DisposableEffect(source?.isHdr) {
@@ -207,7 +224,17 @@ private fun Editor(model: EditorModel, s: Strings) {
         window?.colorMode = if (source?.isHdr == true) android.content.pm.ActivityInfo.COLOR_MODE_HDR else android.content.pm.ActivityInfo.COLOR_MODE_DEFAULT
         onDispose { if (previous != null) window.colorMode = previous }
     }
-    Scaffold(containerColor = if (maximized) Color.Black else Color.Transparent, topBar = {
+    Scaffold(modifier = Modifier.onGloballyPositioned { scaffoldOrigin = it.positionInRoot() }
+        .pointerInput(speedExpanded, trimPicked, overlayBounds, scaffoldOrigin) {
+            if (!speedExpanded && trimPicked == null) return@pointerInput
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (overlayBounds?.contains(down.position + scaffoldOrigin) != true) {
+                    speedExpanded = false
+                    trimPicked = null
+                }
+            }
+        }, containerColor = if (maximized) Color.Black else Color.Transparent, topBar = {
         if (!maximized) CenterAlignedTopAppBar(title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 AppLogo(Modifier.size(30.dp))
@@ -236,7 +263,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         Column(Modifier.padding(inset).fillMaxSize().then(if (source == null || phase != null) Modifier.verticalScroll(editorScroll) else Modifier).padding(horizontal = if (maximized) 0.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
-                Welcome(s, enabled = !busy, onBrowse = { filePicker.launch(arrayOf("video/*", "image/*")) }, onImport = ::pickMedia)
+                Welcome(s, enabled = !busy, onImport = ::pickMedia)
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -246,52 +273,20 @@ private fun Editor(model: EditorModel, s: Strings) {
                 Progress(progress)
                 OutlinedButton(onClick = model::cancelImport) { Text(s.text("Cancel", "取消")) }
             } else if (source != null) {
-                Preview(model, s, export.busy, maximized, { maximized = it }, if (maximized) Modifier.weight(1f) else Modifier)
+                Preview(model, s, export.busy, maximized, { maximized = it }, { editorPlayer = it },
+                    speedExpanded, { speedExpanded = it }, trimPicked, { trimPicked = it },
+                    { overlayBounds = it }, if (maximized) Modifier.weight(1f) else Modifier)
                 if (!maximized) Column(Modifier.weight(1f).verticalScroll(editorScroll).testTag("adjustments"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                if (source!!.video) Panel {
-                    fun label(value: Float) = if (value == 0.5f) "0.5×" else "${value.toInt()}×"
-                    Row(Modifier.fillMaxWidth().clickable { speedExpanded = !speedExpanded }, verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Speed, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
-                        Text(s.text("Video speed", "影片速度"), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                        if (!speedExpanded) Text(label(speed), color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
-                        Icon(if (speedExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
-                    }
-                    AnimatedVisibility(speedExpanded) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(0.5f, 1f, 2f, 4f).forEach { value ->
-                                    FilterChip(selected = speed == value, enabled = !export.busy,
-                                        onClick = { model.speed.value = value }, label = { Text(label(value)) })
-                                }
-                            }
-                            Text(s.text("Applied to preview and export; audio keeps its pitch.", "套用至預覽與匯出；音訊保留原音高。"), fontSize = 12.sp)
-                        }
-                    }
-                }
-                if (source!!.video && source!!.durationMs > 0) Panel {
+                if (source!!.video && source!!.durationMs > 0) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val duration = source!!.durationMs
                     val trimmed = trim.first > 0 || trim.last < duration
-                    Row(Modifier.fillMaxWidth().clickable { trimExpanded = !trimExpanded }, verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.ContentCut, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
-                        Text(s.text("Trim", "剪輯長度"), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                        Text("${clock(trim.first)}–${clock(trim.last)} (${clock(trim.last - trim.first)})", fontSize = 13.sp,
-                            color = if (trimmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Icon(if (trimExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
-                    }
-                    AnimatedVisibility(trimExpanded) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TrimBar(filmstrip, duration, trim, playhead, !export.busy, s.text("Trim range", "剪輯範圍"),
-                                onChange = { model.trimming.value = true; model.trim.value = it },
-                                onDone = { model.trimming.value = false },
-                                onScrub = { position, play -> model.scrub.tryEmit(position to play) }, s = s)
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                PlayheadTime(playhead)
-                                Text(s.text("Edges: trim · tap a frame to play from it", "邊框：剪輯 · 點按影格從該處播放"),
-                                    Modifier.weight(1f), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (trimmed) TextButton(onClick = { model.trim.value = 0L..duration }, enabled = !export.busy) { Text(s.text("Full clip", "完整長度")) }
-                            }
-                        }
-                    }
+                    ClipControls(editorPlayer, filmstrip, duration, trim, playhead, speed, !export.busy, s,
+                        speedExpanded, { speedExpanded = it }, { model.speed.value = it },
+                        trimPicked, { trimPicked = it }, { overlayBounds = it },
+                        onChange = { model.trimming.value = true; model.trim.value = it },
+                        onDone = { model.trimming.value = false },
+                        onScrub = { position, play -> model.scrub.tryEmit(position to play) })
+                    if (trimmed) TextButton(onClick = { model.trim.value = 0L..duration }, enabled = !export.busy) { Text(s.text("Full clip", "完整長度")) }
                 }
                 if (source!!.video) Panel {
                     Row(Modifier.fillMaxWidth().clickable { audioExpanded = !audioExpanded }, verticalAlignment = Alignment.CenterVertically) {
@@ -308,7 +303,7 @@ private fun Editor(model: EditorModel, s: Strings) {
                             Volume(s.text("Original sound", "原聲"), originalVolume, !export.busy) { model.originalVolume.value = it }
                             val current = music
                             if (current == null) {
-                                OutlinedButton(onClick = { musicPicker.launch(arrayOf("audio/*")) }, enabled = !export.busy && !musicLoading, modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(onClick = { musicLibrary = true }, enabled = !export.busy && !musicLoading, modifier = Modifier.fillMaxWidth()) {
                                     if (musicLoading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                     else Icon(Icons.Rounded.LibraryMusic, null, Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp)); Text(s.text("Add music", "加入音樂"))
@@ -324,7 +319,7 @@ private fun Editor(model: EditorModel, s: Strings) {
                                     Text(if (current.durationMs <= outputMs) s.text("Song is shorter than the video, so it repeats", "音樂比影片短，會重複播放")
                                         else s.text("Plays ${clock(window.first)}–${clock(window.last)}", "播放 ${clock(window.first)}–${clock(window.last)}"),
                                         Modifier.weight(1f), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    TextButton(onClick = { musicPicker.launch(arrayOf("audio/*")) }, enabled = !export.busy) { Text(s.text("Replace", "更換")) }
+                                    TextButton(onClick = { musicLibrary = true }, enabled = !export.busy) { Text(s.text("Replace", "更換")) }
                                     TextButton(onClick = model::removeMusic, enabled = !export.busy) { Text(s.text("Remove", "移除")) }
                                 }
                             }
@@ -401,10 +396,20 @@ private fun Editor(model: EditorModel, s: Strings) {
             "調色、剪輯與音樂設定將不會保留，原始檔案不受影響。")) },
         confirmButton = { TextButton(onClick = { confirmClose = false; model.closeMedia() }) { Text(s.text("Discard", "放棄")) } },
         dismissButton = { TextButton(onClick = { confirmClose = false }) { Text(s.text("Keep editing", "繼續編輯")) } })
-    if (showExport && source != null) ExportDialog(source!!, s, speed, trim, model.audioMix(), onDismiss = { showExport = false }) { options ->
+    if (showExport && source != null) ExportDialog(source!!, s, speed, trim, model.audioMix(),
+        if (source!!.video) videoExportSelection else photoExportSelection,
+        onSelectionChange = { model.setExportSelection(source!!.video, it) }, onDismiss = { showExport = false }) { options ->
         showExport = false
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         Exports.start(context, ExportRequest(source!!, grade, options.copy(speed = speed), s.chinese, model.audioMix()))
+    }
+    if (mediaLibrary) MediaLibrary(s, onDismiss = { mediaLibrary = false }) { uri ->
+        mediaLibrary = false
+        model.import(uri)
+    }
+    if (musicLibrary) MediaLibrary(s, audioOnly = true, onDismiss = { musicLibrary = false }) { uri ->
+        musicLibrary = false
+        model.addMusic(uri)
     }
 }
 
@@ -416,7 +421,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onBrowse: () -> Unit, onImport: () -> Unit) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -425,9 +430,6 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onBrowse: () -> Unit, o
     OceanArt(Modifier.fillMaxWidth().height(230.dp))
     Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
-    }
-    TextButton(onClick = onBrowse, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(s.text("Browse files", "瀏覽檔案"))
     }
     Panel {
         listOf(
@@ -459,7 +461,9 @@ private fun OceanArt(modifier: Modifier) {
 
 @Composable
 private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximized: Boolean,
-    onMaximize: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    onMaximize: (Boolean) -> Unit, onPlayer: (Player?) -> Unit, speedExpanded: Boolean,
+    expandSpeed: (Boolean) -> Unit, trimPicked: Long?, setTrimPicked: (Long?) -> Unit,
+    onOverlayBounds: (Rect) -> Unit, modifier: Modifier = Modifier) {
     val uri by model.previewUri.collectAsStateWithLifecycle()
     val original by model.previewOriginal.collectAsStateWithLifecycle()
     val corrected by model.previewGraded.collectAsStateWithLifecycle()
@@ -472,15 +476,49 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     DisposableEffect(model) { onDispose { model.setCompare(false) } }
     var player by remember { mutableStateOf<Player?>(null) }
     var buttonsHeight by remember { mutableIntStateOf(0) }
+    var previewScale by remember { mutableFloatStateOf(1f) }
+    var previewPan by remember { mutableStateOf(Offset.Zero) }
+    var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(maximized, source?.uri) {
+        previewScale = 1f
+        previewPan = Offset.Zero
+    }
+    val fullScreenSpeed by model.speed.collectAsStateWithLifecycle()
+    val fullScreenTrim by model.trim.collectAsStateWithLifecycle()
+    val fullScreenFrames by model.filmstrip.collectAsStateWithLifecycle()
+    val fullScreenPlayhead = model.playhead.collectAsStateWithLifecycle()
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BoxWithConstraints(Modifier.testTag("mediaPreview").fillMaxWidth()
+        Box(Modifier.testTag("mediaPreview").fillMaxWidth()
             .then(if (maximized) Modifier.weight(1f)
                 else Modifier.height((LocalConfiguration.current.screenHeightDp * 0.24f).coerceIn(72f, 250f).dp).clip(RoundedCornerShape(20.dp)))
             .background(Color.Black), contentAlignment = Alignment.Center) {
-            if (uri != null) VideoPreview(model, exporting, maximized) { player = it }
-            else (if (compare) original else corrected ?: original)?.let {
-                Image(it.asImageBitmap(), s.text("Media preview", "素材預覽"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            Box(Modifier.matchParentSize().clipToBounds(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = if (maximized) previewScale else 1f
+                    scaleY = if (maximized) previewScale else 1f
+                    translationX = if (maximized) previewPan.x else 0f
+                    translationY = if (maximized) previewPan.y else 0f
+                }, contentAlignment = Alignment.Center) {
+                    if (uri != null) VideoPreview(model, exporting, maximized) { player = it; onPlayer(it) }
+                    else (if (compare) original else corrected ?: original)?.let {
+                        Image(it.asImageBitmap(), s.text("Media preview", "素材預覽"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    }
+                }
             }
+            if (maximized) Box(Modifier.matchParentSize().onSizeChanged { previewSize = it }
+                .pointerInput(source?.uri) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        val nextScale = (previewScale * zoom).coerceIn(1f, 5f)
+                        val ratio = nextScale / previewScale
+                        val center = Offset(previewSize.width / 2f, previewSize.height / 2f)
+                        val nextPan = previewPan * ratio + (centroid - center) * (1f - ratio) + pan
+                        val maxX = (nextScale - 1f) * previewSize.width / 2f
+                        val maxY = (nextScale - 1f) * previewSize.height / 2f
+                        previewScale = nextScale
+                        previewPan = if (nextScale == 1f) Offset.Zero else Offset(
+                            nextPan.x.coerceIn(-maxX, maxX), nextPan.y.coerceIn(-maxY, maxY))
+                    }
+                })
             Row(Modifier.align(Alignment.TopStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 PreviewTag(if (compare) s.text("ORIGINAL", "原色") else s.text("RESTORED", "還原後"))
                 source?.let { PreviewTag(if (it.video) s.text("VIDEO", "影片") else s.text("PHOTO", "照片")) }
@@ -509,14 +547,19 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.4f).dp))
                 else Spacer(Modifier.height(16.dp))
             }
-            // Full screen: the play bar sits just under the video (below a landscape one), but never lower than
-            // a little above the buttons, so on a portrait video it covers only the bottom edge.
             val shown = player
             if (maximized && uri != null && shown != null) {
-                val aspect = source?.let { if (it.width > 0 && it.height > 0) it.width.toFloat() / it.height else null }
-                val videoBottom = (maxHeight + (aspect?.let { minOf(maxHeight, maxWidth / it) } ?: maxHeight)) / 2
-                val lowest = maxHeight - with(LocalDensity.current) { buttonsHeight.toDp() } - PlayBarHeight - 8.dp
-                PlayBar(shown, s, Modifier.align(Alignment.TopCenter).offset(y = minOf(videoBottom + 8.dp, lowest).coerceAtLeast(0.dp)))
+                val duration = source?.durationMs ?: 0L
+                if (duration > 0) Column(Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = with(LocalDensity.current) { buttonsHeight.toDp() } + 12.dp)
+                    .fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ClipControls(shown, fullScreenFrames, duration, fullScreenTrim, fullScreenPlayhead,
+                        fullScreenSpeed, !exporting, s, speedExpanded,
+                        expandSpeed, { model.speed.value = it }, trimPicked, setTrimPicked, onOverlayBounds,
+                        onChange = { model.trimming.value = true; model.trim.value = it },
+                        onDone = { model.trimming.value = false },
+                        onScrub = { position, play -> model.scrub.tryEmit(position to play) })
+                }
             }
         }
         if (!maximized) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -531,39 +574,85 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     }
 }
 
-private val PlayBarHeight = 48.dp
-
-/** Full screen's own play controls, drawn outside the player view so they can sit off the video. */
 @Composable
-private fun PlayBar(player: Player, s: Strings, modifier: Modifier = Modifier) {
-    var playing by remember(player) { mutableStateOf(player.playWhenReady) }
-    var position by remember(player) { mutableLongStateOf(player.currentPosition) }
-    var duration by remember(player) { mutableLongStateOf(0L) }
-    var dragging by remember(player) { mutableStateOf<Float?>(null) }
-    LaunchedEffect(player) {
-        while (true) {
-            playing = player.playWhenReady
-            position = player.currentPosition
-            duration = player.duration.coerceAtLeast(0)
-            delay(100)
-        }
+private fun ClipControls(player: Player?, frames: List<Bitmap>, duration: Long, range: LongRange,
+    playhead: State<Long>, speed: Float, enabled: Boolean, s: Strings, speedExpanded: Boolean,
+    expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit, picked: Long?, setPicked: (Long?) -> Unit,
+    onOverlayBounds: (Rect) -> Unit, onChange: (LongRange) -> Unit,
+    onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit) {
+    val trimTarget = picked?.takeIf { it in range }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        VideoControls(player, playhead, duration, range, speed, enabled, s, speedExpanded,
+            { expandSpeed(it); if (it) setPicked(null) }, setSpeed, trimTarget, onOverlayBounds,
+            onSetStart = { at ->
+                onChange(at..range.last); onDone(); setPicked(null)
+            }, onSetEnd = { at ->
+                onChange(range.first..at); onDone(); setPicked(null)
+            })
+        TrimBar(frames, duration, range, playhead, enabled, s.text("Trim range", "剪輯範圍"),
+            picked = trimTarget, onPick = { setPicked(it); expandSpeed(false) },
+            onChange = { setPicked(null); onChange(it) }, onDone = onDone, onScrub = onScrub)
     }
-    // Seeking exactly to the end would make the looping player wrap; 1 ms earlier shows the last frame.
-    fun seek(value: Float) = player.seekTo(if (duration > 0) min(value.toLong(), duration - 1) else value.toLong())
-    Row(modifier.padding(horizontal = 12.dp).fillMaxWidth().height(PlayBarHeight)
-        .background(Color.Black.copy(alpha = 0.65f), CircleShape).padding(end = 16.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { if (player.playWhenReady) player.pause() else player.play() }) {
-            Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                if (playing) s.text("Pause", "暫停") else s.text("Play", "播放"), tint = Color.White)
+}
+
+@Composable
+private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long, range: LongRange, speed: Float,
+    enabled: Boolean, s: Strings, speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit,
+    trimTarget: Long?, onOverlayBounds: (Rect) -> Unit, onSetStart: (Long) -> Unit, onSetEnd: (Long) -> Unit) {
+    var playing by remember(player) { mutableStateOf(player?.playWhenReady == true) }
+    LaunchedEffect(player) {
+        while (true) { playing = player?.playWhenReady == true; delay(100) }
+    }
+    Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
+        if (!speedExpanded && trimTarget == null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White) {
+                Row(Modifier.height(40.dp).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { if (player?.playWhenReady == true) player.pause() else player?.play() },
+                        enabled = enabled && player != null, modifier = Modifier.size(40.dp)) {
+                        Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (playing) s.text("Pause", "暫停") else s.text("Play", "播放"), Modifier.size(22.dp))
+                    }
+                    Text("${clock(playhead.value)} / ${clock(duration)}", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
+            }
+            Surface(onClick = { expandSpeed(true) }, enabled = enabled, shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White,
+                modifier = Modifier.size(40.dp).semantics { contentDescription = s.text("Video speed", "影片速度") }) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Speed, null, Modifier.size(21.dp)) }
+            }
         }
-        Text(clock(dragging?.toLong() ?: position), color = Color.White, fontSize = 12.sp)
-        Slider(dragging ?: position.coerceIn(0, maxOf(duration, 1)).toFloat(), { dragging = it; seek(it) },
-            Modifier.weight(1f).padding(horizontal = 10.dp), valueRange = 0f..maxOf(duration, 1).toFloat(),
-            onValueChangeFinished = { dragging = null },
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White,
-                inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
-        Text(clock(duration), color = Color.White, fontSize = 12.sp)
+        if (speedExpanded) {
+            Surface(Modifier.onGloballyPositioned { onOverlayBounds(it.boundsInRoot()) },
+                shape = CircleShape, color = Color(0xFF171717), contentColor = Color.White, shadowElevation = 8.dp) {
+                Row(Modifier.padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    listOf(0.5f, 1f, 2f, 4f).forEach { value ->
+                        val label = if (value == 0.5f) "0.5×" else "${value.toInt()}×"
+                        Surface(onClick = { setSpeed(value); expandSpeed(false) }, enabled = enabled,
+                            shape = CircleShape, color = if (speed == value) Color.White else Color.Transparent,
+                            contentColor = if (speed == value) Color.Black else Color.White,
+                            modifier = Modifier.size(40.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                        }
+                    }
+                }
+            }
+        }
+        if (trimTarget != null && !speedExpanded) {
+            Surface(Modifier.onGloballyPositioned { onOverlayBounds(it.boundsInRoot()) },
+                shape = CircleShape, color = Color(0xFF171717), contentColor = Color.White, shadowElevation = 8.dp) {
+                Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val minimum = min(500L, duration)
+                    IconButton(onClick = { onSetStart(trimTarget) }, enabled = enabled && trimTarget <= range.last - minimum,
+                        modifier = Modifier.size(48.dp)) {
+                        TrimEdgeIcon(true, s.text("Set start", "設為起點"))
+                    }
+                    IconButton(onClick = { onSetEnd(trimTarget) }, enabled = enabled && trimTarget >= range.first + minimum,
+                        modifier = Modifier.size(48.dp)) {
+                        TrimEdgeIcon(false, s.text("Set end", "設為終點"))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -582,50 +671,21 @@ private fun CompareButton(interaction: MutableInteractionSource, s: Strings, ove
 /**
  * Filmstrip trim bar: original (uncorrected) thumbnails, a framed selection with a handle on each side, dimmed
  * footage outside it, and the playhead. Dragging near a handle moves it; a tap or drag elsewhere
- * places the cursor, with tools above it to start or end the trim exactly on that frame.
+ * places the cursor; the trim actions replace the playback controls above this bar.
  */
 @Composable
 private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, playhead: State<Long>,
-    enabled: Boolean, description: String, onChange: (LongRange) -> Unit, onDone: () -> Unit,
-    onScrub: (Long, Boolean) -> Unit, s: Strings) {
+    enabled: Boolean, description: String, picked: Long?, onPick: (Long?) -> Unit,
+    onChange: (LongRange) -> Unit, onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     val latest by rememberUpdatedState(range)
     // Keep at least half a second (or the whole clip, if shorter) between the handles.
     val minimum = min(500L, duration)
-    // The frame the user placed the cursor on. Playback continues from it, so its tools stay pinned
-    // to that frame (marked on the strip) until one is used or a handle moves.
-    var picked by remember(duration) { mutableStateOf<Long?>(null) }
-    val showTools = picked?.let { it in range } == true
-    fun pick(t: Long, play: Boolean) { picked = t; onScrub(t, play) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val handle = with(LocalDensity.current) { 14.dp.toPx() }
         val barWidth = constraints.maxWidth
         val track = (barWidth - 2 * handle).coerceAtLeast(1f)
         fun x(t: Long) = handle + t.toFloat() / duration * track
-        Column {
-        AnimatedVisibility(showTools && enabled) {
-            val at = picked ?: 0L
-            var width by remember { mutableIntStateOf(0) }
-            Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Surface(Modifier.onSizeChanged { width = it.width }
-                    .offset { IntOffset((x(at) - width / 2f).roundToInt().coerceIn(0, (barWidth - width).coerceAtLeast(0)), 0) },
-                    shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { onChange(at..latest.last); onDone(); picked = null }, enabled = at <= latest.last - minimum,
-                            contentPadding = PaddingValues(horizontal = 12.dp)) {
-                            Icon(Icons.Rounded.FirstPage, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp))
-                            Text(s.text("Set start", "設為起點"), fontSize = 12.sp)
-                        }
-                        Box(Modifier.width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)))
-                        TextButton(onClick = { onChange(latest.first..at); onDone(); picked = null }, enabled = at >= latest.first + minimum,
-                            contentPadding = PaddingValues(horizontal = 12.dp)) {
-                            Text(s.text("Set end", "設為終點"), fontSize = 12.sp); Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Rounded.LastPage, null, Modifier.size(18.dp))
-                        }
-                    }
-                }
-            }
-        }
         Box(Modifier.fillMaxWidth().height(56.dp).semantics { contentDescription = description }) {
         Row(Modifier.fillMaxSize().padding(horizontal = 14.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
             frames.forEach { Image(it.asImageBitmap(), null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop) }
@@ -635,19 +695,27 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
         fun time(px: Float) = ((px - handle) / track * duration).roundToLong()
         Canvas(Modifier.fillMaxSize().pointerInput(enabled, duration, track) {
             if (!enabled) return@pointerInput
-            detectTapGestures { touch -> pick(time(touch.x).coerceIn(latest), true) }
+            detectTapGestures { touch ->
+                val at = time(touch.x).coerceIn(latest)
+                onPick(at)
+                onScrub(at, true)
+            }
         }.pointerInput(enabled, duration, track) {
             if (!enabled) return@pointerInput
             var target = 0 // -1 start handle, 1 end handle, 0 playhead
             var position = 0f
-            fun finish() { if (target != 0) onDone() else picked?.let { onScrub(it, true) } }
+            fun finish() {
+                if (target != 0) onDone()
+                else onScrub(position.roundToLong().coerceIn(latest), true)
+            }
             detectHorizontalDragGestures(
                 onDragStart = { touch ->
+                    onPick(null)
                     val toStart = kotlin.math.abs(touch.x - (x(latest.first) - handle / 2))
                     val toEnd = kotlin.math.abs(touch.x - (x(latest.last) + handle / 2))
                     target = if (min(toStart, toEnd) > reach) 0 else if (toStart <= toEnd) -1 else 1
                     position = when (target) { -1 -> latest.first.toFloat(); 1 -> latest.last.toFloat(); else -> time(touch.x).toFloat() }
-                    if (target == 0) pick(position.roundToLong().coerceIn(latest), false) else picked = null
+                    if (target == 0) onScrub(position.roundToLong().coerceIn(latest), false)
                 },
                 onDragEnd = ::finish, onDragCancel = ::finish,
             ) { change, delta ->
@@ -658,7 +726,7 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
                 when (target) {
                     -1 -> onChange(t.coerceIn(0, r.last - minimum)..r.last)
                     1 -> onChange(r.first..t.coerceIn(r.first + minimum, duration))
-                    else -> pick(t.coerceIn(r), false)
+                    else -> onScrub(t.coerceIn(r), false)
                 }
             }
         }) {
@@ -667,13 +735,13 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
             drawRect(dim, Offset(handle, 0f), Size((s - handle).coerceAtLeast(0f), size.height))
             drawRect(dim, Offset(e, 0f), Size((size.width - handle - e).coerceAtLeast(0f), size.height))
             val border = 3.dp.toPx()
-            drawRect(primary, Offset(s, 0f), Size(e - s, border))
-            drawRect(primary, Offset(s, size.height - border), Size(e - s, border))
+            drawRect(Color.White, Offset(s, 0f), Size(e - s, border))
+            drawRect(Color.White, Offset(s, size.height - border), Size(e - s, border))
             val corner = CornerRadius(4.dp.toPx())
-            drawRoundRect(primary, Offset(s - handle, 0f), Size(handle, size.height), corner)
-            drawRoundRect(primary, Offset(e, 0f), Size(handle, size.height), corner)
+            drawRoundRect(Color.White, Offset(s - handle, 0f), Size(handle, size.height), corner)
+            drawRoundRect(Color.White, Offset(e, 0f), Size(handle, size.height), corner)
             for (grip in listOf(s - handle / 2, e + handle / 2))
-                drawLine(Color.White, Offset(grip, size.height * 0.35f), Offset(grip, size.height * 0.65f), 2.dp.toPx(), StrokeCap.Round)
+                drawLine(Color.DarkGray, Offset(grip, size.height * 0.35f), Offset(grip, size.height * 0.65f), 2.dp.toPx(), StrokeCap.Round)
             picked?.takeIf { it in range }?.let { at ->
                 drawLine(primary, Offset(x(at), 0f), Offset(x(at), size.height), 2.dp.toPx())
                 drawCircle(primary, 4.dp.toPx(), Offset(x(at), 4.dp.toPx()))
@@ -682,7 +750,19 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
             if (now in range) drawLine(Color.White, Offset(x(now), border), Offset(x(now), size.height - border), 2.dp.toPx())
         }
         }
-        }
+    }
+}
+
+@Composable
+private fun TrimEdgeIcon(start: Boolean, description: String) {
+    Canvas(Modifier.size(28.dp).semantics { contentDescription = description }) {
+        fun point(x: Float, y: Float) = Offset(size.width * (if (start) x else 1f - x), size.height * y)
+        val stroke = 2.5.dp.toPx()
+        for (i in 0..4) drawCircle(Color.White, 1.2.dp.toPx(), point(.16f, .14f + i * .18f))
+        drawLine(Color.White, point(.39f, .14f), point(.39f, .86f), stroke, StrokeCap.Round)
+        drawLine(Color.White, point(.39f, .14f), point(.69f, .14f), stroke, StrokeCap.Round)
+        drawLine(Color.White, point(.39f, .86f), point(.69f, .86f), stroke, StrokeCap.Round)
+        drawLine(Color.White, point(.74f, .22f), point(.74f, .78f), stroke, StrokeCap.Round)
     }
 }
 
@@ -736,13 +816,6 @@ private fun MusicBar(envelope: FloatArray?, songMs: Long, window: LongRange, mov
     }
 }
 
-@Composable
-private fun PlayheadTime(playhead: State<Long>) {
-    // Isolated so playback ticks recompose only this label.
-    Text(clock(playhead.value), Modifier.padding(end = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Medium,
-        color = MaterialTheme.colorScheme.primary)
-}
-
 private fun clock(ms: Long): String {
     val tenths = (ms.coerceAtLeast(0) + 50) / 100
     return "%d:%02d.%d".format(tenths / 600, tenths / 10 % 60, tenths % 10)
@@ -780,6 +853,7 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     val originalBoost = remember(uri) { VolumeProcessor() }
     val player = remember(uri) {
         boostablePlayer(context, originalBoost).apply {
+            setSeekParameters(SeekParameters.EXACT)
             setVideoEffects(listOf(UnderwaterEffect(model.gradeState)))
             repeatMode = Player.REPEAT_MODE_ONE
             setMediaItem(MediaItem.fromUri(uri!!))
@@ -872,10 +946,25 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     }
     LaunchedEffect(player) {
         // Seeking exactly to the end would make the looping player wrap; 1 ms earlier shows the last frame.
-        fun seek(position: Long) = player.seekTo(if (player.duration > 0) min(position, player.duration - 1) else position)
+        fun seek(position: Long) {
+            val target = if (player.duration > 0) min(position, player.duration - 1) else position
+            model.playhead.value = target
+            player.seekTo(target)
+        }
         launch {
-            // A frame picked on the trim bar: hold it while dragging, play from it on a tap or release.
-            model.scrub.collect { (position, play) -> seek(position); if (play) player.play() else player.pause() }
+            var dragging = false
+            var resumeAfterDrag = false
+            model.scrub.collect { (position, finished) ->
+                if (!finished) {
+                    if (!dragging) { resumeAfterDrag = player.playWhenReady; dragging = true }
+                    if (player.playWhenReady) player.pause()
+                }
+                seek(position)
+                if (finished && dragging) {
+                    if (resumeAfterDrag) player.play()
+                    dragging = false
+                }
+            }
         }
         // While a trim handle moves, pause on the frame under it; resume from the new start afterwards.
         var previous = model.trim.value
@@ -930,9 +1019,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     val aspect = source?.let { if (it.width > 0 && it.height > 0) it.width.toFloat() / it.height else null }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // The paused-frame refresh above is a seek; with auto-show, every grade change would pop up the controls.
-        AndroidView(factory = { PlayerView(it).apply { this.player = player; controllerAutoShow = false; setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING) }.also { playerView = it } },
-            // Full screen draws its own play bar (PlayBar) so it can sit outside the video.
-            update = { it.player = player; it.useController = !maximized }, modifier = if (aspect != null) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize())
+        AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING) }.also { playerView = it } },
+            update = { it.player = player; it.useController = false }, modifier = if (aspect != null) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize())
     }
 }
 
@@ -1080,55 +1168,87 @@ private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -
 }
 
 @Composable
-private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: LongRange, audio: AudioMix, onDismiss: () -> Unit, export: (ExportOptions) -> Unit) {
+private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
+    selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit,
+    onDismiss: () -> Unit, export: (ExportOptions) -> Unit) {
     // Only a real cut is passed on, so an untrimmed export keeps the source's exact end.
     val startMs = trim.first
     val endMs = if (trim.last in 1 until source.durationMs) trim.last else 0L
     val lengthMs = ExportOptions(startMs = startMs, endMs = endMs).trimmedMs(source.durationMs)
-    var original by rememberSaveable { mutableStateOf(true) }
-    var edge by rememberSaveable { mutableIntStateOf(1920) }
-    var fps by rememberSaveable { mutableIntStateOf(0) }
-    var quality by rememberSaveable { mutableFloatStateOf(90f) }
-    var png by rememberSaveable { mutableStateOf(false) }
+    val recommended = remember(source.width, source.height, source.fps, source.video, source.mime) {
+        if (source.video) ExportRecommendation.video(source.width, source.height, source.fps)
+        else ExportRecommendation.photo(source.width, source.height, source.mime)
+    }
+    val sourceFps = source.fps * min(speed, 1f)
+    val customFps = selection.fps.takeIf { it == 0 || it <= sourceFps } ?: 0
+    val options = when (selection.mode) {
+        ExportMode.RECOMMENDED -> recommended
+        ExportMode.ORIGINAL -> ExportOptions()
+        ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = selection.longEdge, fps = customFps,
+            quality = selection.quality, png = selection.png)
+    }.copy(speed = speed, startMs = startMs, endMs = endMs)
+    val dimensions = if (options.original) source.width to source.height
+        else ExportSizing.dimensions(source.width, source.height, options.longEdge, source.video)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(s.text("Export your restoration", "匯出還原作品")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Choices(listOf(true to "Original", false to s.text("Custom", "自訂")), original) { original = it }
+            Choices(listOf(ExportMode.RECOMMENDED to s.text("Recommended", "建議"),
+                ExportMode.ORIGINAL to s.text("Original", "原始"), ExportMode.CUSTOM to s.text("Custom", "自訂")),
+                selection.mode) { onSelectionChange(selection.copy(mode = it)) }
             if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020\n" +
-                s.text("HDR is preserved in both modes. Preview brightness depends on your display.", "兩種模式均保留 HDR，預覽亮度取決於螢幕能力。"),
+                s.text("HDR is preserved in every mode. Preview brightness depends on your display.", "所有模式均保留 HDR，預覽亮度取決於螢幕能力。"),
                 color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             if (source.video) Text(s.text("Speed: ${speed}× · duration: ${"%.1f".format(lengthMs / speed / 1000)} s", "速度：${speed}× · 時長：${"%.1f".format(lengthMs / speed / 1000)} 秒") +
                 (if (endMs > 0 || startMs > 0) s.text(" · trimmed ${clock(startMs)}–${clock(startMs + lengthMs)}", " · 已剪輯 ${clock(startMs)}–${clock(startMs + lengthMs)}") else ""), fontSize = 12.sp)
             if (source.video && audio.changesAudio) Text(s.text("Audio: original ${(audio.originalVolume * 100).roundToInt()}%", "音訊：原聲 ${(audio.originalVolume * 100).roundToInt()}%") +
                 (if (audio.hasMusic) s.text(" + music ${(audio.musicVolume * 100).roundToInt()}%", " ＋ 音樂 ${(audio.musicVolume * 100).roundToInt()}%") else ""), fontSize = 12.sp)
-            if (original) {
-                Text("${source.width} × ${source.height}" + if (source.video) " · ${"%.2f".format(source.fps * min(speed, 1f))} fps" else " · PNG", fontWeight = FontWeight.SemiBold)
-                Text(if (source.video) s.text("Keeps source dimensions, frames and codec. Selected speed retimes frames and audio. Targets the source video bitrate, adjusted for speed; estimates it only when unavailable. Color correction requires re-encoding, so it is not bit-for-bit lossless.",
+            if (selection.mode != ExportMode.CUSTOM) {
+                val shownFps = if (options.fps == 0) sourceFps else min(sourceFps, options.fps.toFloat())
+                Text("${dimensions.first} × ${dimensions.second}" + if (source.video) " · ${"%.2f".format(shownFps)} fps"
+                    else if (options.original || options.png) " · PNG" else " · JPEG ${options.quality}%", fontWeight = FontWeight.SemiBold)
+                if (selection.mode == ExportMode.RECOMMENDED) Text(
+                    if (options.original) {
+                        if (source.video) s.text("This video is already within the suggested size and frame-rate limits, so source settings are kept.",
+                            "影片的尺寸與幀率已在建議範圍內，因此保留原始設定。")
+                        else s.text("This photo is already within the suggested size range, so source settings are kept.",
+                            "照片的尺寸已在建議範圍內，因此保留原始設定。")
+                    }
+                    else if (source.video) s.text("Keeps lower source dimensions and frame rates; caps larger video at 1080p and 30 fps with a balanced bitrate.",
+                        "保留較低的原始尺寸與幀率；較大的影片最多輸出 1080p、30 幀，並平衡位元率。")
+                    else if (options.png) s.text("Large PNG photos are resized while keeping their lossless format.",
+                        "高解析度 PNG 照片會縮小尺寸，同時保留無損格式。")
+                    else s.text("Large photos use a smaller, high-quality JPEG to balance detail and file size.",
+                        "高解析度照片使用較小的高畫質 JPEG，兼顧細節與檔案大小。"), fontSize = 12.sp)
+                else Text(if (source.video) s.text("Keeps source dimensions, frames and codec. Selected speed retimes frames and audio. Targets the source video bitrate, adjusted for speed; estimates it only when unavailable. Color correction requires re-encoding, so it is not bit-for-bit lossless.",
                     "保留原尺寸、影格與編碼格式；所選速度會調整影格及音訊時間。優先沿用來源影片位元率並依速度調整，缺少資料時才估算。色彩校正需要重新編碼，無法完全無損。")
                 else s.text("Full source dimensions, saved as lossless PNG after color correction. File size may increase. Metadata is not copied.",
                     "保留原始尺寸，調色後儲存為無損 PNG。檔案可能變大，不複製中繼資料。"), fontSize = 12.sp)
             } else {
                 Text(s.text("Resolution · longest edge", "解析度 · 最長邊"), fontWeight = FontWeight.SemiBold)
-                Choices(listOf(0 to s.text("Source", "原尺寸"), 3840 to "3840", 2560 to "2560", 1920 to "1920", 1280 to "1280", 960 to "960", 640 to "640"), edge) { edge = it }
-                val size = ExportSizing.dimensions(source.width, source.height, edge, source.video)
+                Choices(listOf(0 to s.text("Source", "原尺寸"), 3840 to "3840", 2560 to "2560", 1920 to "1920", 1280 to "1280", 960 to "960", 640 to "640"), selection.longEdge) {
+                    onSelectionChange(selection.copy(longEdge = it))
+                }
+                val size = ExportSizing.dimensions(source.width, source.height, selection.longEdge, source.video)
                 Text("${size.first} × ${size.second} px", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                 if (source.video) {
                     Text(s.text("Frame rate", "幀率"), fontWeight = FontWeight.SemiBold)
-                    Choices(listOf(0 to "Original") + listOf(24, 25, 30, 50, 60).filter { it <= source.fps * min(speed, 1f) }.map { it to "$it fps" }, fps) { fps = it }
+                    Choices(listOf(0 to s.text("Original", "原始")) + listOf(24, 25, 30, 50, 60).filter { it <= sourceFps }.map { it to "$it fps" }, customFps) {
+                        onSelectionChange(selection.copy(fps = it))
+                    }
                     Text(s.text("Lower frame rates drop frames; no interpolation. Output is H.264 for SDR or 10-bit HEVC for HDR, with source audio where compatible.",
                         "較低幀率會抽幀，不插幀。SDR 輸出為 H.264，HDR 為 10-bit HEVC，音訊相容時保留。"), fontSize = 11.sp)
                 } else {
-                    Choices(listOf(false to "JPEG", true to "PNG"), png) { png = it }
+                    Choices(listOf(false to "JPEG", true to "PNG"), selection.png) { onSelectionChange(selection.copy(png = it)) }
                 }
-                if (source.video || !png) {
-                    Text(s.text("Quality", "畫質") + " · ${quality.roundToInt()}%", fontWeight = FontWeight.SemiBold)
-                    Slider(quality, { quality = it }, valueRange = 10f..100f)
-                    Text(if (source.video) s.text("Controls target bitrate; higher values create larger files. 100% at source resolution and frame rate matches Original.", "調整目標位元率，數值越高，檔案越大。原尺寸、原幀率配合 100% 等同「Original」。")
+                if (source.video || !selection.png) {
+                    Text(s.text("Quality", "畫質") + " · ${selection.quality}%", fontWeight = FontWeight.SemiBold)
+                    Slider(selection.quality.toFloat(), { onSelectionChange(selection.copy(quality = it.roundToInt())) }, valueRange = 10f..100f)
+                    Text(if (source.video) s.text("Controls target bitrate; higher values create larger files. 100% at source resolution and frame rate matches Original.", "調整目標位元率，數值越高，檔案越大。原尺寸、原幀率配合 100% 等同「原始」。")
                         else s.text("JPEG compression quality.", "JPEG 壓縮畫質。"), fontSize = 11.sp)
                 }
             }
             if (source.video) {
                 val plan = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
-                    source.audioBitrate, source.durationMs, ExportOptions(original, edge, fps, quality.roundToInt(), png, speed, startMs, endMs), audio.changesAudio)
+                    source.audioBitrate, source.durationMs, options, audio.changesAudio)
                 val size = plan.estimatedBytes?.let { bytes ->
                     if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
                     else "%.1f MB".format(bytes / 1_000_000.0)
@@ -1140,6 +1260,6 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
             }
             Text(s.text("Saved to Gallery / AquaRestore. The original file is never overwritten.", "儲存至相簿／AquaRestore，不覆蓋原始檔案。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }, confirmButton = { Button(onClick = { export(ExportOptions(original, edge, fps, quality.roundToInt(), png, startMs = startMs, endMs = endMs)) }) { Text(s.text("Start export", "開始匯出")) } },
+    }, confirmButton = { Button(onClick = { export(options) }) { Text(s.text("Start export", "開始匯出")) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(s.text("Cancel", "取消")) } })
 }

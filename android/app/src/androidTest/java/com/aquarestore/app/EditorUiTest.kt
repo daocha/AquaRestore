@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -126,6 +127,11 @@ class EditorUiTest {
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.onNodeWithContentDescription("Export").performClick()
         ui.onNodeWithText("Original").assertIsDisplayed()
+        ui.onNodeWithText("Custom").performClick()
+        ui.onNodeWithText("Cancel").performClick()
+        ui.onNodeWithContentDescription("Export").performClick()
+        ui.onNodeWithText("Custom").assertIsSelected()
+        ui.onNodeWithText("Original").performClick()
         ui.onNodeWithText("Start export").performClick()
         // A notification permission sheet is not required for foreground export completion.
         ui.waitUntil(20_000) { Exports.status.value.uri != null }
@@ -192,7 +198,11 @@ class EditorUiTest {
             listOf(0, 8, 16).sumOf { shift -> kotlin.math.abs((corrected[i] ushr shift and 255) - (uncorrected[i] ushr shift and 255)) }
         }.toDouble() / (corrected.size * 3)
         assertTrue("Paused video pixels did not update: mean difference $difference", difference > 3.0)
-        ui.onNodeWithText("Video speed").performClick()
+        ui.onNodeWithContentDescription("Video speed").performClick()
+        ui.onNodeWithContentDescription("Video speed").assertDoesNotExist()
+        ui.onNodeWithTag("mediaPreview").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Video speed").assertExists()
+        ui.onNodeWithContentDescription("Video speed").performClick()
         ui.onNodeWithText("2×").performClick()
         ui.runOnIdle { assertEquals(2f, findPlayer(ui.activity.window.decorView)!!.player!!.playbackParameters.speed, 0f) }
         ui.activityRule.scenario.recreate()
@@ -204,6 +214,36 @@ class EditorUiTest {
             assertFalse(player.playWhenReady)
             assertTrue("Position was reset to ${player.currentPosition}", player.currentPosition in 750..850)
         }
+        ui.onNodeWithContentDescription("Trim range").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Set start").assertExists()
+        ui.onNodeWithContentDescription("Set end").assertExists()
+        ui.onNodeWithContentDescription("Video speed").assertDoesNotExist()
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        // A second tap seeks immediately, even while the trim actions are visible.
+        ui.onNodeWithContentDescription("Trim range").performTouchInput {
+            click(Offset(width * 0.75f, height / 2f))
+        }
+        val threeQuarters = model.source.value!!.durationMs * 3 / 4
+        ui.waitUntil(10_000) {
+            var position = 0L
+            ui.runOnUiThread { position = findPlayer(ui.activity.window.decorView)!!.player!!.currentPosition }
+            position in (threeQuarters - 150)..(threeQuarters + 150)
+        }
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        ui.onNodeWithContentDescription("Trim range").performTouchInput {
+            down(Offset(width * 0.75f, height / 2f))
+            moveTo(Offset(width * 0.25f, height / 2f))
+            up()
+        }
+        val oneQuarter = model.source.value!!.durationMs / 4
+        ui.waitUntil(10_000) {
+            var position = 0L
+            ui.runOnUiThread { position = findPlayer(ui.activity.window.decorView)!!.player!!.currentPosition }
+            position in (oneQuarter - 150)..(oneQuarter + 150)
+        }
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        ui.onNodeWithTag("mediaPreview").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Video speed").assertExists()
         ui.onNodeWithContentDescription("Export").performClick()
         ui.onNodeWithTag("estimatedSize").performScrollTo().assertIsDisplayed()
         ui.onNodeWithText("Custom").performScrollTo().performClick()

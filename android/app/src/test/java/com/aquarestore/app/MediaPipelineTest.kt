@@ -25,6 +25,36 @@ class MediaPipelineTest {
         assertEquals(640 to 480, ExportSizing.dimensions(640, 480, 1920, true))
         assertEquals(4033 to 3025, ExportSizing.dimensions(4033, 3025, 0))
     }
+    @Test fun photoRecommendationKeepsSmallSourcesAndBalancesLargeOnes() {
+        assertTrue(ExportRecommendation.photo(1920, 1080).original)
+        assertTrue(ExportRecommendation.photo(2560, 1440).original)
+        val large = ExportRecommendation.photo(4032, 3024)
+        assertFalse(large.original)
+        assertFalse(large.png)
+        assertEquals(90, large.quality)
+        assertEquals(2560 to 1920, ExportSizing.dimensions(4032, 3024, large.longEdge))
+        assertTrue(ExportRecommendation.photo(4032, 3024, "image/png").png)
+    }
+
+    @Test fun videoRecommendationNeverExceedsSourceDimensionsFrameRateOrBitrate() {
+        assertTrue(ExportRecommendation.video(1280, 720, 24f).original)
+        val smallFast = ExportRecommendation.video(1280, 720, 60f)
+        assertFalse(smallFast.original)
+        assertEquals(0, smallFast.longEdge)
+        assertEquals(30, smallFast.fps)
+        val large = ExportRecommendation.video(3840, 2160, 60f)
+        assertEquals(1920 to 1080, ExportSizing.dimensions(3840, 2160, large.longEdge))
+        assertEquals(30, large.fps)
+        val square = ExportRecommendation.video(3840, 3840, 24f)
+        assertEquals(1080 to 1080, ExportSizing.dimensions(3840, 3840, square.longEdge))
+        assertEquals(0, square.fps)
+        for (rate in listOf(0, 2_000_000, 20_000_000)) {
+            val source = videoExportPlan(3840, 2160, 60f, rate, 128_000, 60_000, ExportOptions())
+            val suggested = videoExportPlan(3840, 2160, 60f, rate, 128_000, 60_000, large)
+            assertTrue("recommended bitrate must not exceed source estimate", suggested.bitrate <= source.bitrate)
+            assertTrue(suggested.estimatedBytes!! <= source.estimatedBytes!!)
+        }
+    }
     @Test fun originalUsesSourceRateEvenBelowHeuristicAndMinimum() {
         assertEquals(8_000_000, ExportSizing.bitrate(3840, 2160, 60f, 100, 8_000_000, true))
         assertEquals(200_000, ExportSizing.bitrate(640, 360, 30f, 100, 200_000, true))

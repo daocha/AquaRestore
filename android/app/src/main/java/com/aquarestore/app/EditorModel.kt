@@ -18,6 +18,8 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     private val prefs = context.getSharedPreferences("preferences", 0)
     val language = MutableStateFlow(prefs.getString("language", "system")!!)
     val theme = MutableStateFlow(prefs.getString("theme", "system")!!)
+    val photoExportSelection = MutableStateFlow(readExportSelection(false))
+    val videoExportSelection = MutableStateFlow(readExportSelection(true))
     val source = MutableStateFlow<SourceMedia?>(null)
     val analysis = MutableStateFlow<Analysis?>(null)
     val grade = MutableStateFlow(Grade.Neutral)
@@ -36,10 +38,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     /** Ungraded thumbnails spread over the clip for the trim bar, and the preview's play position. */
     val filmstrip = MutableStateFlow<List<Bitmap>>(emptyList())
     val playhead = MutableStateFlow(0L)
-    /**
-     * Positions picked on the trim bar, with whether to play from there (a tap or a finished drag)
-     * or hold the frame (mid-drag). Events, so a quick tap is never lost.
-     */
+    /** Positions picked on the trim bar. The Boolean marks a tap or the end of a drag. */
     val scrub = MutableSharedFlow<Pair<Long, Boolean>>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     /** Soundtrack: original-audio and music volumes, the music file, and where in the song the video starts. */
     val originalVolume = MutableStateFlow(1f)
@@ -60,6 +59,22 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     fun preference(key: String, value: String) {
         prefs.edit().putString(key, value).apply()
         if (key == "language") language.value = value else theme.value = value
+    }
+
+    private fun readExportSelection(video: Boolean): ExportSelection {
+        val prefix = if (video) "export_video_" else "export_photo_"
+        val mode = runCatching { ExportMode.valueOf(prefs.getString(prefix + "mode", "RECOMMENDED")!!) }
+            .getOrDefault(ExportMode.RECOMMENDED)
+        return ExportSelection(mode, prefs.getInt(prefix + "edge", 1920), prefs.getInt(prefix + "fps", 0),
+            prefs.getInt(prefix + "quality", 90).coerceIn(10, 100), prefs.getBoolean(prefix + "png", false))
+    }
+
+    fun setExportSelection(video: Boolean, selection: ExportSelection) {
+        (if (video) videoExportSelection else photoExportSelection).value = selection
+        val prefix = if (video) "export_video_" else "export_photo_"
+        prefs.edit().putString(prefix + "mode", selection.mode.name).putInt(prefix + "edge", selection.longEdge)
+            .putInt(prefix + "fps", selection.fps).putInt(prefix + "quality", selection.quality)
+            .putBoolean(prefix + "png", selection.png).apply()
     }
 
     fun import(uri: Uri) {
