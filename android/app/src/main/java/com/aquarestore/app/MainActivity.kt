@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -192,7 +193,11 @@ private fun Editor(model: EditorModel, s: Strings) {
         } catch (_: Exception) { model.error.value = "openFailed" }
     }
     LaunchedEffect(export.busy) { if (export.busy) showProgress = true }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(model::import) }
+    // Android's photo picker: a gallery grid that needs no storage permission. It falls back to the file browser
+    // on phones without it, and "Browse files" opens that browser for media outside the gallery.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { it?.let(model::import) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(model::import) }
+    fun pickMedia() = picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
     val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(model::addMusic) }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val busy = phase != null || export.busy
@@ -214,7 +219,7 @@ private fun Editor(model: EditorModel, s: Strings) {
                 Icon(Icons.Rounded.Close, s.text("Close", "關閉"))
             }
         }, actions = {
-            if (source != null && phase == null) IconButton(onClick = { picker.launch(arrayOf("video/*", "image/*")) }, enabled = !busy) {
+            if (source != null && phase == null) IconButton(onClick = ::pickMedia, enabled = !busy) {
                 Icon(Icons.Rounded.SwapHoriz, s.text("Change media", "更換素材"))
             }
             if (source != null && phase == null) FilledIconButton(onClick = { showExport = true }, enabled = !busy) {
@@ -231,7 +236,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         Column(Modifier.padding(inset).fillMaxSize().then(if (source == null || phase != null) Modifier.verticalScroll(editorScroll) else Modifier).padding(horizontal = if (maximized) 0.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
-                Welcome(s, enabled = !busy) { picker.launch(arrayOf("video/*", "image/*")) }
+                Welcome(s, enabled = !busy, onBrowse = { filePicker.launch(arrayOf("video/*", "image/*")) }, onImport = ::pickMedia)
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -411,7 +416,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onBrowse: () -> Unit, onImport: () -> Unit) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -420,6 +425,9 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit) {
     OceanArt(Modifier.fillMaxWidth().height(230.dp))
     Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
+    }
+    TextButton(onClick = onBrowse, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(s.text("Browse files", "瀏覽檔案"))
     }
     Panel {
         listOf(
