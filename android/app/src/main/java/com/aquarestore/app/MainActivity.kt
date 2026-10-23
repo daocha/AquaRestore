@@ -978,7 +978,11 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                 HorizontalDivider()
                 Text(s.text("Updates", "更新"), fontWeight = FontWeight.SemiBold)
                 Text("AquaRestore ${BuildConfig.VERSION_NAME} · " +
-                    if (update.source == UpdateSource.PLAY) "Google Play" else "GitHub",
+                    when (update.source) {
+                        UpdateSource.PLAY -> "Google Play"
+                        UpdateSource.LAN -> s.text("Local network", "區域網路")
+                        UpdateSource.GITHUB -> "GitHub"
+                    },
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val status = when (update.phase) {
                     UpdatePhase.IDLE -> s.text("Check for a newer version", "檢查是否有新版本")

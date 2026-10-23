@@ -29,4 +29,16 @@ class ReleaseUpdatesTest {
         assertNull(ReleaseUpdates.checksum("$hash  other.apk", "AquaRestore-2026.10.24-4.apk"))
         assertNull(ReleaseUpdates.checksum("bad  AquaRestore-2026.10.24-4.apk", "AquaRestore-2026.10.24-4.apk"))
     }
+
+    @Test fun lanUpdateMustBeNewerAndNamedForItsVersion() {
+        val base = "http://10.0.0.2:8765/"
+        fun lan(code: Int = 9, apk: String = "AquaRestore-debug-$code.apk", size: Int = 1234) =
+            JSONObject("""{"versionCode":$code,"versionName":"2026.10.25-debug","apk":"$apk","size":$size}""")
+        val update = ReleaseUpdates.selectLan(lan(), 8, base)!!
+        assertEquals("http://10.0.0.2:8765/AquaRestore-debug-9.apk", update.apkUrl)
+        assertEquals("http://10.0.0.2:8765/AquaRestore-debug-9.SHA256SUMS", update.checksumUrl)
+        assertNull(ReleaseUpdates.selectLan(lan(), 9, base))
+        assertNull(ReleaseUpdates.selectLan(lan(apk = "../other.apk"), 8, base))
+        assertNull(ReleaseUpdates.selectLan(lan(size = 0), 8, base))
+    }
 }
