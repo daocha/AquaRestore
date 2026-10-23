@@ -87,9 +87,10 @@ android {
     lint { disable += "UnsafeOptInUsageError" }
 }
 if (devUpdateHost != null) androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
-    // Every LAN build must count as newer than the installed one: minutes since 2026-01-01 UTC.
+    // Every LAN build must count as newer than the installed one: minutes since 2026-01-01 UTC. The version
+    // name carries it too (2026.10.25-debug.425918), so builds made on the same day can be told apart.
     val stamp = (System.currentTimeMillis() / 60_000 - 29_453_760).toInt()
-    variant.outputs.forEach { it.versionCode.set(stamp) }
+    variant.outputs.forEach { it.versionCode.set(stamp); it.versionName.set("${it.versionName.get()}.$stamp") }
     val network = tasks.register<LanNetworkConfig>("${variant.name}LanNetworkConfig") { host.set(devUpdateHost) }
     variant.sources.res?.addGeneratedSourceDirectory(network, LanNetworkConfig::outputDir)
     val publish = tasks.register<PublishLanUpdate>("${variant.name}PublishLanUpdate") {
