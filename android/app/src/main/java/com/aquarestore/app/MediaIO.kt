@@ -1,5 +1,6 @@
 package com.aquarestore.app
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
@@ -86,12 +87,23 @@ object MediaIO {
     fun bitmap(context: Context, uri: Uri, edge: Int): Bitmap =
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
             val (w, h) = ExportSizing.dimensions(info.size.width, info.size.height, edge)
-            if (w.toLong() * h * 8 > Runtime.getRuntime().maxMemory() / 2) throw MediaProblem("memory")
+            checkMemory(context, w.toLong() * h)
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             decoder.isMutableRequired = true
             decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
             decoder.setTargetSize(w, h)
         }
+
+    /**
+     * A bitmap's pixels (4 bytes each) live in native memory, bounded by the device's free RAM rather than the
+     * Java heap. Only [gradeBitmap]'s clarity luma (1 byte each) is on the heap; allow it twice for headroom.
+     */
+    private fun checkMemory(context: Context, pixels: Long) {
+        val runtime = Runtime.getRuntime()
+        val heapFree = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+        val device = ActivityManager.MemoryInfo().also { context.getSystemService(ActivityManager::class.java).getMemoryInfo(it) }
+        if (pixels * 2 > heapFree || pixels * 4 > (device.availMem - device.threshold) / 2) throw MediaProblem("memory")
+    }
 
     suspend fun analyze(context: Context, source: SourceMedia): Analysis = withContext(Dispatchers.IO) {
         val frames = mutableListOf<IntArray>()

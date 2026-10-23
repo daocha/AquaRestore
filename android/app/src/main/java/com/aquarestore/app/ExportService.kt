@@ -132,14 +132,17 @@ class ExportService : Service() {
                     audio = request.audio) { update(it?.let { p -> p * 90 / 100 }) }
             } else {
                 withContext(Dispatchers.Default) {
-                    val bitmap = MediaIO.bitmap(this@ExportService, source.uri, if (o.original) 0 else o.longEdge)
+                    // The memory check is an estimate; running out anyway still reports it instead of crashing.
+                    val bitmap = try { MediaIO.bitmap(this@ExportService, source.uri, if (o.original) 0 else o.longEdge) }
+                        catch (_: OutOfMemoryError) { throw MediaProblem("memory") }
                     try {
                         MediaIO.gradeBitmap(bitmap, request.grade) { update(it * 80 / 100) }
                         update(82, "encoding")
                         temp.outputStream().use {
                             check(bitmap.compress(if (losslessImage) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, o.quality, it))
                         }
-                    } finally { bitmap.recycle() }
+                    } catch (_: OutOfMemoryError) { throw MediaProblem("memory") }
+                    finally { bitmap.recycle() }
                 }
             }
             currentCoroutineContext().ensureActive()
