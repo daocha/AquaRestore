@@ -470,12 +470,14 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     val pressed by interaction.collectIsPressedAsState()
     LaunchedEffect(pressed) { model.setCompare(pressed) }
     DisposableEffect(model) { onDispose { model.setCompare(false) } }
+    var player by remember { mutableStateOf<Player?>(null) }
+    var buttonsHeight by remember { mutableIntStateOf(0) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.testTag("mediaPreview").fillMaxWidth()
+        BoxWithConstraints(Modifier.testTag("mediaPreview").fillMaxWidth()
             .then(if (maximized) Modifier.weight(1f)
                 else Modifier.height((LocalConfiguration.current.screenHeightDp * 0.24f).coerceIn(72f, 250f).dp).clip(RoundedCornerShape(20.dp)))
             .background(Color.Black), contentAlignment = Alignment.Center) {
-            if (uri != null) VideoPreview(model, exporting)
+            if (uri != null) VideoPreview(model, exporting, maximized) { player = it }
             else (if (compare) original else corrected ?: original)?.let {
                 Image(it.asImageBitmap(), s.text("Media preview", "素材預覽"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
@@ -490,7 +492,8 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                         if (maximized) s.text("Exit full screen", "結束全螢幕") else s.text("Full screen", "全螢幕"), Modifier.size(22.dp))
                 }
             }
-            if (maximized) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+            if (maximized) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()
+                .onSizeChanged { buttonsHeight = it.height },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CompareButton(interaction, s, overlay = true)
@@ -501,10 +504,19 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                         Text(if (adjusting) s.text("Hide", "收起") else s.text("Adjust", "調整"))
                     }
                 }
-                // The panel floats over the video so it keeps its size; closed, the buttons stay above the player's time bar.
+                // The panel floats over the video so it keeps its size.
                 if (adjusting) FullScreenAdjustments(model, s, !exporting,
                     Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.4f).dp))
-                else Spacer(Modifier.height(80.dp))
+                else Spacer(Modifier.height(16.dp))
+            }
+            // Full screen: the play bar sits just under the video (below a landscape one), but never lower than
+            // a little above the buttons, so on a portrait video it covers only the bottom edge.
+            val shown = player
+            if (maximized && uri != null && shown != null) {
+                val aspect = source?.let { if (it.width > 0 && it.height > 0) it.width.toFloat() / it.height else null }
+                val videoBottom = (maxHeight + (aspect?.let { minOf(maxHeight, maxWidth / it) } ?: maxHeight)) / 2
+                val lowest = maxHeight - with(LocalDensity.current) { buttonsHeight.toDp() } - PlayBarHeight - 8.dp
+                PlayBar(shown, s, Modifier.align(Alignment.TopCenter).offset(y = minOf(videoBottom + 8.dp, lowest).coerceAtLeast(0.dp)))
             }
         }
         if (!maximized) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -516,6 +528,42 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
             Spacer(Modifier.width(8.dp))
             CompareButton(interaction, s, overlay = false)
         }
+    }
+}
+
+private val PlayBarHeight = 48.dp
+
+/** Full screen's own play controls, drawn outside the player view so they can sit off the video. */
+@Composable
+private fun PlayBar(player: Player, s: Strings, modifier: Modifier = Modifier) {
+    var playing by remember(player) { mutableStateOf(player.playWhenReady) }
+    var position by remember(player) { mutableLongStateOf(player.currentPosition) }
+    var duration by remember(player) { mutableLongStateOf(0L) }
+    var dragging by remember(player) { mutableStateOf<Float?>(null) }
+    LaunchedEffect(player) {
+        while (true) {
+            playing = player.playWhenReady
+            position = player.currentPosition
+            duration = player.duration.coerceAtLeast(0)
+            delay(100)
+        }
+    }
+    // Seeking exactly to the end would make the looping player wrap; 1 ms earlier shows the last frame.
+    fun seek(value: Float) = player.seekTo(if (duration > 0) min(value.toLong(), duration - 1) else value.toLong())
+    Row(modifier.padding(horizontal = 12.dp).fillMaxWidth().height(PlayBarHeight)
+        .background(Color.Black.copy(alpha = 0.65f), CircleShape).padding(end = 16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { if (player.playWhenReady) player.pause() else player.play() }) {
+            Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                if (playing) s.text("Pause", "暫停") else s.text("Play", "播放"), tint = Color.White)
+        }
+        Text(clock(dragging?.toLong() ?: position), color = Color.White, fontSize = 12.sp)
+        Slider(dragging ?: position.coerceIn(0, maxOf(duration, 1)).toFloat(), { dragging = it; seek(it) },
+            Modifier.weight(1f).padding(horizontal = 10.dp), valueRange = 0f..maxOf(duration, 1).toFloat(),
+            onValueChangeFinished = { dragging = null },
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White,
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
+        Text(clock(duration), color = Color.White, fontSize = 12.sp)
     }
 }
 
@@ -724,7 +772,7 @@ private fun boostablePlayer(context: android.content.Context, boost: VolumeProce
     }).build()
 
 @Composable
-private fun VideoPreview(model: EditorModel, exporting: Boolean) {
+private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Boolean, onPlayer: (Player?) -> Unit) {
     val context = LocalContext.current
     val uri by model.previewUri.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -739,6 +787,7 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean) {
             prepare(); playWhenReady = model.playbackWanted && !exporting
         }
     }
+    DisposableEffect(player) { onPlayer(player); onDispose { onPlayer(null) } }
     val speed by model.speed.collectAsStateWithLifecycle()
     LaunchedEffect(player, speed) { player.setPlaybackSpeed(speed) }
     val originalVolume by model.originalVolume.collectAsStateWithLifecycle()
@@ -882,7 +931,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // The paused-frame refresh above is a seek; with auto-show, every grade change would pop up the controls.
         AndroidView(factory = { PlayerView(it).apply { this.player = player; controllerAutoShow = false; setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING) }.also { playerView = it } },
-            update = { it.player = player }, modifier = if (aspect != null) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize())
+            // Full screen draws its own play bar (PlayBar) so it can sit outside the video.
+            update = { it.player = player; it.useController = !maximized }, modifier = if (aspect != null) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize())
     }
 }
 
