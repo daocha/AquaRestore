@@ -2,6 +2,8 @@ package com.aquarestore.app
 
 import android.content.Context
 import android.opengl.GLES20
+import androidx.media3.common.GlObjectsProvider
+import androidx.media3.common.GlTextureInfo
 import androidx.media3.common.VideoFrameProcessingException
 import androidx.media3.common.util.GlProgram
 import androidx.media3.common.util.GlUtil
@@ -11,6 +13,8 @@ import androidx.media3.effect.GlEffect
 
 class GradeState(@Volatile var grade: Grade = Grade()) {
     @Volatile var compare = false
+    /** Source frames per second that are graded and shown; the rest are dropped before grading. 0 keeps every frame. */
+    @Volatile var frameRate = 0f
 }
 
 /** Compiled once. Slider changes update uniforms without rebuilding the player or decoder. */
@@ -25,6 +29,19 @@ class UnderwaterEffect(private val state: GradeState) : GlEffect {
         }
         private var texel = floatArrayOf(1f, 1f)
         private var radius = 1f
+        private var cadence: FrameCadence? = null
+        private var cadenceRate = 0f
+        override fun queueInputFrame(glObjectsProvider: GlObjectsProvider, inputTexture: GlTextureInfo, presentationTimeUs: Long) {
+            val rate = state.frameRate
+            if (rate != cadenceRate) { cadenceRate = rate; cadence = if (rate > 0f) FrameCadence(rate) else null }
+            if (cadence?.accept(presentationTimeUs) == false) {
+                getInputListener().onInputFrameProcessed(inputTexture)
+                getInputListener().onReadyToAcceptInputFrame()
+                return
+            }
+            super.queueInputFrame(glObjectsProvider, inputTexture, presentationTimeUs)
+        }
+        override fun flush() { cadence?.reset(); super.flush() }
         override fun configure(inputWidth: Int, inputHeight: Int): Size {
             texel = floatArrayOf(1f / inputWidth, 1f / inputHeight)
             radius = Clarity.radius(inputWidth, inputHeight).toFloat()
