@@ -11,7 +11,11 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import java.io.File
+
+/** Long edge of the sharper photo shown in full screen: about full size for a 12 MP phone photo, within memory. */
+private const val DETAIL_EDGE = 3840
 
 class EditorModel(application: Application) : AndroidViewModel(application) {
     private val context get() = getApplication<Application>().applicationContext
@@ -27,6 +31,13 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     val previewUri = MutableStateFlow<Uri?>(null)
     val previewOriginal = MutableStateFlow<Bitmap?>(null)
     val previewGraded = MutableStateFlow<Bitmap?>(null)
+    /**
+     * A sharper copy of the photo for full screen, where the 720 px preview turns soft when zoomed: the original
+     * at up to [DETAIL_EDGE] and its graded version, with the grade it shows. Built in the background once the
+     * settings stop changing; until then full screen shows the fast preview.
+     */
+    val detailOriginal = MutableStateFlow<Bitmap?>(null)
+    val detailGraded = MutableStateFlow<Pair<Grade, Bitmap>?>(null)
     val phase = MutableStateFlow<String?>(null)
     val progress = MutableStateFlow<Int?>(null)
     val error = MutableStateFlow<String?>(null)
@@ -52,6 +63,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     private var musicJob: Job? = null
     private var importJob: Job? = null
     private var gradeJob: Job? = null
+    private var detailJob: Job? = null
     private var proxy: File? = null
     var playbackPositionMs = 0L
     var playbackWanted = true
@@ -77,6 +89,13 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             .putBoolean(prefix + "png", selection.png).apply()
     }
 
+    /** Forgets the saved Custom settings, so the dialog shows the defaults again. */
+    fun resetCustomExport(video: Boolean) {
+        val prefix = if (video) "export_video_" else "export_photo_"
+        prefs.edit().remove(prefix + "edge").remove(prefix + "fps").remove(prefix + "quality").remove(prefix + "png").apply()
+        (if (video) videoExportSelection else photoExportSelection).value = readExportSelection(video)
+    }
+
     fun import(uri: Uri) {
         if (Exports.status.value.busy) return
         speed.value = 1f
@@ -93,6 +112,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         previewUri.value = null
         previewOriginal.value = null
         previewGraded.value = null
+        setDetailWanted(false)
         source.value = null
         analysis.value = null
         setCompare(false)
@@ -215,6 +235,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         previewUri.value = null
         previewOriginal.value = null
         previewGraded.value = null
+        setDetailWanted(false)
         filmstrip.value = emptyList()
         trim.value = 0L..0L
         speed.value = 1f
@@ -246,6 +267,40 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                 previewGraded.value = bitmap
                 rendered = snapshot
                 delay(16)
+            }
+        }
+    }
+
+    /** Full screen asks for the sharper photo; leaving it frees the memory again. */
+    fun setDetailWanted(wanted: Boolean) {
+        detailJob?.cancel()
+        detailJob = null
+        if (!wanted) {
+            detailOriginal.value = null
+            detailGraded.value = null
+            return
+        }
+        val media = source.value?.takeIf { !it.video } ?: return
+        detailJob = viewModelScope.launch {
+            try {
+                val original = detailOriginal.value ?: withContext(Dispatchers.IO) {
+                    MediaIO.bitmap(context, media.uri, DETAIL_EDGE)
+                }.also { detailOriginal.value = it }
+                grade.collectLatest { snapshot ->
+                    if (detailGraded.value?.first == snapshot) return@collectLatest
+                    // Wait for the sliders to settle: a full-size grade takes far longer than the preview's.
+                    delay(300)
+                    val bitmap = withContext(Dispatchers.Default) {
+                        val copy = original.copy(Bitmap.Config.ARGB_8888, true)
+                        try { MediaIO.gradeBitmap(copy, snapshot) }
+                        catch (e: Exception) { copy.recycle(); throw e }
+                    }
+                    detailGraded.value = snapshot to bitmap
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                // Full screen keeps the preview; a sharper copy is only an improvement.
+                android.util.Log.w("AquaRestore", "Full-screen detail unavailable", e)
             }
         }
     }

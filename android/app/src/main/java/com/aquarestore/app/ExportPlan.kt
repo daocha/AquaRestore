@@ -2,6 +2,9 @@ package com.aquarestore.app
 
 import kotlin.math.*
 
+/** Original keeps full quality: JPEG at the encoder's maximum, PNG lossless. */
+const val ORIGINAL_JPEG_QUALITY = 100
+
 data class ExportOptions(
     val original: Boolean = true,
     val longEdge: Int = 1920, // 0 = source dimensions
@@ -27,9 +30,9 @@ data class ExportSelection(
 )
 
 object ExportRecommendation {
-    /** Small photos keep full dimensions; large photos are reduced, preserving PNG when needed. */
+    /** Small photos keep full dimensions; large photos are reduced. PNG sources stay PNG, others become JPEG. */
     fun photo(width: Int, height: Int, mime: String = "image/jpeg"): ExportOptions =
-        if (max(width, height) <= 2560) ExportOptions()
+        if (max(width, height) <= 2560) ExportOptions(quality = 95, png = mime == "image/png")
         else ExportOptions(original = false, longEdge = 2560, quality = 90, png = mime == "image/png")
 
     /** Bound both axes to a 1080p frame, preserve lower source rates, and never enlarge the source. */

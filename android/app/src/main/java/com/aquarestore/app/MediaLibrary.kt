@@ -96,12 +96,25 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
         value = if (allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly) }.getOrDefault(emptyList()) }
             else emptyList()
     }
-    var section by rememberSaveable(audioOnly) { mutableStateOf("recent") }
-    var selectedAlbum by rememberSaveable(audioOnly) { mutableStateOf<String?>(null) }
+    // Opens where it was last left (Recent or an album), separately for media and music.
+    val prefs = remember { context.getSharedPreferences("preferences", 0) }
+    val key = if (audioOnly) "library_music_" else "library_media_"
+    var section by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "section", null) ?: "recent") }
+    var selectedAlbum by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "album", null)) }
+    LaunchedEffect(section, selectedAlbum) {
+        prefs.edit().putString(key + "section", section).putString(key + "album", selectedAlbum).apply()
+    }
     var menuExpanded by remember { mutableStateOf(false) }
     val albums = remember(items) {
         items.orEmpty().groupBy { it.albumId }.map { (id, members) ->
             LibraryAlbum(id, members.first().albumName, members.first(), members.size)
+        }
+    }
+    // A remembered album that is gone (deleted or emptied) falls back to Recent.
+    LaunchedEffect(albums) {
+        if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
+            section = "recent"
+            selectedAlbum = null
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {

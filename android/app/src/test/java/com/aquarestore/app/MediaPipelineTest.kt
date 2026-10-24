@@ -28,6 +28,9 @@ class MediaPipelineTest {
     @Test fun photoRecommendationKeepsSmallSourcesAndBalancesLargeOnes() {
         assertTrue(ExportRecommendation.photo(1920, 1080).original)
         assertTrue(ExportRecommendation.photo(2560, 1440).original)
+        assertFalse(ExportRecommendation.photo(1920, 1080).png)
+        assertEquals(95, ExportRecommendation.photo(1920, 1080).quality)
+        assertTrue(ExportRecommendation.photo(1920, 1080, "image/png").png)
         val large = ExportRecommendation.photo(4032, 3024)
         assertFalse(large.original)
         assertFalse(large.png)

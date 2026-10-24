@@ -197,10 +197,13 @@ class MediaWorkflowTest {
 
     @Test fun imageOriginalAndRepeatedCustomExportsWork() = runBlocking {
         val source = MediaIO.inspect(app, photo())
-        val original = export(source, ExportOptions())
-        assertEquals("image/png", app.contentResolver.getType(original))
+        val original = export(source, ExportOptions(quality = ORIGINAL_JPEG_QUALITY))
+        assertEquals("image/jpeg", app.contentResolver.getType(original))
         val full = MediaIO.inspect(app, original)
         assertEquals(640, full.width); assertEquals(360, full.height)
+        val lossless = export(source, ExportOptions(png = true))
+        assertEquals("image/png", app.contentResolver.getType(lossless))
+        assertEquals(640, MediaIO.inspect(app, lossless).width)
         // Start a new job immediately after success to catch foreground-service teardown races.
         val low = export(source, ExportOptions(original = false, longEdge = 320, quality = 15))
         val high = export(source, ExportOptions(original = false, longEdge = 320, quality = 98))
