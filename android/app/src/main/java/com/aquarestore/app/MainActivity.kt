@@ -478,6 +478,11 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     val corrected by model.previewGraded.collectAsStateWithLifecycle()
     val compare by model.compare.collectAsStateWithLifecycle()
     val source by model.source.collectAsStateWithLifecycle()
+    val grade by model.grade.collectAsStateWithLifecycle()
+    val detailOriginal by model.detailOriginal.collectAsStateWithLifecycle()
+    val detailGraded by model.detailGraded.collectAsStateWithLifecycle()
+    // Full screen zooms in up to 5×, so it shows a sharper copy once that is graded with the current settings.
+    LaunchedEffect(maximized, source?.uri) { model.setDetailWanted(maximized) }
     var adjusting by rememberSaveable { mutableStateOf(false) }
     var player by remember { mutableStateOf<Player?>(null) }
     var buttonsHeight by remember { mutableIntStateOf(0) }
@@ -515,7 +520,8 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     translationY = if (maximized) previewPan.y + lift else 0f
                 }, contentAlignment = Alignment.Center) {
                     if (uri != null) VideoPreview(model, exporting, maximized) { player = it; onPlayer(it) }
-                    else (if (compare) original else corrected ?: original)?.let {
+                    else (if (compare) (if (maximized) detailOriginal else null) ?: original
+                        else detailGraded?.takeIf { maximized && it.first == grade }?.second ?: corrected ?: original)?.let {
                         Image(it.asImageBitmap(), s.text("Media preview", "素材預覽"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                     }
                 }
