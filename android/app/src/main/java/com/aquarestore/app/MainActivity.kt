@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -49,6 +50,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.positionInRoot
 import android.graphics.Bitmap
@@ -170,11 +172,16 @@ private fun Editor(model: EditorModel, s: Strings) {
     var speedExpanded by rememberSaveable { mutableStateOf(false) }
     var trimPicked by remember { mutableStateOf<Long?>(null) }
     var overlayBounds by remember { mutableStateOf<Rect?>(null) }
+    var trimBarBounds by remember { mutableStateOf<Rect?>(null) }
     var scaffoldOrigin by remember { mutableStateOf(Offset.Zero) }
-    LaunchedEffect(source?.uri) { speedExpanded = false; trimPicked = null; overlayBounds = null }
+    LaunchedEffect(source?.uri) { speedExpanded = false; trimPicked = null; overlayBounds = null; trimBarBounds = null }
     var mediaLibrary by rememberSaveable { mutableStateOf(false) }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
+    val compare = remember { MutableInteractionSource() }
+    val comparing by compare.collectIsPressedAsState()
+    LaunchedEffect(comparing) { model.setCompare(comparing) }
+    DisposableEffect(model) { onDispose { model.setCompare(false) } }
     var restoreExpanded by rememberSaveable { mutableStateOf(false) }
     var audioExpanded by rememberSaveable { mutableStateOf(false) }
     var confirmClose by rememberSaveable { mutableStateOf(false) }
@@ -225,11 +232,14 @@ private fun Editor(model: EditorModel, s: Strings) {
         onDispose { if (previous != null) window.colorMode = previous }
     }
     Scaffold(modifier = Modifier.onGloballyPositioned { scaffoldOrigin = it.positionInRoot() }
-        .pointerInput(speedExpanded, trimPicked, overlayBounds, scaffoldOrigin) {
+        .pointerInput(speedExpanded, trimPicked, overlayBounds, trimBarBounds, scaffoldOrigin) {
             if (!speedExpanded && trimPicked == null) return@pointerInput
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                if (overlayBounds?.contains(down.position + scaffoldOrigin) != true) {
+                val at = down.position + scaffoldOrigin
+                // The trim bar closes these itself when it picks a frame, so the play row never flashes in between.
+                val onTrimBar = trimBarBounds?.contains(at) == true
+                if (overlayBounds?.contains(at) != true && !onTrimBar) {
                     speedExpanded = false
                     trimPicked = null
                 }
@@ -273,20 +283,18 @@ private fun Editor(model: EditorModel, s: Strings) {
                 Progress(progress)
                 OutlinedButton(onClick = model::cancelImport) { Text(s.text("Cancel", "取消")) }
             } else if (source != null) {
-                Preview(model, s, export.busy, maximized, { maximized = it }, { editorPlayer = it },
+                Preview(model, s, export.busy, maximized, { maximized = it }, { editorPlayer = it }, compare,
                     speedExpanded, { speedExpanded = it }, trimPicked, { trimPicked = it },
-                    { overlayBounds = it }, if (maximized) Modifier.weight(1f) else Modifier)
+                    { overlayBounds = it }, { trimBarBounds = it }, if (maximized) Modifier.weight(1f) else Modifier)
                 if (!maximized) Column(Modifier.weight(1f).verticalScroll(editorScroll).testTag("adjustments"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (source!!.video && source!!.durationMs > 0) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val duration = source!!.durationMs
-                    val trimmed = trim.first > 0 || trim.last < duration
-                    ClipControls(editorPlayer, filmstrip, duration, trim, playhead, speed, !export.busy, s,
+                    ClipControls(editorPlayer, filmstrip, duration, trim, playhead, speed, !export.busy, s, compare,
                         speedExpanded, { speedExpanded = it }, { model.speed.value = it },
-                        trimPicked, { trimPicked = it }, { overlayBounds = it },
+                        trimPicked, { trimPicked = it }, { overlayBounds = it }, { trimBarBounds = it },
                         onChange = { model.trimming.value = true; model.trim.value = it },
                         onDone = { model.trimming.value = false },
                         onScrub = { position, play -> model.scrub.tryEmit(position to play) })
-                    if (trimmed) TextButton(onClick = { model.trim.value = 0L..duration }, enabled = !export.busy) { Text(s.text("Full clip", "完整長度")) }
                 }
                 if (source!!.video) Panel {
                     Row(Modifier.fillMaxWidth().clickable { audioExpanded = !audioExpanded }, verticalAlignment = Alignment.CenterVertically) {
@@ -461,19 +469,15 @@ private fun OceanArt(modifier: Modifier) {
 
 @Composable
 private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximized: Boolean,
-    onMaximize: (Boolean) -> Unit, onPlayer: (Player?) -> Unit, speedExpanded: Boolean,
+    onMaximize: (Boolean) -> Unit, onPlayer: (Player?) -> Unit, interaction: MutableInteractionSource, speedExpanded: Boolean,
     expandSpeed: (Boolean) -> Unit, trimPicked: Long?, setTrimPicked: (Long?) -> Unit,
-    onOverlayBounds: (Rect) -> Unit, modifier: Modifier = Modifier) {
+    onOverlayBounds: (Rect) -> Unit, onTrimBarBounds: (Rect) -> Unit, modifier: Modifier = Modifier) {
     val uri by model.previewUri.collectAsStateWithLifecycle()
     val original by model.previewOriginal.collectAsStateWithLifecycle()
     val corrected by model.previewGraded.collectAsStateWithLifecycle()
     val compare by model.compare.collectAsStateWithLifecycle()
     val source by model.source.collectAsStateWithLifecycle()
-    val interaction = remember { MutableInteractionSource() }
     var adjusting by rememberSaveable { mutableStateOf(false) }
-    val pressed by interaction.collectIsPressedAsState()
-    LaunchedEffect(pressed) { model.setCompare(pressed) }
-    DisposableEffect(model) { onDispose { model.setCompare(false) } }
     var player by remember { mutableStateOf<Player?>(null) }
     var buttonsHeight by remember { mutableIntStateOf(0) }
     var previewScale by remember { mutableFloatStateOf(1f) }
@@ -487,6 +491,16 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     val fullScreenTrim by model.trim.collectAsStateWithLifecycle()
     val fullScreenFrames by model.filmstrip.collectAsStateWithLifecycle()
     val fullScreenPlayhead = model.playhead.collectAsStateWithLifecycle()
+    val clipControls = maximized && uri != null && player != null && (source?.durationMs ?: 0L) > 0
+    var clipHeight by remember { mutableIntStateOf(0) }
+    // Full screen: centre the fitted media in the space above the controls instead of the whole screen, so the
+    // controls (and the adjust panel) cover as little of it as possible. Media as tall as the screen stays at the top.
+    val controls = buttonsHeight + if (clipControls) clipHeight + with(LocalDensity.current) { 12.dp.toPx() } else 0f
+    val fitted = source?.takeIf { it.width > 0 && it.height > 0 && previewSize.width > 0 }?.let {
+        minOf(previewSize.height.toFloat(), previewSize.width.toFloat() * it.height / it.width)
+    } ?: previewSize.height.toFloat()
+    val lift by animateFloatAsState(if (!maximized) 0f
+        else ((previewSize.height - controls - fitted) / 2).coerceAtLeast(0f) - (previewSize.height - fitted) / 2, label = "lift")
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.testTag("mediaPreview").fillMaxWidth()
             .then(if (maximized) Modifier.weight(1f)
@@ -497,7 +511,7 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     scaleX = if (maximized) previewScale else 1f
                     scaleY = if (maximized) previewScale else 1f
                     translationX = if (maximized) previewPan.x else 0f
-                    translationY = if (maximized) previewPan.y else 0f
+                    translationY = if (maximized) previewPan.y + lift else 0f
                 }, contentAlignment = Alignment.Center) {
                     if (uri != null) VideoPreview(model, exporting, maximized) { player = it; onPlayer(it) }
                     else (if (compare) original else corrected ?: original)?.let {
@@ -510,7 +524,7 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     detectTransformGestures { centroid, pan, zoom, _ ->
                         val nextScale = (previewScale * zoom).coerceIn(1f, 5f)
                         val ratio = nextScale / previewScale
-                        val center = Offset(previewSize.width / 2f, previewSize.height / 2f)
+                        val center = Offset(previewSize.width / 2f, previewSize.height / 2f + lift)
                         val nextPan = previewPan * ratio + (centroid - center) * (1f - ratio) + pan
                         val maxX = (nextScale - 1f) * previewSize.width / 2f
                         val maxY = (nextScale - 1f) * previewSize.height / 2f
@@ -520,9 +534,10 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     }
                 })
             Row(Modifier.align(Alignment.TopStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PreviewTag(if (compare) s.text("ORIGINAL", "原色") else s.text("RESTORED", "還原後"))
                 source?.let { PreviewTag(if (it.video) s.text("VIDEO", "影片") else s.text("PHOTO", "照片")) }
+                PreviewTag(if (compare) s.text("ORIGINAL", "原色") else s.text("RESTORED", "還原後"))
             }
+            if (!maximized) source?.let { MediaInfo(it, s, Modifier.align(Alignment.BottomEnd).padding(8.dp)) }
             Surface(onClick = { onMaximize(!maximized) }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(36.dp),
                 shape = CircleShape, color = Color.Black.copy(alpha = 0.65f), contentColor = Color.White) {
                 Box(contentAlignment = Alignment.Center) {
@@ -534,7 +549,8 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                 .onSizeChanged { buttonsHeight = it.height },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CompareButton(interaction, s, overlay = true)
+                    // A video's Compare is in its play row.
+                    if (!clipControls) CompareButton(interaction, s)
                     Button(onClick = { adjusting = !adjusting }, Modifier.testTag("fullScreenAdjust"),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.65f), contentColor = Color.White)) {
                         Icon(if (adjusting) Icons.Rounded.ExpandMore else Icons.Rounded.Tune, null, Modifier.size(16.dp))
@@ -547,64 +563,68 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                     Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.4f).dp))
                 else Spacer(Modifier.height(16.dp))
             }
-            val shown = player
-            if (maximized && uri != null && shown != null) {
+            if (clipControls) {
+                val shown = player
                 val duration = source?.durationMs ?: 0L
-                if (duration > 0) Column(Modifier.align(Alignment.BottomCenter)
+                Column(Modifier.align(Alignment.BottomCenter)
                     .padding(bottom = with(LocalDensity.current) { buttonsHeight.toDp() } + 12.dp)
-                    .fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    .fillMaxWidth().padding(horizontal = 12.dp).onSizeChanged { clipHeight = it.height },
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ClipControls(shown, fullScreenFrames, duration, fullScreenTrim, fullScreenPlayhead,
-                        fullScreenSpeed, !exporting, s, speedExpanded,
-                        expandSpeed, { model.speed.value = it }, trimPicked, setTrimPicked, onOverlayBounds,
+                        fullScreenSpeed, !exporting, s, interaction, speedExpanded,
+                        expandSpeed, { model.speed.value = it }, trimPicked, setTrimPicked, onOverlayBounds, onTrimBarBounds,
                         onChange = { model.trimming.value = true; model.trim.value = it },
                         onDone = { model.trimming.value = false },
                         onScrub = { position, play -> model.scrub.tryEmit(position to play) })
                 }
             }
         }
-        if (!maximized) Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                source?.let { Text(it.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (source?.isHdr == true) Text("${source!!.hdrName} · 10-bit · BT.2020 · " + s.text("HDR preserved", "保留 HDR"),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
-            }
-            Spacer(Modifier.width(8.dp))
-            CompareButton(interaction, s, overlay = false)
-        }
+        // A video's Compare is in its play row, under the preview.
+        if (!maximized && source?.let { it.video && it.durationMs > 0 } != true)
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { CompareButton(interaction, s) }
     }
 }
 
 @Composable
 private fun ClipControls(player: Player?, frames: List<Bitmap>, duration: Long, range: LongRange,
-    playhead: State<Long>, speed: Float, enabled: Boolean, s: Strings, speedExpanded: Boolean,
-    expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit, picked: Long?, setPicked: (Long?) -> Unit,
-    onOverlayBounds: (Rect) -> Unit, onChange: (LongRange) -> Unit,
+    playhead: State<Long>, speed: Float, enabled: Boolean, s: Strings, compare: MutableInteractionSource,
+    speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit, picked: Long?, setPicked: (Long?) -> Unit,
+    onOverlayBounds: (Rect) -> Unit, onTrimBarBounds: (Rect) -> Unit, onChange: (LongRange) -> Unit,
     onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit) {
     val trimTarget = picked?.takeIf { it in range }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        VideoControls(player, playhead, duration, range, speed, enabled, s, speedExpanded,
+        VideoControls(player, playhead, duration, range, speed, enabled, s, compare, speedExpanded,
             { expandSpeed(it); if (it) setPicked(null) }, setSpeed, trimTarget, onOverlayBounds,
+            onFullClip = { onChange(0L..duration); onDone(); setPicked(null) },
             onSetStart = { at ->
                 onChange(at..range.last); onDone(); setPicked(null)
             }, onSetEnd = { at ->
                 onChange(range.first..at); onDone(); setPicked(null)
             })
         TrimBar(frames, duration, range, playhead, enabled, s.text("Trim range", "剪輯範圍"),
-            picked = trimTarget, onPick = { setPicked(it); expandSpeed(false) },
-            onChange = { setPicked(null); onChange(it) }, onDone = onDone, onScrub = onScrub)
+            picked = trimTarget, onPick = { setPicked(it); expandSpeed(false) }, onBounds = onTrimBarBounds,
+            onChange = { expandSpeed(false); onChange(it) }, onDone = onDone, onScrub = onScrub)
     }
 }
 
 @Composable
 private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long, range: LongRange, speed: Float,
-    enabled: Boolean, s: Strings, speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit,
-    trimTarget: Long?, onOverlayBounds: (Rect) -> Unit, onSetStart: (Long) -> Unit, onSetEnd: (Long) -> Unit) {
+    enabled: Boolean, s: Strings, compare: MutableInteractionSource, speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit,
+    setSpeed: (Float) -> Unit, trimTarget: Long?, onOverlayBounds: (Rect) -> Unit, onFullClip: () -> Unit,
+    onSetStart: (Long) -> Unit, onSetEnd: (Long) -> Unit) {
     var playing by remember(player) { mutableStateOf(player?.playWhenReady == true) }
     LaunchedEffect(player) {
         while (true) { playing = player?.playWhenReady == true; delay(100) }
     }
     Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
-        if (!speedExpanded && trimTarget == null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (!speedExpanded && trimTarget == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Whatever room the buttons leave; "Full clip" shortens rather than pushing them off the row.
+            Box(Modifier.weight(1f)) {
+                if (range.first > 0 || range.last < duration) TextButton(onClick = onFullClip, enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text(s.text("Full clip", "完整長度"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White) {
                 Row(Modifier.height(40.dp).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { if (player?.playWhenReady == true) player.pause() else player?.play() },
@@ -620,6 +640,7 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
                 modifier = Modifier.size(40.dp).semantics { contentDescription = s.text("Video speed", "影片速度") }) {
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Speed, null, Modifier.size(21.dp)) }
             }
+            CompareButton(compare, s)
         }
         if (speedExpanded) {
             Surface(Modifier.onGloballyPositioned { onOverlayBounds(it.boundsInRoot()) },
@@ -638,7 +659,15 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
             }
         }
         if (trimTarget != null && !speedExpanded) {
-            Surface(Modifier.onGloballyPositioned { onOverlayBounds(it.boundsInRoot()) },
+            // Centred over the cursor, using the trim bar's geometry (14dp handles), kept inside the row.
+            Surface(Modifier.layout { measurable, constraints ->
+                val pill = measurable.measure(constraints)
+                val handle = 14.dp.toPx()
+                val track = (constraints.maxWidth - 2 * handle).coerceAtLeast(1f)
+                val cursor = handle + (if (duration > 0) trimTarget.toFloat() / duration else 0f) * track
+                val left = (cursor - pill.width / 2f).roundToInt().coerceIn(0, (constraints.maxWidth - pill.width).coerceAtLeast(0))
+                layout(constraints.maxWidth, pill.height) { pill.place(left, 0) }
+            }.onGloballyPositioned { onOverlayBounds(it.boundsInRoot()) },
                 shape = CircleShape, color = Color(0xFF171717), contentColor = Color.White, shadowElevation = 8.dp) {
                 Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     val minimum = min(500L, duration)
@@ -657,31 +686,32 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
 }
 
 @Composable
-private fun CompareButton(interaction: MutableInteractionSource, s: Strings, overlay: Boolean, modifier: Modifier = Modifier) {
-    val content: @Composable RowScope.() -> Unit = {
-        Icon(Icons.Rounded.Compare, null, Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(s.text("Hold to compare", "按住對比原片"))
+private fun CompareButton(interaction: MutableInteractionSource, s: Strings, modifier: Modifier = Modifier) {
+    // Shows the original while held; styled like the play and speed buttons beside it.
+    Surface(onClick = {}, modifier.height(40.dp).semantics { contentDescription = s.text("Hold to compare", "按住對比原片") },
+        shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White, interactionSource = interaction) {
+        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Compare, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(s.text("Compare", "對比"), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        }
     }
-    if (overlay) Button(onClick = {}, modifier, interactionSource = interaction, content = content,
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.65f), contentColor = Color.White))
-    else OutlinedButton(onClick = {}, modifier, interactionSource = interaction, content = content)
 }
 
 /**
  * Filmstrip trim bar: original (uncorrected) thumbnails, a framed selection with a handle on each side, dimmed
  * footage outside it, and the playhead. Dragging near a handle moves it; a tap or drag elsewhere
- * places the cursor; the trim actions replace the playback controls above this bar.
+ * places the cursor, which stays until a touch outside the bar; the trim actions replace the playback controls above this bar, over the cursor.
  */
 @Composable
 private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, playhead: State<Long>,
-    enabled: Boolean, description: String, picked: Long?, onPick: (Long?) -> Unit,
+    enabled: Boolean, description: String, picked: Long?, onPick: (Long) -> Unit, onBounds: (Rect) -> Unit,
     onChange: (LongRange) -> Unit, onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     val latest by rememberUpdatedState(range)
     // Keep at least half a second (or the whole clip, if shorter) between the handles.
     val minimum = min(500L, duration)
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    BoxWithConstraints(Modifier.fillMaxWidth().onGloballyPositioned { onBounds(it.boundsInRoot()) }) {
         val handle = with(LocalDensity.current) { 14.dp.toPx() }
         val barWidth = constraints.maxWidth
         val track = (barWidth - 2 * handle).coerceAtLeast(1f)
@@ -710,12 +740,11 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
             }
             detectHorizontalDragGestures(
                 onDragStart = { touch ->
-                    onPick(null)
                     val toStart = kotlin.math.abs(touch.x - (x(latest.first) - handle / 2))
                     val toEnd = kotlin.math.abs(touch.x - (x(latest.last) + handle / 2))
                     target = if (min(toStart, toEnd) > reach) 0 else if (toStart <= toEnd) -1 else 1
                     position = when (target) { -1 -> latest.first.toFloat(); 1 -> latest.last.toFloat(); else -> time(touch.x).toFloat() }
-                    if (target == 0) onScrub(position.roundToLong().coerceIn(latest), false)
+                    if (target == 0) position.roundToLong().coerceIn(latest).let { onPick(it); onScrub(it, false) }
                 },
                 onDragEnd = ::finish, onDragCancel = ::finish,
             ) { change, delta ->
@@ -726,7 +755,7 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
                 when (target) {
                     -1 -> onChange(t.coerceIn(0, r.last - minimum)..r.last)
                     1 -> onChange(r.first..t.coerceIn(r.first + minimum, duration))
-                    else -> onScrub(t.coerceIn(r), false)
+                    else -> t.coerceIn(r).let { onPick(it); onScrub(it, false) }
                 }
             }
         }) {
@@ -827,6 +856,25 @@ private fun AppLogo(modifier: Modifier) {
     Box(modifier.clip(CircleShape), contentAlignment = Alignment.Center) {
         for (layer in listOf(R.drawable.ic_launcher_background, R.drawable.ic_launcher_foreground))
             Image(painterResource(layer), null, Modifier.requiredSize(45.dp))
+    }
+}
+
+/** The file name and HDR format, kept behind a small button so they take no room on the editor. */
+@Composable
+private fun MediaInfo(source: SourceMedia, s: Strings, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Surface(onClick = { open = true }, Modifier.size(32.dp), shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.65f), contentColor = Color.White) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Info, s.text("File details", "檔案資訊"), Modifier.size(20.dp)) }
+        }
+        DropdownMenu(open, { open = false }, Modifier.widthIn(max = 300.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(source.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020 · " + s.text("HDR preserved", "保留 HDR"),
+                    color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+            }
+        }
     }
 }
 

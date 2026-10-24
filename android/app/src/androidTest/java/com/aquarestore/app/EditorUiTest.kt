@@ -75,11 +75,11 @@ class EditorUiTest {
         ui.onNodeWithTag("adjustments").assertDoesNotExist()
         ui.onNodeWithContentDescription("Export").assertDoesNotExist()
         ui.runOnIdle { assertSame("Full screen must reuse the running player", before, findPlayer(ui.activity.window.decorView)!!.player) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.waitForIdle()
         ui.runOnIdle { assertTrue(model.compare.value) }
         ui.onNodeWithText("ORIGINAL").assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.waitForIdle()
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.runOnUiThread { ui.activity.onBackPressedDispatcher.onBackPressed() }
@@ -110,9 +110,9 @@ class EditorUiTest {
         ui.runOnUiThread { model.import(Uri.fromFile(file)) }
         ui.waitUntil(15_000) { model.previewGraded.value != null }
         ui.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress)).assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.runOnIdle { assertTrue(model.compare.value) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress)).performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         ui.waitUntil(10_000) { model.previewOriginal.value!!.getPixel(50, 50) == model.previewGraded.value!!.getPixel(50, 50) }
@@ -121,9 +121,9 @@ class EditorUiTest {
         ui.onNodeWithText("Advanced adjustments").performScrollTo().performClick()
         ui.onNodeWithText("Shadows").performScrollTo().assertIsDisplayed()
         ui.onNodeWithTag("mediaPreview").assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.runOnIdle { assertTrue(model.compare.value) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { cancel() }
+        ui.onNodeWithText("Compare").performTouchInput { cancel() }
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.onNodeWithContentDescription("Export").performClick()
         ui.onNodeWithText("Original").assertIsDisplayed()
@@ -189,9 +189,9 @@ class EditorUiTest {
                     origin[1] + height * (30 + (i / 20) * 4) / 100)
             }.also { screen.recycle() }
         }
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         val uncorrected = sampledScreen()
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.runOnUiThread { model.setGrade(Grade.Blue) }
         val corrected = sampledScreen()
         val difference = corrected.indices.sumOf { i ->
