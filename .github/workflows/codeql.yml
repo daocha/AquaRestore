@@ -1,0 +1,56 @@
+name: CodeQL
+# Advanced setup instead of default setup: the Java/Kotlin build needs core/ filled, which default setup cannot do.
+# It always uses the public stub, never the private core: CodeQL results carry file paths and code snippets, and
+# the tuned core must not reach this public repository's code scanning.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { language: actions, build-mode: none, os: ubuntu-latest }
+          - { language: python, build-mode: none, os: ubuntu-latest }
+          - { language: java-kotlin, build-mode: manual, os: ubuntu-latest }
+          - { language: swift, build-mode: autobuild, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the basic stub core
+        if: matrix.language == 'java-kotlin' || matrix.language == 'swift'
+        run: scripts/use-core-stub.sh
+      - uses: actions/setup-java@v4
+        if: matrix.language == 'java-kotlin'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        if: matrix.language == 'java-kotlin'
+        with:
+          # v3 defaults to "tools platform-tools"; the obsolete "tools" package makes newer sdkmanager fail.
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      # CodeQL only sees what is compiled during this step: no daemon or build cache, so every source is compiled.
+      - name: Build the app
+        if: matrix.language == 'java-kotlin'
+        run: ./gradlew --no-daemon --no-build-cache --console=plain :app:assembleDebug :app:compileDebugUnitTestKotlin
+        working-directory: android
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
