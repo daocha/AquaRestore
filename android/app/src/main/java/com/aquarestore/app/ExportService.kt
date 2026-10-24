@@ -111,7 +111,7 @@ class ExportService : Service() {
     private suspend fun export(request: ExportRequest): Uri {
         val source = request.source
         val o = request.options
-        val losslessImage = o.png || o.original
+        val losslessImage = o.png
         val extension = if (source.video) "mp4" else if (losslessImage) "png" else "jpg"
         val temp = File(cacheDir, "export-${System.nanoTime()}.$extension")
         var pending: Uri? = null

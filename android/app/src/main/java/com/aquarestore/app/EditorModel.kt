@@ -77,6 +77,13 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             .putBoolean(prefix + "png", selection.png).apply()
     }
 
+    /** Forgets the saved Custom settings, so the dialog shows the defaults again. */
+    fun resetCustomExport(video: Boolean) {
+        val prefix = if (video) "export_video_" else "export_photo_"
+        prefs.edit().remove(prefix + "edge").remove(prefix + "fps").remove(prefix + "quality").remove(prefix + "png").apply()
+        (if (video) videoExportSelection else photoExportSelection).value = readExportSelection(video)
+    }
+
     fun import(uri: Uri) {
         if (Exports.status.value.busy) return
         speed.value = 1f

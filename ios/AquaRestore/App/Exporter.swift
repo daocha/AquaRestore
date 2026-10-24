@@ -89,7 +89,7 @@ enum Exporter {
     static func run(_ request: ExportRequest, update: @escaping Update) async throws {
         let o = request.options
         let source = request.source
-        let lossless = o.png || o.original
+        let lossless = o.png
         let ext = source.video ? "mp4" : (lossless ? "png" : "jpg")
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).\(ext)")
         defer { try? FileManager.default.removeItem(at: temp) }

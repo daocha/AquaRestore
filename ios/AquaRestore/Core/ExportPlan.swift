@@ -1,6 +1,9 @@
 import Foundation
 
 struct ExportOptions: Equatable {
+    /// Original keeps full quality: JPEG at the encoder's maximum, PNG lossless.
+    static let originalJpegQuality = 100
+
     var original = true
     var longEdge = 1920 // 0 = source dimensions
     var fps = 0 // 0 = original timestamps; other values cap, never invent frames

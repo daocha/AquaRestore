@@ -406,7 +406,8 @@ private fun Editor(model: EditorModel, s: Strings) {
         dismissButton = { TextButton(onClick = { confirmClose = false }) { Text(s.text("Keep editing", "繼續編輯")) } })
     if (showExport && source != null) ExportDialog(source!!, s, speed, trim, model.audioMix(),
         if (source!!.video) videoExportSelection else photoExportSelection,
-        onSelectionChange = { model.setExportSelection(source!!.video, it) }, onDismiss = { showExport = false }) { options ->
+        onSelectionChange = { model.setExportSelection(source!!.video, it) },
+        onResetCustom = { model.resetCustomExport(source!!.video) }, onDismiss = { showExport = false }) { options ->
         showExport = false
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         Exports.start(context, ExportRequest(source!!, grade, options.copy(speed = speed), s.chinese, model.audioMix()))
@@ -1217,7 +1218,7 @@ private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -
 
 @Composable
 private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
-    selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit,
+    selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
     onDismiss: () -> Unit, export: (ExportOptions) -> Unit) {
     // Only a real cut is passed on, so an untrimmed export keeps the source's exact end.
     val startMs = trim.first
@@ -1231,7 +1232,7 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
     val customFps = selection.fps.takeIf { it == 0 || it <= sourceFps } ?: 0
     val options = when (selection.mode) {
         ExportMode.RECOMMENDED -> recommended
-        ExportMode.ORIGINAL -> ExportOptions()
+        ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = selection.png)
         ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = selection.longEdge, fps = customFps,
             quality = selection.quality, png = selection.png)
     }.copy(speed = speed, startMs = startMs, endMs = endMs)
@@ -1252,7 +1253,9 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
             if (selection.mode != ExportMode.CUSTOM) {
                 val shownFps = if (options.fps == 0) sourceFps else min(sourceFps, options.fps.toFloat())
                 Text("${dimensions.first} × ${dimensions.second}" + if (source.video) " · ${"%.2f".format(shownFps)} fps"
-                    else if (options.original || options.png) " · PNG" else " · JPEG ${options.quality}%", fontWeight = FontWeight.SemiBold)
+                    else if (options.png) " · PNG" else " · JPEG ${options.quality}%", fontWeight = FontWeight.SemiBold)
+                if (selection.mode == ExportMode.ORIGINAL && !source.video)
+                    Choices(listOf(false to "JPEG", true to "PNG"), selection.png) { onSelectionChange(selection.copy(png = it)) }
                 if (selection.mode == ExportMode.RECOMMENDED) Text(
                     if (options.original) {
                         if (source.video) s.text("This video is already within the suggested size and frame-rate limits, so source settings are kept.",
@@ -1268,9 +1271,17 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
                         "高解析度照片使用較小的高畫質 JPEG，兼顧細節與檔案大小。"), fontSize = 12.sp)
                 else Text(if (source.video) s.text("Keeps source dimensions, frames and codec. Selected speed retimes frames and audio. Targets the source video bitrate, adjusted for speed; estimates it only when unavailable. Color correction requires re-encoding, so it is not bit-for-bit lossless.",
                     "保留原尺寸、影格與編碼格式；所選速度會調整影格及音訊時間。優先沿用來源影片位元率並依速度調整，缺少資料時才估算。色彩校正需要重新編碼，無法完全無損。")
-                else s.text("Full source dimensions, saved as lossless PNG after color correction. File size may increase. Metadata is not copied.",
-                    "保留原始尺寸，調色後儲存為無損 PNG。檔案可能變大，不複製中繼資料。"), fontSize = 12.sp)
+                else if (options.png) s.text("Full source dimensions, saved as lossless PNG after color correction. Files are several times larger than JPEG. Metadata is not copied.",
+                    "保留原始尺寸，調色後儲存為無損 PNG。檔案比 JPEG 大數倍，不複製中繼資料。")
+                else s.text("Full source dimensions, saved as full-quality JPEG after color correction. Metadata is not copied.",
+                    "保留原始尺寸，調色後儲存為最高畫質 JPEG，不複製中繼資料。"), fontSize = 12.sp)
             } else {
+                // Sits at the end of the photo format row, or of the video frame-rate heading, to save a row.
+                val reset = @Composable {
+                    TextButton(onClick = onResetCustom, enabled = selection != ExportSelection(mode = ExportMode.CUSTOM)) {
+                        Text(s.text("Reset to defaults", "恢復預設值"), fontSize = 12.sp)
+                    }
+                }
                 Text(s.text("Resolution · longest edge", "解析度 · 最長邊"), fontWeight = FontWeight.SemiBold)
                 Choices(listOf(0 to s.text("Source", "原尺寸"), 3840 to "3840", 2560 to "2560", 1920 to "1920", 1280 to "1280", 960 to "960", 640 to "640"), selection.longEdge) {
                     onSelectionChange(selection.copy(longEdge = it))
@@ -1278,14 +1289,20 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
                 val size = ExportSizing.dimensions(source.width, source.height, selection.longEdge, source.video)
                 Text("${size.first} × ${size.second} px", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                 if (source.video) {
-                    Text(s.text("Frame rate", "幀率"), fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(s.text("Frame rate", "幀率"), Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        reset()
+                    }
                     Choices(listOf(0 to s.text("Original", "原始")) + listOf(24, 25, 30, 50, 60).filter { it <= sourceFps }.map { it to "$it fps" }, customFps) {
                         onSelectionChange(selection.copy(fps = it))
                     }
                     Text(s.text("Lower frame rates drop frames; no interpolation. Output is H.264 for SDR or 10-bit HEVC for HDR, with source audio where compatible.",
                         "較低幀率會抽幀，不插幀。SDR 輸出為 H.264，HDR 為 10-bit HEVC，音訊相容時保留。"), fontSize = 11.sp)
                 } else {
-                    Choices(listOf(false to "JPEG", true to "PNG"), selection.png) { onSelectionChange(selection.copy(png = it)) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { Choices(listOf(false to "JPEG", true to "PNG"), selection.png) { onSelectionChange(selection.copy(png = it)) } }
+                        reset()
+                    }
                 }
                 if (source.video || !selection.png) {
                     Text(s.text("Quality", "畫質") + " · ${selection.quality}%", fontWeight = FontWeight.SemiBold)

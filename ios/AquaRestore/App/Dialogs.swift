@@ -69,7 +69,8 @@ struct ExportDialog: View {
         } buttons: {
             M3TextButton(title: s.text("Cancel", "取消"), action: onDismiss)
             M3Button(title: s.text("Start export", "開始匯出")) {
-                export(ExportOptions(original: original, longEdge: edge, fps: fps, quality: Int(quality.rounded()), png: png, startMs: startMs, endMs: endMs))
+                export(ExportOptions(original: original, longEdge: edge, fps: fps, quality: original ? ExportOptions.originalJpegQuality : Int(quality.rounded()),
+                                     png: png, startMs: startMs, endMs: endMs))
             }
         }
     }
@@ -90,12 +91,21 @@ struct ExportDialog: View {
     }
 
     @ViewBuilder private var originalInfo: some View {
-        MText("\(source.width) × \(source.height)" + (source.video ? " · \(String(format: "%.2f", source.fps * min(speed, 1))) fps" : " · PNG"), weight: .semibold)
+        let jpeg = ExportOptions.originalJpegQuality
+        MText("\(source.width) × \(source.height)" + (source.video ? " · \(String(format: "%.2f", source.fps * min(speed, 1))) fps" : png ? " · PNG" : " · JPEG \(jpeg)%"), weight: .semibold)
+        if !source.video { Choices(items: [(false, "JPEG"), (true, "PNG")], selected: png) { png = $0 } }
         MText(source.video
               ? s.text("Keeps source dimensions, frame times and codec (AVC or HEVC). Selected speed retimes frames and audio. Targets the source video bitrate, adjusted for speed; estimates it only when unavailable. Color correction requires re-encoding, so it is not bit-for-bit lossless.",
                        "保留原尺寸、影格時間與編碼格式（AVC 或 HEVC）。所選速度會調整影格及音訊時間。優先沿用來源影片位元率並依速度調整，缺少資料時才估算。色彩校正需要重新編碼，無法完全無損。")
-              : s.text("Full source dimensions, saved as lossless PNG after color correction. File size may increase. Metadata is not copied.",
-                       "保留原始尺寸，調色後儲存為無損 PNG。檔案可能變大，不複製中繼資料。"), size: 12)
+              : png ? s.text("Full source dimensions, saved as lossless PNG after color correction. Files are several times larger than JPEG. Metadata is not copied.",
+                             "保留原始尺寸，調色後儲存為無損 PNG。檔案比 JPEG 大數倍，不複製中繼資料。")
+              : s.text("Full source dimensions, saved as full-quality JPEG after color correction. Metadata is not copied.",
+                       "保留原始尺寸，調色後儲存為最高畫質 JPEG，不複製中繼資料。"), size: 12)
+    }
+
+    // Sits at the end of the photo format row, or of the video frame-rate heading, to save a row.
+    private var resetButton: some View {
+        M3TextButton(title: s.text("Reset to defaults", "恢復預設值")) { edge = 1920; fps = 0; quality = 90; png = false }
     }
 
     @ViewBuilder private var customOptions: some View {
@@ -104,12 +114,20 @@ struct ExportDialog: View {
         let size = ExportSizing.dimensions(source.width, source.height, edge, even: source.video)
         MText("\(size.0) × \(size.1) px", size: 12, color: c.primary)
         if source.video {
-            MText(s.text("Frame rate", "幀率"), weight: .semibold)
+            HStack {
+                MText(s.text("Frame rate", "幀率"), weight: .semibold)
+                Spacer()
+                resetButton
+            }
             Choices(items: [(0, "Original")] + [24, 25, 30, 50, 60].filter { Float($0) <= source.fps * min(speed, 1) }.map { ($0, "\($0) fps") }, selected: fps) { fps = $0 }
             MText(s.text("Lower frame rates drop frames; no interpolation. Output is H.264 for SDR or 10-bit HEVC for HDR. Untouched AAC audio is kept; edited audio is encoded as AAC.",
                          "較低幀率會抽幀，不插幀。SDR 輸出為 H.264，HDR 為 10-bit HEVC。未編輯的 AAC 音訊會保留，已編輯的音訊會編碼為 AAC。"), size: 11)
         } else {
-            Choices(items: [(false, "JPEG"), (true, "PNG")], selected: png) { png = $0 }
+            HStack {
+                Choices(items: [(false, "JPEG"), (true, "PNG")], selected: png) { png = $0 }
+                Spacer()
+                resetButton
+            }
         }
         if source.video || !png {
             MText(s.text("Quality", "畫質") + " · \(Int(quality.rounded()))%", weight: .semibold)
