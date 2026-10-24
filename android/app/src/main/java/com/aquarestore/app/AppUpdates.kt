@@ -104,12 +104,26 @@ internal class AppUpdates(
 
     fun update() {
         if (source == UpdateSource.PLAY) { startPlay(); return }
-        if (pendingApk != null) { installPending(); return }
-        val candidate = release ?: run { check(true); return }
         if (ui.phase == UpdatePhase.DOWNLOADING) return
         scope.launch {
             ui = ui.copy(phase = UpdatePhase.DOWNLOADING, percent = 0, error = null)
             try {
+                // Ask again first: a newer build may have replaced the one the last check found (the LAN server keeps
+                // only the newest). Offline, fall back to what that check found.
+                runCatching { withContext(Dispatchers.IO) { ReleaseUpdates.fetchLatest(BuildConfig.VERSION_CODE.toLong()) } }
+                    .getOrNull()?.let { (latest, json) ->
+                        release = latest
+                        prefs.edit().putLong("last_check", System.currentTimeMillis()).putString("latest_json", json).apply()
+                    }
+                val candidate = release
+                val pending = pendingApk?.takeIf(File::isFile)
+                if (pending != null && (candidate == null || pending.name == "AquaRestore-${candidate.versionCode}.apk")) {
+                    installPending(); return@launch
+                }
+                if (candidate == null) { ui = UpdateUi(source, UpdatePhase.CURRENT); return@launch }
+                pending?.delete()
+                pendingApk = null
+                prefs.edit().remove("pending_apk").apply()
                 val directory = File(activity.cacheDir, "updates").apply { mkdirs() }
                 val apk = File(directory, "AquaRestore-${candidate.versionCode}.apk")
                 withContext(Dispatchers.IO) {

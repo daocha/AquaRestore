@@ -124,13 +124,15 @@ abstract class PublishLanUpdate : DefaultTask() {
         val output = built.elements.single()
         val code = output.versionCode ?: throw GradleException("The debug APK has no version code")
         val directory = outputDir.get().asFile.apply { mkdirs() }
-        directory.listFiles()?.filter { it.name.startsWith("AquaRestore-debug-") }?.forEach { it.delete() }
         val name = "AquaRestore-debug-$code.apk"
         val apk = File(output.outputFile).copyTo(File(directory, name), overwrite = true)
         val sha = MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).joinToString("") { "%02x".format(it) }
         File(directory, "AquaRestore-debug-$code.SHA256SUMS").writeText("$sha  $name\n")
         val json = """{"versionCode":$code,"versionName":"${output.versionName.orEmpty()}","apk":"$name","size":${apk.length()}}"""
         File(directory, "latest.json.part").apply { writeText(json + "\n") }.renameTo(File(directory, "latest.json"))
+        // Only now drop older builds, so latest.json never names a file that is missing.
+        directory.listFiles()?.filter { it.name.startsWith("AquaRestore-debug-") && !it.name.startsWith("AquaRestore-debug-$code.") }
+            ?.forEach { it.delete() }
         logger.lifecycle("LAN update: android/dist/dev-update/$name (versionCode $code)")
     }
 }
