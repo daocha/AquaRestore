@@ -347,7 +347,7 @@ private fun Editor(model: EditorModel, s: Strings) {
                             TextButton(onClick = model::reset, enabled = !export.busy) { Text(s.text("Reset", "重設")) }
                             Icon(if (restoreExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                         }
-                        Slider(value = grade.strength, onValueChange = { model.setGrade(grade.copy(strength = it)) }, enabled = !export.busy, valueRange = 0f..2f,
+                        Slider(value = grade.strength, onValueChange = { model.setGrade(grade.copy(strength = it)) }, enabled = !export.busy, valueRange = 0f..1f,
                             modifier = Modifier.semantics { contentDescription = s.text("Restore intensity", "還原強度") })
                         if (result.confidence < 0.25f) Text(s.text("Low-light or limited color detail: use a gentle strength and check the result.",
                             "光線或色彩資訊不足：建議使用較低強度並確認效果。"), color = MaterialTheme.colorScheme.tertiary, fontSize = 12.sp)
@@ -356,7 +356,7 @@ private fun Editor(model: EditorModel, s: Strings) {
                                 Text(s[result.cast], color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(s.text("0% · Original colors", "0% · 原始色彩"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(s.text("Boost · 200%", "加強 · 200%"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(s.text("100% · Full restore", "100% · 完整還原"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Text(s.text("Scales every correction together; the advanced sliders below follow it.",
                                     "同時等比例調整所有校正，下方進階滑桿會跟著變化。"),
@@ -1125,7 +1125,7 @@ private fun FullScreenAdjustments(model: EditorModel, s: Strings, enabled: Boole
                     Text("${(grade.strength * 100).roundToInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     TextButton(onClick = model::reset, enabled = enabled) { Text(s.text("Reset", "重設")) }
                 }
-                Slider(value = grade.strength, onValueChange = { model.setGrade(grade.copy(strength = it)) }, enabled = enabled, valueRange = 0f..2f,
+                Slider(value = grade.strength, onValueChange = { model.setGrade(grade.copy(strength = it)) }, enabled = enabled, valueRange = 0f..1f,
                     modifier = Modifier.semantics { contentDescription = s.text("Restore intensity", "還原強度") })
             }
             AdvancedSliders(model, grade, s, enabled)
