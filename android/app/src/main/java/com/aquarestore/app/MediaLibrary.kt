@@ -110,9 +110,12 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
             LibraryAlbum(id, members.first().albumName, members.first(), members.size)
         }
     }
-    // A remembered album that is gone (deleted or emptied) falls back to the album list.
+    // A remembered album that is gone (deleted or emptied) falls back to Recent.
     LaunchedEffect(albums) {
-        if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) selectedAlbum = null
+        if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
+            section = "recent"
+            selectedAlbum = null
+        }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
