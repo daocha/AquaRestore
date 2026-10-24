@@ -153,7 +153,7 @@ struct RestorePanel: View {
                 MText("\(Int((model.grade.strength * 100).rounded()))%", weight: .bold, color: c.primary).unweighted()
                 M3TextButton(title: s.text("Reset", "重設")) { model.reset() }.disabled(!enabled).unweighted()
             }
-            M3Slider(value: model.grade.strength, range: 0...2, onChange: { v in var g = model.grade; g.strength = v; model.setGrade(g) },
+            M3Slider(value: model.grade.strength, range: 0...1, onChange: { v in var g = model.grade; g.strength = v; model.setGrade(g) },
                      accessibility: s.text("Restore intensity", "還原強度")).disabled(!enabled)
             if result.confidence < 0.25 {
                 MText(s.text("Low-light or limited color detail: use a gentle strength and check the result.",
@@ -165,7 +165,7 @@ struct RestorePanel: View {
                     HStack {
                         MText(s.text("0% · Original colors", "0% · 原始色彩"), size: 11, color: c.onSurfaceVariant)
                         Spacer(minLength: 0)
-                        MText(s.text("Boost · 200%", "加強 · 200%"), size: 11, color: c.onSurfaceVariant)
+                        MText(s.text("100% · Full restore", "100% · 完整還原"), size: 11, color: c.onSurfaceVariant)
                     }
                     MText(s.text("Scales every correction together; the advanced sliders below follow it.",
                                  "同時等比例調整所有校正，下方進階滑桿會跟著變化。"), size: 13, color: c.onSurfaceVariant)

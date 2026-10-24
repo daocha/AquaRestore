@@ -157,7 +157,7 @@ struct FullScreenAdjustments: View {
                         MText("\(Int((model.grade.strength * 100).rounded()))%", weight: .bold, color: c.primary).unweighted()
                         M3TextButton(title: s.text("Reset", "重設")) { model.reset() }.disabled(!enabled).unweighted()
                     }
-                    M3Slider(value: model.grade.strength, range: 0...2, onChange: { v in var g = model.grade; g.strength = v; model.setGrade(g) },
+                    M3Slider(value: model.grade.strength, range: 0...1, onChange: { v in var g = model.grade; g.strength = v; model.setGrade(g) },
                              accessibility: s.text("Restore intensity", "還原強度")).disabled(!enabled)
                 }
                 AdvancedSliders(model: model, enabled: enabled)
