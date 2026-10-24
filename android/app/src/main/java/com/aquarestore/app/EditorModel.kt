@@ -29,6 +29,11 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     val grade = MutableStateFlow(Grade.Neutral)
     val gradeState = GradeState(Grade.Neutral)
     val previewUri = MutableStateFlow<Uri?>(null)
+    /**
+     * Progress of the preview copy that tone-mapped HDR waits for, or null when nothing waits. Playing the
+     * HDR original meanwhile stutters, so the preview holds still (still graded and seekable) until it is ready.
+     */
+    val previewPreparing = MutableStateFlow<Int?>(null)
     val previewOriginal = MutableStateFlow<Bitmap?>(null)
     val previewGraded = MutableStateFlow<Bitmap?>(null)
     /**
@@ -105,6 +110,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         originalVolume.value = 1f
         playbackPositionMs = 0L
         playbackWanted = true
+        previewPreparing.value = null
         val previousImport = importJob
         previousImport?.cancel()
         gradeJob?.cancel()
@@ -118,6 +124,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         setCompare(false)
         importJob = viewModelScope.launch {
             previousImport?.join()
+            var copy: File? = null
             try {
                 phase.value = "analyzing"
                 progress.value = null
@@ -128,9 +135,20 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                         runCatching { context.contentResolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                     }
                 }
-                val media = withContext(Dispatchers.IO) { MediaIO.inspect(context, uri) }
-                if (media.isHdr) MediaIO.requireHdrEncoder(media, MimeTypes.VIDEO_H265)
-                val recommended = MediaIO.analyze(context, media)
+                var media = withContext(Dispatchers.IO) { MediaIO.withHdrSupport(MediaIO.inspect(context, uri)) }
+                val recommended = try { MediaIO.analyze(context, media) } catch (e: MediaProblem) {
+                    // No hardware decoder read a frame: decode in software into a playable copy, and sample that.
+                    // Only the grade comes from the copy; export still reads the original, in software.
+                    if (!media.video || e.key != "analysisFailed") throw e
+                    if (!withContext(Dispatchers.IO) { MediaIO.softwareDecodes(media) }) throw MediaProblem("tooLarge")
+                    media = media.copy(softwareDecoding = true)
+                    phase.value = "preparing"
+                    progress.value = 0
+                    val file = File(context.cacheDir, "preview-${System.nanoTime()}.mp4")
+                    copy = file
+                    makeProxy(media, file) { progress.value = it }
+                    MediaIO.analyze(context, media.copy(uri = Uri.fromFile(file)))
+                }
                 trim.value = 0L..media.durationMs
                 source.value = media
                 analysis.value = recommended
@@ -138,21 +156,24 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                 if (media.video) {
                     // Play the original straight away; the grade is a live GPU effect, so no re-encode is needed.
                     proxy?.delete()
-                    proxy = null
-                    previewUri.value = media.uri
+                    proxy = copy
+                    copy = null
+                    val playable = proxy?.let { Uri.fromFile(it) } ?: media.uri
+                    previewUri.value = playable
                     // Thumbnails and any proxy are built in the background and never hold up the editor.
                     launch {
-                        try { filmstrip.value = MediaIO.filmstrip(context, media.uri, media.durationMs, 10) }
+                        try { filmstrip.value = MediaIO.filmstrip(context, playable, media.durationMs, 10) }
                         catch (e: CancellationException) { throw e }
                         catch (e: Exception) { android.util.Log.w("AquaRestore", "Filmstrip unavailable", e) }
                     }
-                    if (needsProxy(media)) launch { buildProxy(media) }
+                    if (proxy == null) launch { planProxy(media) }
                 } else {
                     previewOriginal.value = withContext(Dispatchers.IO) { MediaIO.bitmap(context, uri, 720) }
                     setGrade(recommended.grade)
                 }
-            } catch (e: CancellationException) { throw e }
+            } catch (e: CancellationException) { copy?.delete(); throw e }
             catch (e: Exception) {
+                copy?.delete()
                 android.util.Log.e("AquaRestore", "Import failed", e)
                 source.value = null
                 analysis.value = null
@@ -162,20 +183,33 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Above 4K at 30 fps, live decoding plus grading can stutter on mid-range phones. */
-    private fun needsProxy(media: SourceMedia) = media.width.toLong() * media.height * media.fps > 3840L * 2160 * 31
+    /**
+     * The preview grades at most 30 fps, so a video up to 3840 px on its long edge plays the original when a hardware
+     * decoder can keep up with it. When it cannot, or for tone-mapped HDR (whose preview must be graded in the
+     * same SDR as the export), the preview holds still until the copy is ready instead of stuttering.
+     */
+    private suspend fun planProxy(media: SourceMedia) {
+        val hold = media.toneMapped || !withContext(Dispatchers.IO) { MediaIO.decodesLive(media) }
+        if (hold || maxOf(media.width, media.height) > 3840) buildProxy(media, hold)
+    }
 
     /**
-     * Re-encodes a lighter 1280px copy for smooth preview of heavy footage, then swaps the player to it
-     * at the same position. The copy keeps the original timeline, so trim and music stay aligned.
+     * Re-encodes a lighter 1920px (1080p) copy for smooth preview of heavy footage. The copy keeps the original
+     * timeline, so trim and music stay aligned.
      */
-    private suspend fun buildProxy(media: SourceMedia) {
+    private suspend fun makeProxy(media: SourceMedia, file: File, progress: (Int) -> Unit) {
+        // Generous bitrate: auto levels can stretch hazy footage 3–4×, which exposes proxy blocking.
+        val effects = MediaIO.resizeEffect(media, 1920) + FrameRateCap(30f)
+        MediaIO.transform(context, media, file, effects, 12_000_000,
+            if (media.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264, media.keepsHdr) { p -> if (p != null) progress(p) }
+    }
+
+    /** Builds the copy in the background, then swaps the player to it at the same position. */
+    private suspend fun buildProxy(media: SourceMedia, hold: Boolean) {
         val file = File(context.cacheDir, "preview-${System.nanoTime()}.mp4")
+        if (hold) previewPreparing.value = 0
         try {
-            // Generous bitrate: auto levels can stretch hazy footage 3–4×, which exposes proxy blocking.
-            val effects = MediaIO.resizeEffect(media, 1280) + FrameRateCap(30f)
-            MediaIO.transform(context, media, file, effects, 8_000_000,
-                if (media.isHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264, media.isHdr) { }
+            makeProxy(media, file) { if (previewPreparing.value != null) previewPreparing.value = it }
             if (source.value?.uri != media.uri) { file.delete(); return }
             playbackPositionMs = playhead.value
             proxy = file
@@ -185,7 +219,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             // The original keeps playing; a proxy is only an optimization.
             file.delete()
             android.util.Log.w("AquaRestore", "Preview proxy unavailable", e)
-        }
+        } finally { if (hold) previewPreparing.value = null }
     }
 
     fun addMusic(uri: Uri) {
@@ -242,6 +276,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         originalVolume.value = 1f
         playbackPositionMs = 0L
         playbackWanted = true
+        previewPreparing.value = null
         proxy?.delete()
         proxy = null
     }

@@ -8,6 +8,7 @@ class Strings(val chinese: Boolean) {
     }
     companion object {
         private val values = mapOf(
+            "preparing" to ("Decoding in software…" to "正在以軟體解碼…"),
             "analyzing" to ("Reading the water’s colors…" to "正在分析水下色彩…"),
             "exporting" to ("Restoring at full quality…" to "正在以匯出畫質還原…"),
             "encoding" to ("Encoding your image…" to "正在編碼圖片…"),
@@ -17,6 +18,7 @@ class Strings(val chinese: Boolean) {
             "hdrDevice" to ("HDR preservation requires Android 13+ and a compatible 10-bit HDR encoder. This device cannot provide that export. No automatic SDR conversion was performed." to "保留 HDR 需要 Android 13 以上及相容的 10-bit HDR 編碼器。此裝置無法提供該匯出，沒有自動轉換成 SDR。"),
             "dolbyVision" to ("Dolby Vision needs dynamic metadata processing that is not implemented yet. Standard HDR10 / PQ and HLG are supported on compatible devices." to "Dolby Vision 需要尚未實作的動態中繼資料處理。標準 HDR10／PQ 與 HLG 可在相容裝置上處理。"),
             "dynamicHdr" to ("HDR10+ dynamic metadata cannot currently be preserved. Please use a standard HDR10 or HLG source." to "目前無法保留 HDR10+ 動態中繼資料，請使用標準 HDR10 或 HLG 素材。"),
+            "tooLarge" to ("This video's frame size is larger than this device can decode." to "此影片的畫面尺寸超出此裝置可解碼的範圍。"),
             "unsupported" to ("This media format is not supported." to "尚不支援此媒體格式。"),
             "memory" to ("This image is too large for the available memory. Choose a smaller export size." to "此圖片超過可用記憶體，請選擇較小的匯出尺寸。"),
             "analysisFailed" to ("Could not read sample frames. Please try another file." to "無法讀取抽樣畫面，請嘗試其他檔案。"),

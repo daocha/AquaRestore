@@ -166,6 +166,7 @@ private fun Editor(model: EditorModel, s: Strings) {
     val progress by model.progress.collectAsStateWithLifecycle()
     val error by model.error.collectAsStateWithLifecycle()
     val export by Exports.status.collectAsStateWithLifecycle()
+    val preparingPreview by model.previewPreparing.collectAsStateWithLifecycle()
     var settings by rememberSaveable { mutableStateOf(false) }
     var showExport by rememberSaveable { mutableStateOf(false) }
     var showProgress by rememberSaveable { mutableStateOf(false) }
@@ -225,10 +226,10 @@ private fun Editor(model: EditorModel, s: Strings) {
     fun pickMedia() { mediaLibrary = true }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val busy = phase != null || export.busy
-    DisposableEffect(source?.isHdr) {
+    DisposableEffect(source?.keepsHdr) {
         val window = activity?.window
         val previous = window?.colorMode
-        window?.colorMode = if (source?.isHdr == true) android.content.pm.ActivityInfo.COLOR_MODE_HDR else android.content.pm.ActivityInfo.COLOR_MODE_DEFAULT
+        window?.colorMode = if (source?.keepsHdr == true) android.content.pm.ActivityInfo.COLOR_MODE_HDR else android.content.pm.ActivityInfo.COLOR_MODE_DEFAULT
         onDispose { if (previous != null) window.colorMode = previous }
     }
     Scaffold(modifier = Modifier.onGloballyPositioned { scaffoldOrigin = it.positionInRoot() }
@@ -278,7 +279,9 @@ private fun Editor(model: EditorModel, s: Strings) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
                 Text(s[phase!!], style = MaterialTheme.typography.titleLarge)
-                Text(s.text("We sample colors across your media to recommend a restoration. Your original stays untouched.",
+                Text(if (phase == "preparing") s.text("This device cannot decode this video's frame size in hardware, so a playable copy is made in software first. This can take a few minutes. Your original stays untouched.",
+                    "此裝置的硬體無法解碼這個畫面尺寸，會先以軟體製作可播放的副本，可能需要幾分鐘；原始檔案會完整保留。")
+                    else s.text("We sample colors across your media to recommend a restoration. Your original stays untouched.",
                     "正在分析素材色彩以推薦還原設定；原始檔案會完整保留。"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Progress(progress)
                 OutlinedButton(onClick = model::cancelImport) { Text(s.text("Cancel", "取消")) }
@@ -294,7 +297,8 @@ private fun Editor(model: EditorModel, s: Strings) {
                         trimPicked, { trimPicked = it }, { overlayBounds = it }, { trimBarBounds = it },
                         onChange = { model.trimming.value = true; model.trim.value = it },
                         onDone = { model.trimming.value = false },
-                        onScrub = { position, play -> model.scrub.tryEmit(position to play) })
+                        onScrub = { position, play -> model.scrub.tryEmit(position to play) },
+                        canPlay = preparingPreview == null)
                 }
                 if (source!!.video) Panel {
                     Row(Modifier.fillMaxWidth().clickable { audioExpanded = !audioExpanded }, verticalAlignment = Alignment.CenterVertically) {
@@ -481,6 +485,7 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
     val grade by model.grade.collectAsStateWithLifecycle()
     val detailOriginal by model.detailOriginal.collectAsStateWithLifecycle()
     val detailGraded by model.detailGraded.collectAsStateWithLifecycle()
+    val preparingPreview by model.previewPreparing.collectAsStateWithLifecycle()
     // Full screen zooms in up to 5×, so it shows a sharper copy once that is graded with the current settings.
     LaunchedEffect(maximized, source?.uri) { model.setDetailWanted(maximized) }
     var adjusting by rememberSaveable { mutableStateOf(false) }
@@ -543,6 +548,7 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
             Row(Modifier.align(Alignment.TopStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 source?.let { PreviewTag(if (it.video) s.text("VIDEO", "影片") else s.text("PHOTO", "照片")) }
                 PreviewTag(if (compare) s.text("ORIGINAL", "原色") else s.text("RESTORED", "還原後"))
+                preparingPreview?.let { PreviewTag(s.text("Preparing smooth preview… $it%", "正在準備流暢預覽… $it%")) }
             }
             if (!maximized) source?.let { MediaInfo(it, s, Modifier.align(Alignment.BottomEnd).padding(8.dp)) }
             Surface(onClick = { onMaximize(!maximized) }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(36.dp),
@@ -582,7 +588,8 @@ private fun Preview(model: EditorModel, s: Strings, exporting: Boolean, maximize
                         expandSpeed, { model.speed.value = it }, trimPicked, setTrimPicked, onOverlayBounds, onTrimBarBounds,
                         onChange = { model.trimming.value = true; model.trim.value = it },
                         onDone = { model.trimming.value = false },
-                        onScrub = { position, play -> model.scrub.tryEmit(position to play) })
+                        onScrub = { position, play -> model.scrub.tryEmit(position to play) },
+                        canPlay = preparingPreview == null)
                 }
             }
         }
@@ -597,7 +604,7 @@ private fun ClipControls(player: Player?, frames: List<Bitmap>, duration: Long, 
     playhead: State<Long>, speed: Float, enabled: Boolean, s: Strings, compare: MutableInteractionSource,
     speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit, setSpeed: (Float) -> Unit, picked: Long?, setPicked: (Long?) -> Unit,
     onOverlayBounds: (Rect) -> Unit, onTrimBarBounds: (Rect) -> Unit, onChange: (LongRange) -> Unit,
-    onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit) {
+    onDone: () -> Unit, onScrub: (Long, Boolean) -> Unit, canPlay: Boolean = true) {
     val trimTarget = picked?.takeIf { it in range }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         VideoControls(player, playhead, duration, range, speed, enabled, s, compare, speedExpanded,
@@ -607,7 +614,7 @@ private fun ClipControls(player: Player?, frames: List<Bitmap>, duration: Long, 
                 onChange(at..range.last); onDone(); setPicked(null)
             }, onSetEnd = { at ->
                 onChange(range.first..at); onDone(); setPicked(null)
-            })
+            }, canPlay = canPlay)
         TrimBar(frames, duration, range, playhead, enabled, s.text("Trim range", "剪輯範圍"),
             picked = trimTarget, onPick = { setPicked(it); expandSpeed(false) }, onBounds = onTrimBarBounds,
             onChange = { expandSpeed(false); onChange(it) }, onDone = onDone, onScrub = onScrub)
@@ -618,7 +625,7 @@ private fun ClipControls(player: Player?, frames: List<Bitmap>, duration: Long, 
 private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long, range: LongRange, speed: Float,
     enabled: Boolean, s: Strings, compare: MutableInteractionSource, speedExpanded: Boolean, expandSpeed: (Boolean) -> Unit,
     setSpeed: (Float) -> Unit, trimTarget: Long?, onOverlayBounds: (Rect) -> Unit, onFullClip: () -> Unit,
-    onSetStart: (Long) -> Unit, onSetEnd: (Long) -> Unit) {
+    onSetStart: (Long) -> Unit, onSetEnd: (Long) -> Unit, canPlay: Boolean) {
     var playing by remember(player) { mutableStateOf(player?.playWhenReady == true) }
     LaunchedEffect(player) {
         while (true) { playing = player?.playWhenReady == true; delay(100) }
@@ -635,7 +642,7 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
             Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White) {
                 Row(Modifier.height(40.dp).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { if (player?.playWhenReady == true) player.pause() else player?.play() },
-                        enabled = enabled && player != null, modifier = Modifier.size(40.dp)) {
+                        enabled = enabled && canPlay && player != null, modifier = Modifier.size(40.dp)) {
                         Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             if (playing) s.text("Pause", "暫停") else s.text("Play", "播放"), Modifier.size(22.dp))
                     }
@@ -878,7 +885,8 @@ private fun MediaInfo(source: SourceMedia, s: Strings, modifier: Modifier = Modi
         DropdownMenu(open, { open = false }, Modifier.widthIn(max = 300.dp)) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(source.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020 · " + s.text("HDR preserved", "保留 HDR"),
+                if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020 · " +
+                    (if (source.keepsHdr) s.text("HDR preserved", "保留 HDR") else s.text("Exported as SDR", "匯出為 SDR")),
                     color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
         }
@@ -892,6 +900,8 @@ private fun PreviewTag(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+private const val PREVIEW_FPS = 30f
+
 private fun boostablePlayer(context: android.content.Context, boost: VolumeProcessor): ExoPlayer =
     ExoPlayer.Builder(context, object : DefaultRenderersFactory(context) {
         override fun buildAudioSink(context: android.content.Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
@@ -903,6 +913,8 @@ private fun boostablePlayer(context: android.content.Context, boost: VolumeProce
 private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Boolean, onPlayer: (Player?) -> Unit) {
     val context = LocalContext.current
     val uri by model.previewUri.collectAsStateWithLifecycle()
+    val preparing by model.previewPreparing.collectAsStateWithLifecycle()
+    val held = exporting || preparing != null
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Volumes above 100% go through a boost stage in the audio output; ExoPlayer's own volume stops at 1.
     val originalBoost = remember(uri) { VolumeProcessor() }
@@ -913,12 +925,17 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
             repeatMode = Player.REPEAT_MODE_ONE
             setMediaItem(MediaItem.fromUri(uri!!))
             seekTo(model.playbackPositionMs)
-            prepare(); playWhenReady = model.playbackWanted && !exporting
+            prepare(); playWhenReady = model.playbackWanted && !held
         }
     }
     DisposableEffect(player) { onPlayer(player); onDispose { onPlayer(null) } }
     val speed by model.speed.collectAsStateWithLifecycle()
-    LaunchedEffect(player, speed) { player.setPlaybackSpeed(speed) }
+    LaunchedEffect(player, speed) {
+        // At most 30 frames a second on screen at any speed: 60 fps footage keeps every frame at 0.5×, and
+        // high-resolution footage grades half as many frames at 1×. Export keeps its own frame rate.
+        model.gradeState.frameRate = PREVIEW_FPS / speed
+        player.setPlaybackSpeed(speed)
+    }
     val originalVolume by model.originalVolume.collectAsStateWithLifecycle()
     LaunchedEffect(player, originalVolume) { player.volume = min(originalVolume, 1f); originalBoost.gain = maxOf(originalVolume, 1f) }
     // Background music plays on its own player at normal speed, following the video's output time.
@@ -953,7 +970,7 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     }
     LaunchedEffect(player) {
         // After the song window moves, replay from the trim start so the new section can be heard.
-        model.audition.collect { player.seekTo(model.trim.value.first); player.play() }
+        model.audition.collect { player.seekTo(model.trim.value.first); if (model.previewPreparing.value == null) player.play() }
     }
     DisposableEffect(player, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -962,7 +979,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
                 model.playbackPositionMs = player.currentPosition
                 player.pause()
             }
-            if (event == Lifecycle.Event.ON_START && !Exports.status.value.busy && model.playbackWanted) player.play()
+            if (event == Lifecycle.Event.ON_START && !Exports.status.value.busy && model.previewPreparing.value == null &&
+                model.playbackWanted) player.play()
         }
         // Removed before release: releasing a busy 4K player can time out, which is reported as an error.
         val listener = object : Player.Listener {
@@ -971,8 +989,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
                 model.error.value = "playbackFailed"
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !Exports.status.value.busy)
-                    model.playbackWanted = playWhenReady
+                if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !Exports.status.value.busy &&
+                    model.previewPreparing.value == null) model.playbackWanted = playWhenReady
             }
         }
         player.addListener(listener)
@@ -984,8 +1002,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
             player.release()
         }
     }
-    LaunchedEffect(exporting) {
-        if (exporting) player.pause()
+    LaunchedEffect(held) {
+        if (held) player.pause()
         else if (model.playbackWanted && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
     }
     LaunchedEffect(player) {
@@ -1249,8 +1267,9 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
             Choices(listOf(ExportMode.RECOMMENDED to s.text("Recommended", "建議"),
                 ExportMode.ORIGINAL to s.text("Original", "原始"), ExportMode.CUSTOM to s.text("Custom", "自訂")),
                 selection.mode) { onSelectionChange(selection.copy(mode = it)) }
-            if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020\n" +
-                s.text("HDR is preserved in every mode. Preview brightness depends on your display.", "所有模式均保留 HDR，預覽亮度取決於螢幕能力。"),
+            if (source.isHdr) Text("${source.hdrName} · 10-bit · BT.2020\n" + (if (source.keepsHdr)
+                s.text("HDR is preserved in every mode. Preview brightness depends on your display.", "所有模式均保留 HDR，預覽亮度取決於螢幕能力。")
+                else s.text("This device has no 10-bit HDR encoder, so the video is tone-mapped and exported as SDR.", "此裝置沒有 10-bit HDR 編碼器，影片會經色調映射後匯出為 SDR。")),
                 color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             if (source.video) Text(s.text("Speed: ${speed}× · duration: ${"%.1f".format(lengthMs / speed / 1000)} s", "速度：${speed}× · 時長：${"%.1f".format(lengthMs / speed / 1000)} 秒") +
                 (if (endMs > 0 || startMs > 0) s.text(" · trimmed ${clock(startMs)}–${clock(startMs + lengthMs)}", " · 已剪輯 ${clock(startMs)}–${clock(startMs + lengthMs)}") else ""), fontSize = 12.sp)

@@ -125,7 +125,7 @@ class ExportService : Service() {
                 val fpsLimit = if (!o.original && o.fps > 0) min(o.fps.toFloat(), source.fps) else source.fps
                 if (fpsLimit < source.fps * o.speed) effects += FrameRateCap(fpsLimit)
                 effects += UnderwaterEffect(GradeState(request.grade))
-                val mime = if (o.original) source.mime else if (source.isHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
+                val mime = if (o.original) source.mime else if (source.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
                 val bitrate = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
                     source.audioBitrate, source.durationMs, o, request.audio.changesAudio).bitrate
                 MediaIO.transform(this, source, temp, effects, bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,

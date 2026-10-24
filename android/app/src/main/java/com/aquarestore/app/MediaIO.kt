@@ -13,6 +13,11 @@ import android.provider.OpenableColumns
 import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.Clock
+import androidx.media3.datasource.DataSourceBitmapLoader
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.common.Effect
 import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.Presentation
@@ -21,6 +26,7 @@ import kotlinx.coroutines.*
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.pow
 
@@ -32,8 +38,13 @@ data class SourceMedia(
     val fps: Float = 30f, val bitrate: Int = 0, val mime: String = "image/jpeg",
     val hdrTransfer: Int = 0, val colorRange: Int = C.COLOR_RANGE_LIMITED,
     val audioBitrate: Int = 0,
+    /** An HDR source on a device without a 10-bit HDR encoder: graded and exported tone-mapped to SDR. */
+    val toneMapped: Boolean = false,
+    /** No hardware decoder could read this video's frames, so it is decoded in software. */
+    val softwareDecoding: Boolean = false,
 ) {
     val isHdr: Boolean get() = hdrTransfer == C.COLOR_TRANSFER_ST2084 || hdrTransfer == C.COLOR_TRANSFER_HLG
+    val keepsHdr: Boolean get() = isHdr && !toneMapped
     val hdrName: String get() = if (hdrTransfer == C.COLOR_TRANSFER_HLG) "HLG" else "HDR10 / PQ"
 }
 
@@ -125,7 +136,7 @@ object MediaIO {
             frame.recycle()
         }
         if (frames.isEmpty()) throw MediaProblem("analysisFailed")
-        AutoGrade.analyze(frames, hdr = source.isHdr)
+        AutoGrade.analyze(frames, hdr = source.keepsHdr)
     }
 
     /** One frame from the middle of each of [count] equal slots, for the trim bar. */
@@ -170,18 +181,55 @@ object MediaIO {
         return bitmap
     }
 
-    fun requireHdrEncoder(source: SourceMedia, mime: String) {
-        if (!source.isHdr) return
+    private fun hdrEncoderAvailable(source: SourceMedia, mime: String): Boolean {
         val color = ColorInfo.Builder().setColorSpace(C.COLOR_SPACE_BT2020)
             .setColorTransfer(source.hdrTransfer).setColorRange(source.colorRange).build()
-        if (EncoderUtil.getSupportedEncodersForHdrEditing(mime, color).isEmpty()) throw MediaProblem("hdrDevice")
+        return EncoderUtil.getSupportedEncodersForHdrEditing(mime, color).isNotEmpty()
     }
+
+    /** HDR stays HDR where the device can encode it (Android 13+ with a 10-bit HDR encoder); elsewhere it is tone-mapped to SDR. */
+    fun withHdrSupport(source: SourceMedia): SourceMedia =
+        if (source.isHdr && !hdrEncoderAvailable(source, MimeTypes.VIDEO_H265)) source.copy(toneMapped = true) else source
+
+    fun requireHdrEncoder(source: SourceMedia, mime: String) {
+        if (source.keepsHdr && !hdrEncoderAvailable(source, mime)) throw MediaProblem("hdrDevice")
+    }
+
+    /**
+     * Whether a hardware decoder can play this video live. It must declare the frame size. Up to 4K at 60 fps of
+     * pixels per second plays live: some decoders declare only 4K30 performance points yet sustain 4K60. Above that,
+     * separately declared width, height and frame rate limits are often generous, so the decoder must declare a
+     * performance point (a size and rate it sustains) that covers this video.
+     */
+    fun decodesLive(source: SourceMedia): Boolean = runCatching {
+        val withinLimit = source.width.toLong() * source.height * source.fps <= 3840L * 2160 * 61
+        val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(source.width, source.height,
+            ceil(source.fps).toInt().coerceAtLeast(1))
+        decoders(source, hardware = true).any { caps -> withinLimit || caps.supportedPerformancePoints?.any { it.covers(needed) } == true }
+    }.getOrDefault(true)
+
+    /** Whether a software decoder declares this video's frame size, for videos no hardware decoder can read. */
+    fun softwareDecodes(source: SourceMedia): Boolean = runCatching { decoders(source, hardware = false).isNotEmpty() }.getOrDefault(false)
+
+    private fun decoders(source: SourceMedia, hardware: Boolean) =
+        android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
+            !info.isEncoder && (if (hardware) info.isHardwareAccelerated else info.isSoftwareOnly) &&
+                info.supportedTypes.any { it.equals(source.mime, true) }
+        }.mapNotNull { it.getCapabilitiesForType(source.mime).videoCapabilities }
+            .filter { it.isSizeSupported(source.width, source.height) || it.isSizeSupported(source.height, source.width) }
 
     fun resizeEffect(source: SourceMedia, edge: Int): List<Effect> {
         if (edge == 0 || max(source.width, source.height) <= edge) return emptyList()
         val (w, h) = ExportSizing.dimensions(source.width, source.height, edge, true)
         return listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
     }
+
+    /** Reads video with software decoders only; audio keeps the usual decoders. */
+    private fun softwareVideoDecoding(context: Context) = DefaultAssetLoaderFactory(context,
+        DefaultDecoderFactory.Builder(context).setMediaCodecSelector { mime, secure, tunneling ->
+            MediaCodecUtil.getDecoderInfos(mime, secure, tunneling).filter { !MimeTypes.isVideo(mime) || it.softwareOnly }
+        }.build(),
+        Clock.DEFAULT, DefaultMediaSourceFactory(context), DataSourceBitmapLoader(context))
 
     private fun gain(volume: Float): List<androidx.media3.common.audio.AudioProcessor> =
         if (volume == 1f) emptyList() else listOf(VolumeProcessor(volume))
@@ -193,6 +241,7 @@ object MediaIO {
         audio: AudioMix = AudioMix(), progress: (Int?) -> Unit,
     ): ExportResult = withContext(Dispatchers.Main.immediate) {
         requireHdrEncoder(source, mime)
+        val hdrMode = if (source.toneMapped) Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL else Composition.HDR_MODE_KEEP_HDR
         coroutineScope {
             var transformer: Transformer? = null
             val poll = launch {
@@ -212,16 +261,17 @@ object MediaIO {
                         .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
                         .build()
                     val active = Transformer.Builder(context).setEncoderFactory(encoder)
+                        .apply { if (source.softwareDecoding) setAssetLoaderFactory(softwareVideoDecoding(context)) }
                         .setVideoMimeType(mime)
                         .addListener(object : Transformer.Listener {
                             override fun onFallbackApplied(composition: Composition, originalTransformationRequest: TransformationRequest, fallbackTransformationRequest: TransformationRequest) {
                                 // Media3 may tone-map automatically even when encoder fallback is off.
                                 // Reject the fallback before any SDR result can be published as HDR.
-                                if ((source.isHdr && fallbackTransformationRequest.hdrMode != Composition.HDR_MODE_KEEP_HDR) ||
+                                if ((source.isHdr && fallbackTransformationRequest.hdrMode != hdrMode) ||
                                     (strict && (fallbackTransformationRequest.videoMimeType != originalTransformationRequest.videoMimeType ||
                                         fallbackTransformationRequest.outputHeight != originalTransformationRequest.outputHeight))) {
                                     transformer?.cancel()
-                                    if (continuation.isActive) continuation.resumeWithException(MediaProblem(if (source.isHdr) "hdrDevice" else "exportFailed"))
+                                    if (continuation.isActive) continuation.resumeWithException(MediaProblem(if (source.keepsHdr) "hdrDevice" else "exportFailed"))
                                 }
                             }
                             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
@@ -261,7 +311,7 @@ object MediaIO {
                             )
                         }
                         val composition = Composition.Builder(sequences)
-                            .setHdrMode(Composition.HDR_MODE_KEEP_HDR).build()
+                            .setHdrMode(hdrMode).build()
                         active.start(composition, output.absolutePath)
                     } catch (e: Exception) {
                         active.cancel()
