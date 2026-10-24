@@ -15,6 +15,7 @@ dist/
 *.key
 *.idsig
 .release.env
+.env
 signing.properties
 keystore.properties
 

@@ -16,6 +16,34 @@ data class ExportOptions(
         ((if (endMs > 0) min(endMs, durationMs) else durationMs) - startMs).coerceAtLeast(0)
 }
 
+enum class ExportMode { RECOMMENDED, ORIGINAL, CUSTOM }
+
+data class ExportSelection(
+    val mode: ExportMode = ExportMode.RECOMMENDED,
+    val longEdge: Int = 1920,
+    val fps: Int = 0,
+    val quality: Int = 90,
+    val png: Boolean = false,
+)
+
+object ExportRecommendation {
+    /** Small photos keep full dimensions; large photos are reduced, preserving PNG when needed. */
+    fun photo(width: Int, height: Int, mime: String = "image/jpeg"): ExportOptions =
+        if (max(width, height) <= 2560) ExportOptions()
+        else ExportOptions(original = false, longEdge = 2560, quality = 90, png = mime == "image/png")
+
+    /** Bound both axes to a 1080p frame, preserve lower source rates, and never enlarge the source. */
+    fun video(width: Int, height: Int, fps: Float): ExportOptions {
+        val long = max(width, height)
+        val short = min(width, height)
+        val scale = min(1.0, min(1920.0 / long, 1080.0 / short))
+        val edge = if (scale == 1.0) 0 else (long * scale).toInt().coerceAtLeast(2)
+        val frameCap = if (fps > 30f) 30 else 0
+        return if (edge == 0 && frameCap == 0) ExportOptions()
+        else ExportOptions(original = false, longEdge = edge, fps = frameCap, quality = 85)
+    }
+}
+
 object ExportSizing {
     fun dimensions(width: Int, height: Int, longEdge: Int, even: Boolean = false): Pair<Int, Int> {
         require(width > 0 && height > 0)

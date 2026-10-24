@@ -2,7 +2,7 @@
 
 ## 應用程式內更新
 
-一般 `release` APK 安裝版會在開啟時靜默查詢 `daocha/AquaRestore` 最新公開 GitHub Release（每六小時最多一次）。僅在該 Release 含版本碼更高、名稱符合 `AquaRestore-<version>-<versionCode>.apk` 的 APK，以及對應的 `AquaRestore-<version>-<versionCode>.SHA256SUMS` 時顯示更新。下載時核對 SHA-256、檔案大小、套件名稱及版本碼，最後交由 Android 安裝確認；使用者可能需允許從 AquaRestore 安裝應用程式。升級必須沿用相容的簽署金鑰。`debug` 版不檢查更新，也沒有網路與 APK 安裝權限。
+一般 `release` APK 安裝版會在開啟時靜默查詢 `daocha/AquaRestore` 最新公開 GitHub Release（每六小時最多一次）。僅在該 Release 含版本碼更高、名稱符合 `AquaRestore-<version>-<versionCode>.apk` 的 APK，以及對應的 `AquaRestore-<version>-<versionCode>.SHA256SUMS` 時顯示更新。下載時核對 SHA-256、檔案大小、套件名稱及版本碼，最後交由 Android 安裝確認；使用者可能需允許從 AquaRestore 安裝應用程式。升級必須沿用相容的簽署金鑰。`debug` 版預設不檢查更新，也沒有網路與 APK 安裝權限；可改為從區域網路更新，見下方「區域網路更新 debug 版」。
 
 未來上架 Google Play 時，使用 `:app:bundlePlayRelease` 建立 Play 專用 AAB；此版本走 Google Play 應用程式內更新，不含 `REQUEST_INSTALL_PACKAGES` 權限或 GitHub APK 安裝流程。請以與既有安裝相容的簽署方式及遞增的 `versionCode` 發布。若以一般 `release` 版本經 Google Play 安裝，程式也會依安裝來源走 Google Play 更新。請先在 Play 測試軌道測試更新流程；Play 更新是否可用由 Play 服務決定。
 
@@ -53,6 +53,25 @@ ANDROID_SERIAL=emulator-5554 ./scripts/build-android-debug.sh --install
 ```
 
 不需要 release JKS。即使 shell 已設定簽署密碼，debug／測試的 Gradle 程序也不會收到它們。
+
+### 區域網路更新 debug 版
+
+將 `.env.example` 複製為 `.env`（已列入 `.gitignore`），填入這台電腦的區域網路位址：
+
+```bash
+AQUARESTORE_DEV_UPDATE_HOST=192.168.1.10
+AQUARESTORE_DEV_UPDATE_PORT=8765   # 選填，預設 8765
+```
+
+設定後，debug 版會：
+
+- 以建置時間（自 2026-01-01 起的分鐘數）作為版本碼，讓每次建置都比已安裝的版本新；版本名稱也帶上此編號（例如 `2026.10.25-debug.425918`），同一天的建置也能分辨。
+- 只對該位址允許 HTTP，並取得網路與 APK 安裝權限；沒有 `.env` 時（例如 CI）與以往相同。
+- 在 `assembleDebug` 後寫出 `android/dist/dev-update/`：APK、`SHA256SUMS` 與 `latest.json`。
+
+接著執行 `scripts/serve-dev-update.sh`，它只綁定該位址。手機上的 debug 版每次回到前景都會檢查，也可在設定中手動檢查。
+位址只寫入 debug APK，不會進入原始碼或 Git；請勿公開散布設定過的 debug APK。
+Android 只接受與已安裝版本相同簽署金鑰的更新，因此區域網路上的他人無法以自己的 APK 取代它。
 
 ## 3. 簽署金鑰
 

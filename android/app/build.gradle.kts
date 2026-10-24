@@ -1,7 +1,23 @@
+import com.android.build.api.artifact.SingleArtifact
+import com.android.build.api.variant.BuiltArtifactsLoader
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+// Debug builds can update from a server on your LAN (scripts/serve-dev-update.sh). The host comes from the
+// gitignored .env at the repository root (or the environment), so no address is ever committed.
+val dotEnv = providers.fileContents(layout.projectDirectory.file("../../.env")).asText.orNull.orEmpty()
+    .lineSequence().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("#") && "=" in it }
+    .associate { line -> line.substringBefore("=").removePrefix("export ").trim() to line.substringAfter("=").trim().trim('"', '\'') }
+fun devSetting(name: String) = providers.environmentVariable(name).orNull ?: dotEnv[name]
+val devUpdateHost = devSetting("AQUARESTORE_DEV_UPDATE_HOST")?.takeIf(String::isNotBlank)?.also {
+    require(Regex("^[A-Za-z0-9.-]+$").matches(it)) { "AQUARESTORE_DEV_UPDATE_HOST must be an IPv4 address or host name" }
+}
+val devUpdatePort = (devSetting("AQUARESTORE_DEV_UPDATE_PORT") ?: "8765").also {
+    require(it.toIntOrNull() in 1..65535) { "AQUARESTORE_DEV_UPDATE_PORT must be a port number" }
 }
 android {
     namespace = "com.aquarestore.app"
@@ -14,6 +30,7 @@ android {
         versionName = "2026.10.25"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appLabel"] = "AquaRestore"
+        buildConfigField("String", "DEV_UPDATE_URL", "\"\"")
     }
     val releaseKeystore = providers.environmentVariable("AQUARESTORE_KEYSTORE_FILE").orNull
     signingConfigs {
@@ -29,7 +46,8 @@ android {
         debug {
             applicationIdSuffix = ".debug"; versionNameSuffix = "-debug"
             manifestPlaceholders["appLabel"] = "AquaRestore Dev"
-            buildConfigField("String", "UPDATE_CHANNEL", "\"none\"")
+            buildConfigField("String", "UPDATE_CHANNEL", if (devUpdateHost == null) "\"none\"" else "\"lan\"")
+            if (devUpdateHost != null) buildConfigField("String", "DEV_UPDATE_URL", "\"http://$devUpdateHost:$devUpdatePort/\"")
         }
         release {
             isDebuggable = false
@@ -54,6 +72,11 @@ android {
         getByName("main").java.srcDir(core.resolve("main"))
         getByName("test").java.srcDir(core.resolve("test"))
         getByName("androidTest").java.srcDir(core.resolve("androidTest"))
+        // Network, install permission and FileProvider exist in debug only when a LAN update server is set.
+        if (devUpdateHost != null) getByName("debug") {
+            manifest.srcFile("src/lanUpdate/AndroidManifest.xml")
+            res.srcDir("src/lanUpdate/res")
+        }
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
@@ -63,6 +86,57 @@ android {
     kotlinOptions { jvmTarget = "17" }
     lint { disable += "UnsafeOptInUsageError" }
 }
+if (devUpdateHost != null) androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+    // Every LAN build must count as newer than the installed one: minutes since 2026-01-01 UTC. The version
+    // name carries it too (2026.10.25-debug.425918), so builds made on the same day can be told apart.
+    val stamp = (System.currentTimeMillis() / 60_000 - 29_453_760).toInt()
+    variant.outputs.forEach { it.versionCode.set(stamp); it.versionName.set("${it.versionName.get()}.$stamp") }
+    val network = tasks.register<LanNetworkConfig>("${variant.name}LanNetworkConfig") { host.set(devUpdateHost) }
+    variant.sources.res?.addGeneratedSourceDirectory(network, LanNetworkConfig::outputDir)
+    val publish = tasks.register<PublishLanUpdate>("${variant.name}PublishLanUpdate") {
+        apkFolder.set(variant.artifacts.get(SingleArtifact.APK))
+        loader.set(variant.artifacts.getBuiltArtifactsLoader())
+        outputDir.set(rootProject.layout.projectDirectory.dir("dist/dev-update"))
+    }
+    tasks.matching { it.name == "assemble${variant.name.replaceFirstChar(Char::uppercase)}" }.configureEach { finalizedBy(publish) }
+}
+
+/** Lets the debug app use plain HTTP to the LAN update host and nowhere else. */
+abstract class LanNetworkConfig : DefaultTask() {
+    @get:Input abstract val host: Property<String>
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @TaskAction fun write() {
+        outputDir.get().file("xml/lan_update_network.xml").asFile.apply { parentFile.mkdirs() }.writeText("""
+            <network-security-config>
+                <domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">${host.get()}</domain></domain-config>
+            </network-security-config>
+        """.trimIndent())
+    }
+}
+
+/** Copies the debug APK to android/dist/dev-update with the latest.json and SHA256SUMS that the app reads. */
+abstract class PublishLanUpdate : DefaultTask() {
+    @get:InputFiles abstract val apkFolder: DirectoryProperty
+    @get:Internal abstract val loader: Property<BuiltArtifactsLoader>
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @TaskAction fun publish() {
+        val built = loader.get().load(apkFolder.get()) ?: throw GradleException("No debug APK was built")
+        val output = built.elements.single()
+        val code = output.versionCode ?: throw GradleException("The debug APK has no version code")
+        val directory = outputDir.get().asFile.apply { mkdirs() }
+        val name = "AquaRestore-debug-$code.apk"
+        val apk = File(output.outputFile).copyTo(File(directory, name), overwrite = true)
+        val sha = MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).joinToString("") { "%02x".format(it) }
+        File(directory, "AquaRestore-debug-$code.SHA256SUMS").writeText("$sha  $name\n")
+        val json = """{"versionCode":$code,"versionName":"${output.versionName.orEmpty()}","apk":"$name","size":${apk.length()}}"""
+        File(directory, "latest.json.part").apply { writeText(json + "\n") }.renameTo(File(directory, "latest.json"))
+        // Only now drop older builds, so latest.json never names a file that is missing.
+        directory.listFiles()?.filter { it.name.startsWith("AquaRestore-debug-") && !it.name.startsWith("AquaRestore-debug-$code.") }
+            ?.forEach { it.delete() }
+        logger.lifecycle("LAN update: android/dist/dev-update/$name (versionCode $code)")
+    }
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.12.01"))
     implementation("androidx.activity:activity-compose:1.12.2")

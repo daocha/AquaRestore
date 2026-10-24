@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -74,11 +75,11 @@ class EditorUiTest {
         ui.onNodeWithTag("adjustments").assertDoesNotExist()
         ui.onNodeWithContentDescription("Export").assertDoesNotExist()
         ui.runOnIdle { assertSame("Full screen must reuse the running player", before, findPlayer(ui.activity.window.decorView)!!.player) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.waitForIdle()
         ui.runOnIdle { assertTrue(model.compare.value) }
         ui.onNodeWithText("ORIGINAL").assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.waitForIdle()
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.runOnUiThread { ui.activity.onBackPressedDispatcher.onBackPressed() }
@@ -109,9 +110,9 @@ class EditorUiTest {
         ui.runOnUiThread { model.import(Uri.fromFile(file)) }
         ui.waitUntil(15_000) { model.previewGraded.value != null }
         ui.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress)).assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.runOnIdle { assertTrue(model.compare.value) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress)).performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         ui.waitUntil(10_000) { model.previewOriginal.value!!.getPixel(50, 50) == model.previewGraded.value!!.getPixel(50, 50) }
@@ -120,12 +121,17 @@ class EditorUiTest {
         ui.onNodeWithText("Advanced adjustments").performScrollTo().performClick()
         ui.onNodeWithText("Shadows").performScrollTo().assertIsDisplayed()
         ui.onNodeWithTag("mediaPreview").assertIsDisplayed()
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         ui.runOnIdle { assertTrue(model.compare.value) }
-        ui.onNodeWithText("Hold to compare").performTouchInput { cancel() }
+        ui.onNodeWithText("Compare").performTouchInput { cancel() }
         ui.runOnIdle { assertFalse(model.compare.value) }
         ui.onNodeWithContentDescription("Export").performClick()
         ui.onNodeWithText("Original").assertIsDisplayed()
+        ui.onNodeWithText("Custom").performClick()
+        ui.onNodeWithText("Cancel").performClick()
+        ui.onNodeWithContentDescription("Export").performClick()
+        ui.onNodeWithText("Custom").assertIsSelected()
+        ui.onNodeWithText("Original").performClick()
         ui.onNodeWithText("Start export").performClick()
         // A notification permission sheet is not required for foreground export completion.
         ui.waitUntil(20_000) { Exports.status.value.uri != null }
@@ -183,16 +189,20 @@ class EditorUiTest {
                     origin[1] + height * (30 + (i / 20) * 4) / 100)
             }.also { screen.recycle() }
         }
-        ui.onNodeWithText("Hold to compare").performTouchInput { down(center) }
+        ui.onNodeWithText("Compare").performTouchInput { down(center) }
         val uncorrected = sampledScreen()
-        ui.onNodeWithText("Hold to compare").performTouchInput { up() }
+        ui.onNodeWithText("Compare").performTouchInput { up() }
         ui.runOnUiThread { model.setGrade(Grade.Blue) }
         val corrected = sampledScreen()
         val difference = corrected.indices.sumOf { i ->
             listOf(0, 8, 16).sumOf { shift -> kotlin.math.abs((corrected[i] ushr shift and 255) - (uncorrected[i] ushr shift and 255)) }
         }.toDouble() / (corrected.size * 3)
         assertTrue("Paused video pixels did not update: mean difference $difference", difference > 3.0)
-        ui.onNodeWithText("Video speed").performClick()
+        ui.onNodeWithContentDescription("Video speed").performClick()
+        ui.onNodeWithContentDescription("Video speed").assertDoesNotExist()
+        ui.onNodeWithTag("mediaPreview").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Video speed").assertExists()
+        ui.onNodeWithContentDescription("Video speed").performClick()
         ui.onNodeWithText("2×").performClick()
         ui.runOnIdle { assertEquals(2f, findPlayer(ui.activity.window.decorView)!!.player!!.playbackParameters.speed, 0f) }
         ui.activityRule.scenario.recreate()
@@ -204,6 +214,36 @@ class EditorUiTest {
             assertFalse(player.playWhenReady)
             assertTrue("Position was reset to ${player.currentPosition}", player.currentPosition in 750..850)
         }
+        ui.onNodeWithContentDescription("Trim range").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Set start").assertExists()
+        ui.onNodeWithContentDescription("Set end").assertExists()
+        ui.onNodeWithContentDescription("Video speed").assertDoesNotExist()
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        // A second tap seeks immediately, even while the trim actions are visible.
+        ui.onNodeWithContentDescription("Trim range").performTouchInput {
+            click(Offset(width * 0.75f, height / 2f))
+        }
+        val threeQuarters = model.source.value!!.durationMs * 3 / 4
+        ui.waitUntil(10_000) {
+            var position = 0L
+            ui.runOnUiThread { position = findPlayer(ui.activity.window.decorView)!!.player!!.currentPosition }
+            position in (threeQuarters - 150)..(threeQuarters + 150)
+        }
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        ui.onNodeWithContentDescription("Trim range").performTouchInput {
+            down(Offset(width * 0.75f, height / 2f))
+            moveTo(Offset(width * 0.25f, height / 2f))
+            up()
+        }
+        val oneQuarter = model.source.value!!.durationMs / 4
+        ui.waitUntil(10_000) {
+            var position = 0L
+            ui.runOnUiThread { position = findPlayer(ui.activity.window.decorView)!!.player!!.currentPosition }
+            position in (oneQuarter - 150)..(oneQuarter + 150)
+        }
+        ui.runOnIdle { assertFalse(findPlayer(ui.activity.window.decorView)!!.player!!.playWhenReady) }
+        ui.onNodeWithTag("mediaPreview").performTouchInput { click(center) }
+        ui.onNodeWithContentDescription("Video speed").assertExists()
         ui.onNodeWithContentDescription("Export").performClick()
         ui.onNodeWithTag("estimatedSize").performScrollTo().assertIsDisplayed()
         ui.onNodeWithText("Custom").performScrollTo().performClick()
