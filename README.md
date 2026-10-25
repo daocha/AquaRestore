@@ -4,36 +4,37 @@
 
 # AquaRestore
 
-A native Android app that restores the colors of underwater videos and photos. Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later. All image processing happens on the device. Release builds use the network only to check for app updates and download an update when requested; debug builds have no network permission.
+A native Android app that restores the colors of underwater videos and photos. Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later. All image processing happens on the device. Release builds use the network only to check for app updates and download an update when requested. Debug builds have no network permission unless LAN updates are configured.
 
 An iOS version with the same screens, controls and color pipeline lives in [`ios/`](#ios-version): SwiftUI, AVFoundation and Metal; iOS 16 or later.
 
 ## How it works
 
-1. Import a video or photo through the system file picker (no access to your whole gallery is needed).
+1. Choose a video or photo from the in-app Recent or Albums library. Android asks for media access when you open the library; on supported versions, you can grant access to selected photos and videos.
 2. The app analyzes the colors and recommends red recovery, white balance, exposure, dehaze, clarity and shadow settings.
-3. Fine-tune with the **Restore intensity** slider. It scales every advanced setting together (red recovery, warmth, dehaze, auto levels and so on): 0% is the original, 100% the recommended correction, up to 200%. Hold **Hold to compare** to see the original; release to return. The ⛶ button on the preview opens a full-screen viewer (the same player, so playback continues) with compare still available; tap it again or press Back to return.
+3. Fine-tune with the **Restore intensity** slider. It scales every advanced setting together: 0% is the original and 100% is the full recommended correction. Hold **Hold to compare** to see the original; release to return. The ⛶ button on the preview opens a full-screen viewer (the same player, so playback continues) with compare still available; tap it again or press Back to return.
 4. The preview stays at the top while the controls scroll independently. For videos:
    - **Video speed:** 0.5×, 1×, 2× or 4×.
    - **Trim:** a filmstrip of graded frames covers the whole clip, with footage outside the selection dimmed and the playhead shown. Dragging a handle pauses the preview on that frame. Tap or drag inside the selection to move the cursor and play from there; **Set start / Set end** above the cursor cut exactly at that frame. Playback loops within the trim, and export and the size estimate use only the trimmed part.
    - **Audio:** set the original sound's volume (0% mutes it) and add background music. The music bar shows the whole song's loudness, with a window as long as the video's output; drag it to choose which part of the song plays, and release to hear it from the trim start. The original sound and music have separate volumes (up to 200%), so you can keep both or play only the music. A song shorter than the video repeats.
    - **Advanced adjustments:** auto levels, red recovery, protect cool water, warmth, green/magenta tint, exposure, dehaze, clarity, contrast, saturation and shadows.
-5. Top bar: **✕** on the left closes the edit and returns to the home screen (after confirming); on the right are change media, export and settings. Export as Original or Custom, with preparing / encoding / saving progress, cancel, background export and a notification.
+5. Top bar: **✕** on the left closes the edit and returns to the home screen (after confirming); on the right are change media, export and settings. Export as Recommended, Original or Custom, with preparing / encoding / saving progress, cancel, background export and a notification.
 6. In settings, switch between 中文 / English and Light / Dark. Both follow the system by default, and your choice is remembered.
 
 ## Smart recommendations and smooth preview
 
 Recommendations come from on-device color statistics, not a cloud-based generative model. For videos, 6 frames spread across 5%–95% of the clip are analyzed together, and one set of parameters is used for the whole video, so the white balance does not pump from frame to frame. The analysis tells deep blue or green water, washed-out hazy water and dim footage apart and recommends settings for each. Low-confidence footage shows a notice and starts at a lower intensity; everything can still be adjusted by hand.
 
-After the analysis, the original video plays immediately, graded live by hardware decoding and a single GPU shader; no re-encode is needed first. Sliders only update shader uniforms and never rebuild the decoder. Trim-bar thumbnails are taken from the original's keyframes in the background. Only footage heavier than 4K30 (e.g. 4K60) also gets a proxy in the background (long edge 1280px, at most about 30fps, 8Mbps; H.264 for SDR, 10-bit HEVC for HDR), and the player switches to it at the same position once it is ready, so mid-range phones do not stutter. Exports **always use the original URI**, never the proxy.
+After analysis, videos normally play from the original, with live GPU grading. 4K60 can play directly when the device can decode it smoothly. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, cannot play the original smoothly, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready. Exports **always use the original URI**, never the preview copy.
 
-Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. HDR video is processed as FP16 / BT.2020 and exported with the source's PQ / HLG curve, keeping its highlights. Devices, encoders and color management may cause slight display differences.
+Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. On compatible devices, HDR video is processed and exported as HDR; otherwise it is tone-mapped and exported as SDR. Devices, encoders and color management may cause slight display differences.
 
 ## Export
 
 | Option | Video | Photo |
 | --- | --- | --- |
-| Original | Keeps the source dimensions, frame timestamps / variable frame rate and codec; uses the source video bitrate (adjusted for speed), estimating it only when unavailable; no silent encoder downgrade | Full size, lossless PNG after correction |
+| Recommended | Keeps source dimensions and frame rate when already within the suggested limits; otherwise caps video at 1080p and 30fps with a balanced bitrate | Keeps smaller photos at full size; reduces larger ones. PNG sources stay PNG; other sources become JPEG |
+| Original | Keeps the source dimensions, frame timestamps / variable frame rate and codec; uses the source video bitrate (adjusted for speed), estimating it only when unavailable; no silent encoder downgrade | Full size, full-quality JPEG or lossless PNG after correction |
 | Custom size | Original, or long edge 3840 / 2560 / 1920 / 1280 / 960 / 640; keeps the aspect ratio, never upscales | Same |
 | Custom fps | Original / 24 / 25 / 30 / 50 / 60 (nothing above the source), lowering the average frame rate by dropping frames | Not applicable |
 | Quality | Target bitrate, 10–100% | JPEG 10–100%, or lossless PNG |
@@ -51,7 +52,7 @@ Output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written
 
 This produces `dist/AquaRestore-debug.apk` and runs the tests and lint by default. The debug build has its own package name (`com.aquarestore.app.debug`) and is called **AquaRestore Dev**, so it installs next to the release app instead of over it.
 
-The release APK checks the latest published GitHub release quietly on app open (at most once every six hours). When a newer version is available, Settings shows a red dot and an **Update now** button. The downloaded APK is checked against its published SHA-256 and Android asks you to approve installation. The debug app has no updater. A separate `playRelease` variant uses Google Play's in-app updates and has no APK-install permission; see the [release guide](docs/RELEASING.md).
+The release APK checks the latest published GitHub release quietly on app open (at most once every six hours). When a newer version is available, Settings shows a red dot and an **Update now** button. The downloaded APK is checked against its published SHA-256 and Android asks you to approve installation. Debug builds can check for updates over a configured LAN; without that configuration, they have no updater. A separate `playRelease` variant uses Google Play's in-app updates and has no APK-install permission; see the [release guide](docs/RELEASING.md).
 
 To release:
 
@@ -88,7 +89,7 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pi
 | Live preview | ExoPlayer + a GLSL shader | AVPlayer + a Metal compute shader in a custom `AVVideoCompositing` (the same grade as the photo path, to within one level) |
 | Export | Media3 Transformer | `AVAssetReader` → the same Metal compositor → `AVAssetWriter` (H.264 / HEVC, bitrate from the same plan as the size estimate) |
 | Photos | Decoded with `ImageDecoder`, graded on the CPU | Decoded with ImageIO, graded on the CPU |
-| Import | System file picker | Photos picker for media, Files for music |
+| Import | In-app Recent / Albums library with media permission | Photos picker for media, Files for music |
 | Output | `Movies/AquaRestore`, `Pictures/AquaRestore` | Photos library (add-only access; the app never reads your library) |
 
 Differences that come from the platform:
@@ -124,12 +125,12 @@ See the [validation log](docs/VALIDATION.md#ios) for what has been verified on i
 
 ## Scope and limitations
 
-- SDR, plus HDR10 / PQ and HLG on compatible devices. Keeping HDR needs Android 13+ and a 10-bit HDR encoder that Media3 accepts; the HEVC HDR encoder is checked at import, and the source codec again for Original export. Both Original and Custom keep HDR; there is no automatic SDR downgrade.
+- SDR, plus HDR10 / PQ and HLG on compatible devices. Keeping HDR needs Android 13+ and a 10-bit HDR encoder that Media3 accepts. On devices without a suitable HDR encoder, HDR video is tone-mapped and exported as SDR. When the device supports HDR export, both Original and Custom preserve it.
 - `onFallbackApplied` intercepts Media3's automatic tone-mapping and blocks silent codec / size downgrades. HDR preview brightness depends on the physical display; an emulator cannot replace testing on a real HDR device.
 - Dolby Vision and recognizable HDR10+ dynamic metadata are not fully preserved yet and are rejected at import. HDR10+ is not always detectable from the track format when the container does not label the dynamic profile; this version does not promise to keep dynamic metadata. Static HDR mastering / content light metadata is not re-measured after grading.
 - Dehaze is a bounded black-point / contrast correction and clarity a small luma unsharp mask, not depth estimation, spatial descattering or machine-learning denoising.
 - Recommendations are based on samples from the whole clip; for clips that combine several scenes, very dark footage or strong colored lights, check the result with the intensity slider. Sampling uses keyframes, so very short clips may sample the same frame more than once.
-- Temporary files need extra storage. High-resolution photos are limited by memory; when there is not enough, the app asks for a smaller size instead of silently downscaling.
+- Temporary files need extra storage. High-resolution photos are limited by memory; an out-of-memory export reports an error instead of silently downscaling.
 - Photo EXIF / GPS / container metadata is not kept; an Original PNG can be much larger than the source JPEG. Source audio is subject to MP4 container compatibility.
 - Background export uses a foreground service and a wake lock; work does not resume automatically if the system kills the app or the device restarts. Android's limits on long-running background services still apply.
 - Smoothness depends on the device; dropped frames cannot be ruled out on every older phone. Test on your target phones with `docs/DEVICE_TESTS.md`.
@@ -144,7 +145,7 @@ What has been verified so far, and what still needs testing on real devices, is 
 - `FrameCadence.kt` / `FrameRateCap.kt`: timeline frame dropping that keeps the target average fps and source timestamps.
 - `MediaIO.kt`: media info, sampling, photo decoding, filmstrip and the Media3 Transformer wrapper.
 - `Soundtrack.kt`: background music sections, volume processing (up to 200%, clipping rather than wrapping) and the loudness envelope.
-- `EditorModel.kt`: import, background proxy (heavy footage only), preview and preference state.
+- `EditorModel.kt`: import, preview copies when needed, preview and preference state.
 - `ExportService.kt`: background export, progress, cancel and MediaStore saving.
 - `MainActivity.kt` / `Strings.kt`: Compose UI, Traditional Chinese / English and themes.
 
@@ -152,7 +153,7 @@ HDR capabilities follow [Media3 supported formats](https://developer.android.com
 
 ### Intensity and video speed
 
-The advanced sliders show the values applied at the current intensity and move with it; manual edits are converted back to base values at the current intensity. 0–200% scales every correction parameter together (including auto levels), and 0% is a pixel-exact original; the photo CPU path and the video GPU path follow the same rules. Recommendations start at a conservative 85%, lower for low-confidence footage, and can be raised to 200%.
+The advanced sliders show the values applied at the current intensity and move with it; manual edits are converted back to base values at the current intensity. The Restore intensity slider ranges from 0% (original colors) to 100% (full recommended correction). Photos and videos follow the same intensity setting.
 
 Videos can play at 0.5×, 1×, 2× or 4×, in both preview and export, with audio keeping its pitch. Importing new media resets to 1×. Speeding up keeps the source frame rate by dropping frames evenly: 60fps at 4× still exports at 60fps (not 240fps). Slow motion cannot invent frames, so 60fps at 0.5× exports at about 30fps. The export dialog's fps, the Custom fps choices and the size estimate follow the same rule. Custom fps drops frames after the speed change and never interpolates. Changing speed re-encodes the audio.
 
