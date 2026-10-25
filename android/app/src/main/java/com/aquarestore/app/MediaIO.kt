@@ -29,8 +29,18 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 class MediaProblem(val key: String) : Exception(key)
+
+/** The frame rate from the spacing of frame times in microseconds (in any order), or null for too few frames. */
+internal fun frameRateFromTimes(timesUs: List<Long>): Float? {
+    val gaps = timesUs.sorted().zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
+    return if (gaps.size < 10) null else 1_000_000f / gaps[gaps.size / 2]
+}
+
+/** Frame rates are whole numbers throughout the app, rounded half up: 59.94 is 60, 29.97 is 30, 23.976 is 24. */
+internal fun wholeFrameRate(fps: Float): Float = fps.roundToInt().coerceAtLeast(1).toFloat()
 
 data class SourceMedia(
     val uri: Uri, val name: String, val video: Boolean,
@@ -42,7 +52,7 @@ data class SourceMedia(
     val toneMapped: Boolean = false,
     /** No hardware decoder could read this video's frames, so it is decoded in software. */
     val softwareDecoding: Boolean = false,
-    /** The whole-number frame rate Android declares, which [fps] measures instead; for the log. */
+    /** The frame rate Android declares, which [fps] measures instead; for the log. */
     val declaredFps: Float? = null,
 ) {
     val isHdr: Boolean get() = hdrTransfer == C.COLOR_TRANSFER_ST2084 || hdrTransfer == C.COLOR_TRANSFER_HLG
@@ -91,7 +101,7 @@ object MediaIO {
                 val declaredRate = if (track.containsKey(MediaFormat.KEY_FRAME_RATE)) track.getNumber(MediaFormat.KEY_FRAME_RATE)?.toFloat() else null
                 val measuredRate = measuredFrameRate(extractor, tracks.indexOf(track))
                 android.util.Log.i("AquaRestore", "Frame rate: measured $measuredRate, declared $declaredRate")
-                val frameRate = (measuredRate ?: declaredRate)?.takeIf { it.isFinite() && it > 0 } ?: 30f
+                val frameRate = wholeFrameRate((measuredRate ?: declaredRate)?.takeIf { it.isFinite() && it > 0 } ?: 30f)
                 val trackRate = if (track.containsKey(MediaFormat.KEY_BIT_RATE)) track.getInteger(MediaFormat.KEY_BIT_RATE) else 0
                 val totalRate = meta(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull() ?: 0L
                 val rate = if (trackRate > 0) trackRate else (totalRate - audioRate).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
@@ -146,18 +156,16 @@ object MediaIO {
     }
 
     /**
-     * The frame rate from the spacing of the first frames. Android's declared rate is a whole number, counted over
-     * the edited duration: lead-in frames hidden by an edit list (a GoPro clip can have a second of them) push 59.94
+     * The frame rate from the spacing of the first frames. Android's declared rate is counted over the edited
+     * duration: lead-in frames hidden by an edit list (a trimmed GoPro clip can have a second of them) push 59.94
      * up to 61, which a decoder declaring 7680x4320 at 60 fps does not cover.
      */
     private fun measuredFrameRate(extractor: MediaExtractor, track: Int): Float? = runCatching {
         extractor.selectTrack(track)
-        val times = buildList {
+        frameRateFromTimes(buildList {
             // Lead-in frames before an edit list's start have negative times, so the end is the track index, not -1.
             while (size < 121 && extractor.sampleTrackIndex >= 0) { add(extractor.sampleTime); extractor.advance() }
-        }.sorted()
-        val gaps = times.zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
-        if (gaps.size < 10) null else 1_000_000f / gaps[gaps.size / 2]
+        })
     }.onFailure { android.util.Log.w("AquaRestore", "Frame rate not measured", it) }.getOrNull()
 
     /** One frame from the middle of each of [count] equal slots, for the trim bar. */
@@ -235,7 +243,7 @@ object MediaIO {
         val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(w, h, ceil(source.fps).toInt().coerceAtLeast(1))
         val lines = mutableListOf(
             "${w}x$h ${source.mime}",
-            "Frame rate: %.3f used, %s declared".format(source.fps, source.declaredFps?.let { "%.2f".format(it) } ?: "none"),
+            "Frame rate: %.0f used, %s declared".format(source.fps, source.declaredFps?.let { "%.2f".format(it) } ?: "none"),
             "Pixel rate: %.0f M/s (plays live up to %.0f M/s)".format(w.toDouble() * h * source.fps / 1e6, 3840.0 * 2160 * 61 / 1e6),
             "Needs: $needed",
         )

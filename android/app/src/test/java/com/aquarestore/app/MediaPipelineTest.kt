@@ -158,4 +158,24 @@ class MediaPipelineTest {
         assertTrue(ExportSizing.bitrate(1920, 1080, 30f, 100, 80_000_000, true) >= 80_000_000)
         assertTrue(ExportSizing.bitrate(1920, 1080, 30f, 100, 0, false) > ExportSizing.bitrate(1920, 1080, 30f, 50, 0, false))
     }
+    @Test fun frameRateIgnoresHiddenLeadInFrames() {
+        // A trimmed GoPro clip: 59 lead-in frames before zero, then 59.94 fps.
+        val times = (-59 until 62).map { it * 1_001_000L / 60 }
+        assertEquals(59.94f, frameRateFromTimes(times)!!, 0.01f)
+        assertEquals(60f, wholeFrameRate(frameRateFromTimes(times)!!))
+    }
+    @Test fun exactSixtyStaysSixtyDespiteMicrosecondRounding() {
+        val times = (0 until 121).map { it * 1_000_000L / 60 }
+        assertEquals(60f, wholeFrameRate(frameRateFromTimes(times)!!))
+    }
+    @Test fun frameRatesRoundHalfUp() {
+        assertEquals(24f, wholeFrameRate(23.976f))
+        assertEquals(30f, wholeFrameRate(29.97f))
+        assertEquals(60f, wholeFrameRate(60.002f))
+        assertEquals(13f, wholeFrameRate(12.5f))
+        assertEquals(1f, wholeFrameRate(0.2f))
+    }
+    @Test fun tooFewFramesLeaveTheRateToAndroid() {
+        assertNull(frameRateFromTimes((0 until 5).map { it * 16_683L }))
+    }
 }

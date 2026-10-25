@@ -49,7 +49,7 @@ object DevTools {
     /** The app's own log lines since it last started. An app may read its own log without any permission. */
     suspend fun log(): String = withContext(Dispatchers.IO) {
         runCatching {
-            val since = if (clearedAt > 0) listOf("-T", "%d.%03d".format(clearedAt / 1000, clearedAt % 1000)) else listOf("-t", "3000")
+            val since = if (clearedAt > 0) listOf("-T", "%d.%03d".format(java.util.Locale.ROOT, clearedAt / 1000, clearedAt % 1000)) else listOf("-t", "3000")
             val process = ProcessBuilder(listOf("logcat", "-d", "-v", "time", "--pid=${android.os.Process.myPid()}") + since + listOf("-s", "AquaRestore"))
                 .redirectErrorStream(true).start()
             process.inputStream.bufferedReader().use { it.readText() }.also { process.waitFor() }

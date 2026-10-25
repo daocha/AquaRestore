@@ -1298,7 +1298,7 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
                 (if (audio.hasMusic) s.text(" + music ${(audio.musicVolume * 100).roundToInt()}%", " ＋ 音樂 ${(audio.musicVolume * 100).roundToInt()}%") else ""), fontSize = 12.sp)
             if (selection.mode != ExportMode.CUSTOM) {
                 val shownFps = if (options.fps == 0) sourceFps else min(sourceFps, options.fps.toFloat())
-                Text("${dimensions.first} × ${dimensions.second}" + if (source.video) " · ${"%.2f".format(shownFps)} fps"
+                Text("${dimensions.first} × ${dimensions.second}" + if (source.video) " · ${shownFps.roundToInt()} fps"
                     else if (options.png) " · PNG" else " · JPEG ${options.quality}%", fontWeight = FontWeight.SemiBold)
                 if (selection.mode == ExportMode.ORIGINAL && !source.video)
                     Choices(listOf(false to "JPEG", true to "PNG"), selection.png) { onSelectionChange(selection.copy(png = it)) }
