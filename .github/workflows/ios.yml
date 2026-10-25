@@ -1,12 +1,15 @@
 name: iOS
 on: [push, pull_request, workflow_dispatch]
+# The job only reads the repository; keep the automatic GITHUB_TOKEN read-only.
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: macos-latest
     env:
       HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The tuned grading is a private submodule. Fork PRs get no secrets and build with the basic stub.
       - name: Fetch the private grading core
         if: env.HAS_CORE == 'true'
