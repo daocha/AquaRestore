@@ -1187,6 +1187,20 @@ private fun Message(message: String, error: Boolean, dismiss: () -> Unit) {
 private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, check: () -> Unit, install: () -> Unit, dismiss: () -> Unit) {
     val language by model.language.collectAsStateWithLifecycle()
     val theme by model.theme.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
+    var versionTaps by remember { mutableIntStateOf(0) }
+    var showLog by remember { mutableStateOf(false) }
+    // Like Android's build number: ten taps on the version unlock the developer tools.
+    val versionModifier = Modifier.clickable(interactionSource = null, indication = null) {
+        if (devTools) return@clickable
+        if (++versionTaps >= DevTools.UNLOCK_TAPS) {
+            DevTools.enable(context)
+            devTools = true
+            android.widget.Toast.makeText(context, s.text("Developer tools enabled", "已啟用開發者工具"), android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    if (showLog) DevLogPanel(s) { showLog = false }
     AlertDialog(onDismissRequest = dismiss, title = { Text(s.text("Make it yours", "個人化設定")) }, text = {
         Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(s.text("Language", "語言"), fontWeight = FontWeight.SemiBold)
@@ -1202,7 +1216,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                         UpdateSource.LAN -> s.text("Local network", "區域網路")
                         UpdateSource.GITHUB -> "GitHub"
                     },
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    versionModifier, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val status = when (update.phase) {
                     UpdatePhase.IDLE -> s.text("Check for a newer version", "檢查是否有新版本")
                     UpdatePhase.CHECKING -> s.text("Checking for updates…", "正在檢查更新…")
@@ -1227,6 +1241,13 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                         else -> s.text("Check for updates", "檢查更新")
                     })
                 }
+            }
+            if (update == null) Text("AquaRestore ${BuildConfig.VERSION_NAME}", versionModifier,
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (devTools) {
+                HorizontalDivider()
+                Text(s.text("Developer tools", "開發者工具"), fontWeight = FontWeight.SemiBold)
+                OutlinedButton(onClick = { showLog = true }) { Text(s.text("Developer logs", "開發者日誌")) }
             }
         }
     }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })
