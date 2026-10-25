@@ -42,6 +42,8 @@ data class SourceMedia(
     val toneMapped: Boolean = false,
     /** No hardware decoder could read this video's frames, so it is decoded in software. */
     val softwareDecoding: Boolean = false,
+    /** The whole-number frame rate Android declares, which [fps] measures instead; for the log. */
+    val declaredFps: Float? = null,
 ) {
     val isHdr: Boolean get() = hdrTransfer == C.COLOR_TRANSFER_ST2084 || hdrTransfer == C.COLOR_TRANSFER_HLG
     val keepsHdr: Boolean get() = isHdr && !toneMapped
@@ -86,11 +88,15 @@ object MediaIO {
                 if (meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() in listOf(90, 270)) { val t = w; w = h; h = t }
                 require(w > 0 && h > 0)
                 val duration = meta(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
-                val frameRate = if (track.containsKey(MediaFormat.KEY_FRAME_RATE)) (track.getNumber(MediaFormat.KEY_FRAME_RATE)?.toFloat()?.takeIf { it.isFinite() && it > 0 } ?: 30f) else 30f
+                val declaredRate = if (track.containsKey(MediaFormat.KEY_FRAME_RATE)) track.getNumber(MediaFormat.KEY_FRAME_RATE)?.toFloat() else null
+                val measuredRate = measuredFrameRate(extractor, tracks.indexOf(track))
+                android.util.Log.i("AquaRestore", "Frame rate: measured $measuredRate, declared $declaredRate")
+                val frameRate = (measuredRate ?: declaredRate)?.takeIf { it.isFinite() && it > 0 } ?: 30f
                 val trackRate = if (track.containsKey(MediaFormat.KEY_BIT_RATE)) track.getInteger(MediaFormat.KEY_BIT_RATE) else 0
                 val totalRate = meta(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull() ?: 0L
                 val rate = if (trackRate > 0) trackRate else (totalRate - audioRate).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
-                return SourceMedia(uri, name, true, w, h, duration, frameRate, rate, track.getString(MediaFormat.KEY_MIME)!!, transfer, range, audioRate)
+                return SourceMedia(uri, name, true, w, h, duration, frameRate, rate, track.getString(MediaFormat.KEY_MIME)!!, transfer, range, audioRate,
+                    declaredFps = declaredRate)
             } finally { retriever.release() }
         } finally { extractor.release() }
     }
@@ -138,6 +144,21 @@ object MediaIO {
         if (frames.isEmpty()) throw MediaProblem("analysisFailed")
         AutoGrade.analyze(frames, hdr = source.keepsHdr)
     }
+
+    /**
+     * The frame rate from the spacing of the first frames. Android's declared rate is a whole number, counted over
+     * the edited duration: lead-in frames hidden by an edit list (a GoPro clip can have a second of them) push 59.94
+     * up to 61, which a decoder declaring 7680x4320 at 60 fps does not cover.
+     */
+    private fun measuredFrameRate(extractor: MediaExtractor, track: Int): Float? = runCatching {
+        extractor.selectTrack(track)
+        val times = buildList {
+            // Lead-in frames before an edit list's start have negative times, so the end is the track index, not -1.
+            while (size < 121 && extractor.sampleTrackIndex >= 0) { add(extractor.sampleTime); extractor.advance() }
+        }.sorted()
+        val gaps = times.zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
+        if (gaps.size < 10) null else 1_000_000f / gaps[gaps.size / 2]
+    }.onFailure { android.util.Log.w("AquaRestore", "Frame rate not measured", it) }.getOrNull()
 
     /** One frame from the middle of each of [count] equal slots, for the trim bar. */
     /** One frame near the middle of each of [count] equal slots, for the trim bar. */
@@ -207,6 +228,33 @@ object MediaIO {
             ceil(source.fps).toInt().coerceAtLeast(1))
         decoders(source, hardware = true).any { caps -> withinLimit || caps.supportedPerformancePoints?.any { it.covers(needed) } == true }
     }.getOrDefault(true)
+
+    /** What [decodesLive] saw, decoder by decoder, for the log. */
+    fun liveDecodeReport(source: SourceMedia): String = runCatching {
+        val (w, h) = source.width to source.height
+        val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(w, h, ceil(source.fps).toInt().coerceAtLeast(1))
+        val lines = mutableListOf(
+            "${w}x$h ${source.mime}",
+            "Frame rate: %.3f used, %s declared".format(source.fps, source.declaredFps?.let { "%.2f".format(it) } ?: "none"),
+            "Pixel rate: %.0f M/s (plays live up to %.0f M/s)".format(w.toDouble() * h * source.fps / 1e6, 3840.0 * 2160 * 61 / 1e6),
+            "Needs: $needed",
+        )
+        val hardware = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
+            !info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(source.mime, true) }
+        }
+        if (hardware.isEmpty()) lines += "No hardware decoder for this format"
+        for (info in hardware) {
+            val caps = info.getCapabilitiesForType(source.mime).videoCapabilities ?: continue
+            val (cw, ch) = if (caps.isSizeSupported(w, h)) w to h else h to w
+            val points = caps.supportedPerformancePoints
+            lines += "\n${info.name}"
+            lines += "Size: ${if (caps.isSizeSupported(cw, ch)) "yes" else "no"} (max ${caps.supportedWidths.upper}x${caps.supportedHeights.upper})" +
+                ", rate on paper: ${if (runCatching { caps.areSizeAndRateSupported(cw, ch, source.fps.toDouble()) }.getOrDefault(false)) "yes" else "no"}" +
+                ", covered: ${when { points == null -> "no points declared"; points.any { it.covers(needed) } -> "yes"; else -> "no" }}"
+            points?.forEach { lines += "  $it" }
+        }
+        lines.joinToString("\n")
+    }.getOrElse { "Check failed: $it" }
 
     /** Whether a software decoder declares this video's frame size, for videos no hardware decoder can read. */
     fun softwareDecodes(source: SourceMedia): Boolean = runCatching { decoders(source, hardware = false).isNotEmpty() }.getOrDefault(false)
