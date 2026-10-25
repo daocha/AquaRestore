@@ -190,6 +190,8 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun planProxy(media: SourceMedia) {
         val hold = media.toneMapped || !withContext(Dispatchers.IO) { MediaIO.decodesLive(media) }
+        android.util.Log.i("AquaRestore", "Preview " + (if (hold) "waits for a copy" else "plays the original") +
+            (if (media.toneMapped) " (tone-mapped HDR)" else "") + "\n" + withContext(Dispatchers.IO) { MediaIO.liveDecodeReport(media) })
         if (hold || maxOf(media.width, media.height) > 3840) buildProxy(media, hold)
     }
 
