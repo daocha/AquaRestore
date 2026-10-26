@@ -1368,6 +1368,15 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                 Text(s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
                     "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), fontSize = 11.sp)
+            } else {
+                val bytes = photoEstimatedBytes(source.width, source.height, options)
+                val size = if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
+                    else if (bytes >= 1_000_000L) "%.1f MB".format(bytes / 1_000_000.0)
+                    else "%.0f KB".format(bytes / 1_000.0)
+                Text(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size,
+                    Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                Text(s.text("Based on resolution, format and quality. Actual size varies with image detail.",
+                    "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
             }
             Text(s.text("Saved to Gallery / AquaRestore. The original file is never overwritten.", "儲存至相簿／AquaRestore，不覆蓋原始檔案。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

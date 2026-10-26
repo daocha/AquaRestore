@@ -7,6 +7,12 @@ import XCTest
 
 final class MediaPipelineTests: XCTestCase {
 
+    func testExportedNameUsesSourceStemAndOutputFormat() {
+        XCTAssertEqual("AquaRestore_IMG_1234.jpg", exportFileName(sourceName: "IMG_1234.HEIC", extension: "jpg"))
+        XCTAssertEqual("AquaRestore_dive.mp4", exportFileName(sourceName: "dive.mov", extension: "mp4"))
+        XCTAssertEqual("AquaRestore_sea view.png", exportFileName(sourceName: "Pictures/sea view.jpeg", extension: "png"))
+    }
+
     func testEqualRatePreservesEveryFrameDespiteMicrosecondRounding() {
         let cadence = FrameCadence(fps: 30)
         XCTAssertEqual(300, (0..<300).filter { cadence.accept(timeUs: Int64($0) * 1_000_000 / 30) }.count)
@@ -28,6 +34,15 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssert(ExportSizing.dimensions(2160, 3840, 1920, even: true) == (1080, 1920))
         XCTAssert(ExportSizing.dimensions(640, 480, 1920, even: true) == (640, 480))
         XCTAssert(ExportSizing.dimensions(4033, 3025, 0) == (4033, 3025))
+    }
+    func testPhotoSizeEstimateRespondsToFormatQualityAndResolution() {
+        var full = ExportOptions(); full.quality = 90
+        var small = full; small.original = false; small.longEdge = 1920
+        XCTAssertLessThan(photoEstimatedBytes(width: 4032, height: 3024, options: small), photoEstimatedBytes(width: 4032, height: 3024, options: full))
+        var low = full; low.quality = 50
+        XCTAssertLessThan(photoEstimatedBytes(width: 4032, height: 3024, options: low), photoEstimatedBytes(width: 4032, height: 3024, options: full))
+        var png = full; png.png = true
+        XCTAssertGreaterThan(photoEstimatedBytes(width: 4032, height: 3024, options: png), photoEstimatedBytes(width: 4032, height: 3024, options: full))
     }
     func testOriginalUsesSourceRateEvenBelowHeuristicAndMinimum() {
         XCTAssertEqual(8_000_000, ExportSizing.bitrate(3840, 2160, 60, 100, 8_000_000, true))

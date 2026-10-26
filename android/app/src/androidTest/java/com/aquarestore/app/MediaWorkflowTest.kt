@@ -90,6 +90,17 @@ class MediaWorkflowTest {
         } finally { extractor.release() }
     }
 
+    @Test fun originalVideoExportCanBeRepeatedWithSourceName() = runBlocking {
+        val source = MediaIO.inspect(app, media("audit-video.mp4", "video/mp4"))
+        repeat(2) {
+            val uri = export(source, ExportOptions())
+            app.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.getString(0).startsWith("AquaRestore_"))
+            }
+        }
+    }
+
     @Test fun backgroundMusicReplacesMutedOriginalSound() = runBlocking {
         val source = MediaIO.inspect(app, media("audit-video.mp4", "video/mp4"))
         val song = Soundtrack.inspect(app, media("audit-music.m4a", "audio/mp4"))

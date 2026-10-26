@@ -14,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material3.*
@@ -96,7 +99,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
         value = if (allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly) }.getOrDefault(emptyList()) }
             else emptyList()
     }
-    // Opens where it was last left (Recent or an album), separately for media and music.
+    // Opens where it was last left, separately for media and music.
     val prefs = remember { context.getSharedPreferences("preferences", 0) }
     val key = if (audioOnly) "library_music_" else "library_media_"
     var section by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "section", null) ?: "recent") }
@@ -110,7 +113,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
             LibraryAlbum(id, members.first().albumName, members.first(), members.size)
         }
     }
-    // A remembered album that is gone (deleted or emptied) falls back to Recent.
+    // A remembered folder or album that is gone falls back to Recent.
     LaunchedEffect(albums) {
         if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
             section = "recent"
@@ -127,14 +130,14 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                 }
                 Box(Modifier.padding(horizontal = 12.dp)) {
                     TextButton(onClick = { menuExpanded = true }) {
-                        Text(if (section == "recent") s.text("Recent", "最近") else s.text("Albums", "相簿"))
+                        Text(if (section == "recent") s.text("Recent", "最近") else if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿"))
                         Icon(Icons.Rounded.ArrowDropDown, null)
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(text = { Text(s.text("Recent", "最近")) }, onClick = {
                             section = "recent"; selectedAlbum = null; menuExpanded = false
                         })
-                        DropdownMenuItem(text = { Text(s.text("Albums", "相簿")) }, onClick = {
+                        DropdownMenuItem(text = { Text(if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿")) }, onClick = {
                             section = "albums"; selectedAlbum = null; menuExpanded = false
                         })
                     }
@@ -142,7 +145,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                 if (section == "albums" && selectedAlbum != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { selectedAlbum = null }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, s.text("All albums", "所有相簿"))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, if (audioOnly) s.text("All folders", "所有資料夾") else s.text("All albums", "所有相簿"))
                     }
                     Text(albums.firstOrNull { it.id == selectedAlbum }?.name.orEmpty(), style = MaterialTheme.typography.titleMedium)
                 }
@@ -158,6 +161,23 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                     items!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
                             else s.text("No videos or photos found", "找不到影片或照片"))
+                    }
+                    audioOnly -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        if (section == "albums" && selectedAlbum == null) {
+                            listItems(albums, key = { it.id }) { folder ->
+                                ListItem(headlineContent = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = { Text(s.text("${folder.count} files", "${folder.count} 個檔案")) },
+                                    leadingContent = { Icon(Icons.Rounded.Folder, null) },
+                                    modifier = Modifier.clickable { selectedAlbum = folder.id })
+                            }
+                        } else {
+                            listItems(items!!.filter { section == "recent" || it.albumId == selectedAlbum }, key = { it.uri.toString() }) { item ->
+                                ListItem(headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = { Text(item.albumName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingContent = { Icon(Icons.Rounded.MusicNote, null) },
+                                    modifier = Modifier.clickable { onChoose(item.uri) })
+                            }
+                        }
                     }
                     section == "albums" && selectedAlbum == null -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),

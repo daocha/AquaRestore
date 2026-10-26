@@ -102,7 +102,8 @@ enum Exporter {
         update(90, "saving")
         // Once publication starts, let the short transaction finish and report success, so cancelling at 99%
         // cannot leave a saved file while the UI says "cancelled".
-        try await Task.detached { try await PhotoSaver.save(temp, video: source.video) }.value
+        let name = exportFileName(sourceName: source.name, extension: ext)
+        try await Task.detached { try await PhotoSaver.save(temp, video: source.video, name: name) }.value
     }
 
     // MARK: Photo
@@ -337,12 +338,13 @@ enum Exporter {
 
 enum PhotoSaver {
     /// Adds the file to the Photos library. Only add-only access is requested.
-    static func save(_ file: URL, video: Bool) async throws {
+    static func save(_ file: URL, video: Bool, name: String) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else { throw MediaProblem("photosDenied") }
         try await PHPhotoLibrary.shared().performChanges {
             let options = PHAssetResourceCreationOptions()
             options.shouldMoveFile = false
+            options.originalFilename = name
             PHAssetCreationRequest.forAsset().addResource(with: video ? .video : .photo, fileURL: file, options: options)
         }
     }

@@ -1,5 +1,12 @@
 import Foundation
 
+func exportFileName(sourceName: String, extension ext: String) -> String {
+    let name = sourceName.replacingOccurrences(of: "\\", with: "/").split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let stem = (trimmed as NSString).deletingPathExtension
+    return "AquaRestore_\(stem.isEmpty ? "Underwater" : stem).\(ext)"
+}
+
 struct ExportOptions: Equatable {
     /// Original keeps full quality: JPEG at the encoder's maximum, PNG lossless.
     static let originalJpegQuality = 100
@@ -51,6 +58,14 @@ enum ExportSizing {
 
 /// Shared by the export pipeline and its size preview. Decimal MB/GB match the UI.
 struct VideoExportPlan: Equatable { let bitrate: Int; let estimatedBytes: Int64? }
+
+/// A rough encoded size from output pixels, format and JPEG quality. Image detail changes compression substantially.
+func photoEstimatedBytes(width: Int, height: Int, options: ExportOptions) -> Int64 {
+    let (w, h) = ExportSizing.dimensions(width, height, options.original ? 0 : options.longEdge)
+    let quality = Double(min(max(options.quality, 1), 100)) / 100
+    let bytesPerPixel = options.png ? 2.5 : 0.08 + 0.5 * quality * quality
+    return max(1, Int64((Double(w) * Double(h) * bytesPerPixel).rounded()))
+}
 
 func videoExportPlan(width: Int, height: Int, fps: Float, sourceBitrate: Int, audioBitrate: Int,
                      durationMs: Int64, options: ExportOptions, mixedAudio: Bool = false) -> VideoExportPlan {

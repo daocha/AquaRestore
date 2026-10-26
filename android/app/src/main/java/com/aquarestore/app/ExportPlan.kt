@@ -5,6 +5,12 @@ import kotlin.math.*
 /** Original keeps full quality: JPEG at the encoder's maximum, PNG lossless. */
 const val ORIGINAL_JPEG_QUALITY = 100
 
+fun exportFileName(sourceName: String, extension: String): String {
+    val name = sourceName.substringAfterLast('/').substringAfterLast('\\').trim()
+    val stem = name.substringBeforeLast('.', name).ifBlank { "Underwater" }
+    return "AquaRestore_${stem}.$extension"
+}
+
 data class ExportOptions(
     val original: Boolean = true,
     val longEdge: Int = 1920, // 0 = source dimensions
@@ -77,6 +83,16 @@ object ExportSizing {
 
 /** Shared by the export pipeline and its size preview. Decimal MB/GB match the UI. */
 data class VideoExportPlan(val bitrate: Int, val estimatedBytes: Long?)
+
+/** A rough encoded size from output pixels, format and JPEG quality. Image detail changes compression substantially. */
+fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
+    val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)
+    val bytesPerPixel = if (options.png) 2.5 else {
+        val quality = options.quality.coerceIn(1, 100) / 100.0
+        0.08 + 0.5 * quality * quality
+    }
+    return (w.toDouble() * h * bytesPerPixel).roundToLong().coerceAtLeast(1)
+}
 
 fun videoExportPlan(width: Int, height: Int, fps: Float, sourceBitrate: Int,
     audioBitrate: Int, durationMs: Long, options: ExportOptions, mixedAudio: Boolean = false): VideoExportPlan {
