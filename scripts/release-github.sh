@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build, sign, tag, push and publish an Android APK + SHA256SUMS to GitHub.
 # Usage: scripts/release-github.sh [--version 1.0.1] [--version-code 2]
-#        [--draft] [--prerelease] [--notes-file FILE] [--skip-tests] [--dry-run]
+#        [--draft] [--prerelease] [--notes-file FILE] [--skip-tests] [--dry-run] [--play]
 # --dry-run builds/verifies locally only; no commits, tags, pushes or GitHub writes.
+# --play also builds the Google Play bundle from the same source and versionCode (not uploaded anywhere).
 # Uses the current branch and origin GitHub repository. Requires a clean tree to publish.
 # New version names automatically increment versionCode unless explicitly provided.
 # Signing uses AQUARESTORE_KEYSTORE / AQUARESTORE_KEY_ALIAS and hidden password prompts.
@@ -10,7 +11,7 @@ set +x
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/_signing-common.sh"
-draft=0; prerelease=0; dry_run=0; skip_tests=0
+draft=0; prerelease=0; dry_run=0; skip_tests=0; play=0
 requested_version=''; requested_code=''; notes_file=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -26,7 +27,8 @@ while [ "$#" -gt 0 ]; do
     --prerelease) prerelease=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     --skip-tests) skip_tests=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --play) play=1; shift ;;
+    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -94,6 +96,13 @@ else "$here/build-android-release.sh"; fi
 apk="$root/dist/AquaRestore-$version-$code.apk"
 sums="$root/dist/AquaRestore-$version-$code.SHA256SUMS"
 [ -f "$apk" ] && [ -f "$sums" ] || die 'Missing release artifacts.'
+aab="$root/dist/AquaRestore-$version-$code-play.aab"
+if [ "$play" = 1 ]; then
+  # Tests and release Lint already ran for the APK; the Play script still lints its own variant unless skipped.
+  if [ "$skip_tests" = 1 ]; then "$here/build-android-play.sh" --skip-tests
+  else "$here/build-android-play.sh"; fi
+  [ -f "$aab" ] || die 'Missing Play bundle.'
+fi
 if [ "$dry_run" = 1 ]; then
   printf '\nDry run complete. No Git/GitHub writes. Version edits, if any, remain for review.\n'
   exit 0
@@ -136,3 +145,4 @@ if [ "$draft" = 0 ]; then
   gh release edit "$tag" --repo "$repo" --draft=false || die 'Assets uploaded, but publishing failed. The release remains a draft.'
 fi
 printf '\nRelease: %s\n' "$(gh release view "$tag" --repo "$repo" --json url --jq .url)"
+[ "$play" = 0 ] || printf 'Play bundle (upload it in Play Console): %s\n' "$aab"

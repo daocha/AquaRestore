@@ -55,6 +55,14 @@ c = re.search(r'versionCode = (\\d+)', s).group(1)
 (root / 'dist' / f'AquaRestore-{v}-{c}.apk').write_bytes(b'workflow test only')
 (root / 'dist' / f'AquaRestore-{v}-{c}.SHA256SUMS').write_text('workflow test only')
 ''')
+        self.executable(self.repo / "scripts/build-android-play.sh", '''#!/usr/bin/env python3
+import pathlib, re
+root = pathlib.Path(__file__).resolve().parents[1]
+s = (root / 'android/app/build.gradle.kts').read_text()
+v = re.search(r'versionName = "([^"]+)"', s).group(1)
+c = re.search(r'versionCode = (\\d+)', s).group(1)
+(root / 'dist' / f'AquaRestore-{v}-{c}-play.aab').write_bytes(b'workflow test only')
+''')
         self.env = os.environ.copy()
         self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"], TEST_RELEASE_LOG=str(self.log), TEST_REAL_GIT=REAL_GIT)
         self.git("init", "-q")
@@ -95,6 +103,14 @@ c = re.search(r'versionCode = (\\d+)', s).group(1)
         self.assertTrue(any(x.endswith('AquaRestore-1.1.0-2.apk') for x in calls[create]))
         self.assertTrue(any(x.endswith('.SHA256SUMS') for x in calls[create]))
         self.assertIn('--draft=false', calls[publish])
+
+    def test_play_bundle_matches_the_release_and_stays_off_github(self):
+        result = self.run_release("--version", "1.1.0", "--play")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue((self.repo / 'dist/AquaRestore-1.1.0-2-play.aab').exists())
+        self.assertIn('AquaRestore-1.1.0-2-play.aab', result.stdout)
+        create = next(c for c in self.calls() if c[:3] == ['gh', 'release', 'create'])
+        self.assertFalse(any(x.endswith('.aab') for x in create))
 
     def test_dry_run_never_writes_git_or_calls_github(self):
         before = self.git('rev-parse', 'HEAD')

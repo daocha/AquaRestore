@@ -169,6 +169,39 @@ Debug 版使用獨立的套件名稱 `com.aquarestore.app.debug`，App 名稱為
 - GitHub 上傳失敗：tag 可能已推送，Release 保持 draft；先用 `gh release view vX.Y.Z` 檢查，再補上缺少的資產。
 - 發布狀態切換失敗：已上傳的資產留在 draft，可從 GitHub 檢查後發布。
 
+## 7. 上架 Google Play
+
+Play 版是 `playRelease`：與 GitHub 版同為 `com.aquarestore.app`，但不含 `REQUEST_INSTALL_PACKAGES` 與 GitHub 更新流程，改用 Play 更新。要讓 GitHub APK 與 Play 安裝版互相原地升級，Play 交付的 APK 必須以 GitHub 版的同一把金鑰簽署，因此**第一次上傳前**就要在 Play App Signing 選擇上傳自己的金鑰。這個選擇之後無法改回；若讓 Google 產生金鑰，兩邊的簽署將永遠不同，無法互相升級。
+
+### 建置
+
+```bash
+./scripts/build-android-play.sh
+# 或與 GitHub 發布一起，確保同一個 commit 與 versionCode：
+./scripts/release-github.sh --version 1.0.1 --play
+```
+
+- 產出 `dist/AquaRestore-<version>-<versionCode>-play.aab` 與 `dist/AquaRestore-upload-certificate.pem`；AAB 不會上傳到 GitHub。
+- AAB 以**上傳金鑰**簽署（預設 `~/.aquarestore-signing/aquarestore-upload.jks`，alias `upload`；首次執行會詢問是否建立）。可用 `AQUARESTORE_UPLOAD_KEYSTORE`、`AQUARESTORE_UPLOAD_KEY_ALIAS`、`AQUARESTORE_UPLOAD_KEYSTORE_PASSWORD`、`AQUARESTORE_UPLOAD_KEY_PASSWORD` 指定；不會沿用 release 金鑰的設定或密碼。
+- 腳本驗證 AAB 簽署憑證與上傳金鑰一致，並以同一 variant 的 APK 檢查套件名稱、版本與權限。
+- 上傳金鑰遺失或外洩時，可在 Play Console 申請重設；app 簽署金鑰（release JKS）則不能遺失，請照第 3 節備份。
+
+### 第一次上傳
+
+1. Play Console 建立應用程式，進入「測試與發布 → 應用程式完整性 → Play 應用程式簽署」。
+2. 選擇使用自己的金鑰，「從 Java KeyStore 匯出並上傳金鑰」。依畫面下載 `pepk.jar` 與加密公鑰，對 release JKS 執行 Console 顯示的命令（`--keystore ~/.aquarestore-signing/aquarestore-release.jks --alias release`，並選擇同時上傳上傳金鑰憑證），上傳產生的 zip 及 `dist/AquaRestore-upload-certificate.pem`。
+3. 在內部測試軌道上傳 AAB。完成後到「應用程式完整性」確認「應用程式簽署金鑰憑證」的 SHA-256 與下列輸出相同：
+
+   ```bash
+   keytool -list -v -keystore ~/.aquarestore-signing/aquarestore-release.jks -alias release | grep SHA256
+   ```
+
+4. 用內部測試安裝 Play 版，確認能覆蓋 GitHub 版（反之亦然）並保留設定。
+
+### 後續版本
+
+每次發布執行 `release-github.sh --play` 並把 AAB 上傳到 Play，讓兩邊使用相同 `versionCode`；Play 不會提供低於裝置上版本的更新。以 `scripts/rotate-signing-key.sh` 建立的 lineage 只附在 GitHub APK，Play 版不含：仍安裝舊 debug 金鑰版的裝置要先更新一次 GitHub 版。
+
 ## 腳本驗證
 
 ```bash

@@ -59,7 +59,10 @@ class ExportService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
         try {
-            ServiceCompat.startForeground(this, 7, notification(null), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            // Android 15 added mediaProcessing for transcoding; older versions only have dataSync.
+            val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+                else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ServiceCompat.startForeground(this, 7, notification(null), type)
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AquaRestore:Export").apply { acquire(6 * 60 * 60 * 1000L) }
         } catch (_: Exception) {
             Exports.request = null
