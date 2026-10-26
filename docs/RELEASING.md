@@ -6,7 +6,7 @@
 
 未來上架 Google Play 時，使用 `:app:bundlePlayRelease` 建立 Play 專用 AAB；此版本走 Google Play 應用程式內更新，不含 `REQUEST_INSTALL_PACKAGES` 權限或 GitHub APK 安裝流程。請以與既有安裝相容的簽署方式及遞增的 `versionCode` 發布。若以一般 `release` 版本經 Google Play 安裝，程式也會依安裝來源走 Google Play 更新。請先在 Play 測試軌道測試更新流程；Play 更新是否可用由 Play 服務決定。
 
-腳本參考 `~/git/password-vault/scripts` 的命名與本機簽署方式，僅處理 Android APK，沒有 iOS 步驟。發布時不需要把 JKS 上傳到 GitHub。
+Android 建置與發布腳本與 PassVault 共用同一份（見文末「與 PassVault 同步腳本」），沒有 iOS 步驟。發布時不需要把 JKS 上傳到 GitHub。
 
 ## 1. 在另一台電腦準備環境
 
@@ -120,14 +120,14 @@ export AQUARESTORE_KEY_ALIAS="your-existing-alias"
 ./scripts/release-github.sh
 ```
 
-這個命令會直接完成發布，不再要求額外確認：
+在終端執行時，建置與驗證完成後會先詢問是否發布；非互動執行則直接發布：
 
-1. 檢查乾淨工作目錄、分支、GitHub 登入及版本 tag 是否已存在。
+1. 檢查已追蹤的檔案都已提交、`android/`、`core/`、`scripts/` 內沒有未追蹤檔案（根目錄的發布說明等不影響建置，允許存在），以及分支、GitHub 登入及版本 tag 是否已存在。
 2. 新版本名稱會自動增加 `versionCode`，並更新 `android/app/build.gradle.kts`。
 3. 執行測試與 release Lint，以指定 JKS 簽署 APK。
 4. 驗證 APK 簽章、簽署憑證與 JKS alias 一致、application ID／版本正確，且不是 debuggable APK。
 5. 產生 APK 與 SHA-256 校驗檔；確認建置期間原始碼沒有被修改。
-6. 如有版本變更，建立版本提交；建立 `vX.Y.Z` tag，將目前分支與 tag 原子推送到 `origin`。
+6. 如有版本變更，建立版本提交；建立 `vX.Y.Z` tag，將目前分支與 tag 原子推送到 `origin`：推送被拒時兩者都不會推送，本機 tag 也會刪除。
 7. 建立 draft Release，附上 APK 與 SHA256SUMS；上傳成功後轉為正式發布。
 
 輸出範例：
@@ -165,9 +165,61 @@ Debug 版使用獨立的套件名稱 `com.aquarestore.app.debug`，App 名稱為
 ## 6. 發布中斷
 
 - 建置失敗：不會 push；若有版本編輯，留在工作目錄，不自動回復你的檔案。
-- Git push 失敗：本機版本提交與 tag 保留，確認遠端／本機狀態後處理，不要盲目換版號。
+- Git push 被拒（例如受保護的 `main`）：分支與 tag 都沒有推送，本機 tag 已刪除，版本提交留在本機。以 pull request 合併該提交後，在合併後的分支以相同 `--version` 重新執行，不要換版號。
 - GitHub 上傳失敗：tag 可能已推送，Release 保持 draft；先用 `gh release view vX.Y.Z` 檢查，再補上缺少的資產。
 - 發布狀態切換失敗：已上傳的資產留在 draft，可從 GitHub 檢查後發布。
+
+## 7. 上架 Google Play
+
+Play 版是 `playRelease`：與 GitHub 版同為 `com.aquarestore.app`，但不含 `REQUEST_INSTALL_PACKAGES` 與 GitHub 更新流程，改用 Play 更新。要讓 GitHub APK 與 Play 安裝版互相原地升級，Play 交付的 APK 必須以 GitHub 版的同一把金鑰簽署，因此**第一次上傳前**就要在 Play App Signing 選擇上傳自己的金鑰。這個選擇之後無法改回；若讓 Google 產生金鑰，兩邊的簽署將永遠不同，無法互相升級。
+
+### 建置
+
+```bash
+./scripts/build-android-play.sh
+# 或與 GitHub 發布一起，確保同一個 commit 與 versionCode：
+./scripts/release-github.sh --version 1.0.1 --play
+```
+
+- 產出 `dist/AquaRestore-<version>-<versionCode>-play.aab`；AAB 不會上傳到 GitHub。
+- AAB 與 GitHub APK 使用**同一把金鑰**（第 3 節的 release JKS）簽署，不另設上傳金鑰：GitHub APK 本來就需要這把金鑰在建置電腦上，另一把上傳金鑰幾乎沒有增加保護。`--play` 時密碼只詢問一次。
+- 腳本驗證 AAB 簽章與簽署憑證，並以同一 variant 的 APK 檢查套件名稱、版本、不可除錯，以及不含 `REQUEST_INSTALL_PACKAGES`。
+- 同時產出 `dist/AquaRestore-<version>-<versionCode>-play-mapping.txt`（R8 對照檔），與 AAB 一起上傳，Play Console 的當機報告才看得懂。
+- 結尾印出金鑰 SHA-256（Play Console 的格式），供第一次上傳後比對。
+
+### 第一次上傳
+
+1. Play Console 建立應用程式，進入「測試與發布 → 應用程式完整性 → Play 應用程式簽署」。
+2. 選擇使用自己的金鑰，「從 Java KeyStore 匯出並上傳金鑰」。依畫面下載 `pepk.jar` 與加密公鑰，對 release JKS 執行：
+
+   ```bash
+   java -jar pepk.jar --keystore="$HOME/.aquarestore-signing/aquarestore-release.jks" --alias=release \
+     --output=encrypted_private_key.zip --include-cert --rsa-aes-encryption --encryption-key-path=encryption_public_key.pem
+   ```
+
+   上傳產生的 zip，之後刪除它與 `pepk.jar`。不要另外登錄上傳金鑰：AAB 由同一把金鑰簽署。
+3. 在內部測試軌道上傳 AAB，並在「App bundle 探索工具 → 下載」上傳 mapping 檔。完成後到「應用程式完整性」確認「應用程式簽署金鑰憑證」的 SHA-256 與下列輸出相同：
+
+   ```bash
+   keytool -list -v -keystore ~/.aquarestore-signing/aquarestore-release.jks -alias release | grep SHA256
+   ```
+
+4. 用內部測試安裝 Play 版，確認能覆蓋 GitHub 版（反之亦然）並保留設定。
+
+### 後續版本
+
+每次發布執行 `release-github.sh --play` 並把 AAB 與 mapping 檔上傳到 Play，讓兩邊使用相同 `versionCode`；Play 不會提供低於裝置上版本的更新。以 `scripts/rotate-signing-key.sh` 建立的 lineage 只附在 GitHub APK，Play 版不含：仍安裝舊 debug 金鑰版的裝置要先更新一次 GitHub 版。
+
+## 與 PassVault 同步腳本
+
+`_signing-common.sh`、`build-android-debug.sh`、`build-android-release.sh`、`build-android-play.sh`、`release-github.sh`、`rotate-signing-key.sh` 與 `tests/test_release_workflow.py` 在 AquaRestore 與 PassVault 是同一份檔案。專案特有的設定（App 名稱、套件名稱、金鑰預設值、建置目錄、Play 版禁止的權限、發布說明、`core/` 檢查）都在 `scripts/release-settings.sh`。修改共用檔案時兩邊一起改，並以下列命令確認：
+
+```bash
+for f in _signing-common.sh build-android-debug.sh build-android-release.sh build-android-play.sh \
+         release-github.sh rotate-signing-key.sh tests/test_release_workflow.py; do
+  diff -q ~/git/AquaRestore/scripts/$f ~/git/password-vault/scripts/$f
+done
+```
 
 ## 腳本驗證
 
