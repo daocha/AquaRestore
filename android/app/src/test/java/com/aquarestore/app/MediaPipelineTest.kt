@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MediaPipelineTest {
+    @Test fun exportedNameUsesSourceStemAndOutputFormat() {
+        assertEquals("AquaRestore_IMG_1234.jpg", exportFileName("IMG_1234.HEIC", "jpg"))
+        assertEquals("AquaRestore_dive.mp4", exportFileName("dive.mov", "mp4"))
+        assertEquals("AquaRestore_sea view.png", exportFileName("Pictures/sea view.jpeg", "png"))
+    }
     @Test fun equalRatePreservesEveryFrameDespiteMicrosecondRounding() {
         val cadence = FrameCadence(30f)
         assertEquals(300, (0 until 300).count { cadence.accept(it * 1_000_000L / 30) })
@@ -37,6 +42,14 @@ class MediaPipelineTest {
         assertEquals(90, large.quality)
         assertEquals(2560 to 1920, ExportSizing.dimensions(4032, 3024, large.longEdge))
         assertTrue(ExportRecommendation.photo(4032, 3024, "image/png").png)
+    }
+
+    @Test fun photoSizeEstimateRespondsToFormatQualityAndResolution() {
+        val full = ExportOptions(quality = 90)
+        val small = full.copy(original = false, longEdge = 1920)
+        assertTrue(photoEstimatedBytes(4032, 3024, small) < photoEstimatedBytes(4032, 3024, full))
+        assertTrue(photoEstimatedBytes(4032, 3024, full.copy(quality = 50)) < photoEstimatedBytes(4032, 3024, full))
+        assertTrue(photoEstimatedBytes(4032, 3024, full.copy(png = true)) > photoEstimatedBytes(4032, 3024, full))
     }
 
     @Test fun videoRecommendationNeverExceedsSourceDimensionsFrameRateOrBitrate() {

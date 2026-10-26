@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.*
 import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Effect
 import androidx.media3.common.MimeTypes
@@ -62,9 +61,10 @@ class ExportService : Service() {
             // Android 15 added mediaProcessing for transcoding; older versions only have dataSync.
             val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
                 else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            ServiceCompat.startForeground(this, 7, notification(null), type)
+            startForeground(7, notification(null), type)
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AquaRestore:Export").apply { acquire(6 * 60 * 60 * 1000L) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("AquaRestore", "Could not start export service", e)
             Exports.request = null
             Exports.status.value = ExportStatus(error = "exportFailed")
             stopSelf(startId)
@@ -154,7 +154,7 @@ class ExportService : Service() {
                 val collection = if (source.video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                 val mime = if (source.video) "video/mp4" else if (losslessImage) "image/png" else "image/jpeg"
                 val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, "AquaRestore_${System.currentTimeMillis()}.$extension")
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, exportFileName(source.name, extension))
                     put(MediaStore.MediaColumns.MIME_TYPE, mime)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, if (source.video) "Movies/AquaRestore" else "Pictures/AquaRestore")
                     put(MediaStore.MediaColumns.IS_PENDING, 1)

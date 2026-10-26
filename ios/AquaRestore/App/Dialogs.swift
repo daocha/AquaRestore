@@ -60,7 +60,7 @@ struct ExportDialog: View {
                     if source.video { MText(summary(startMs, endMs, lengthMs), size: 12) }
                     if source.video && audio.changesAudio { MText(audioSummary, size: 12) }
                     if original { originalInfo } else { customOptions }
-                    if source.video { sizeEstimate(startMs, endMs) }
+                    if source.video { sizeEstimate(startMs, endMs) } else { photoSizeEstimate }
                     MText(s.text("Saved to your Photos library. The original file is never overwritten.", "儲存至相簿，不覆蓋原始檔案。"),
                           size: 11, color: c.onSurfaceVariant)
                 }
@@ -150,5 +150,19 @@ struct ExportDialog: View {
             .accessibilityIdentifier("estimatedSize")
         MText(s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
                      "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), size: 11)
+    }
+
+    private var photoSizeEstimate: some View {
+        let options = ExportOptions(original: original, longEdge: edge, quality: original ? ExportOptions.originalJpegQuality : Int(quality.rounded()), png: png)
+        let bytes = photoEstimatedBytes(width: source.width, height: source.height, options: options)
+        let size = bytes >= 1_000_000_000 ? String(format: "%.2f GB", Double(bytes) / 1_000_000_000)
+            : bytes >= 1_000_000 ? String(format: "%.1f MB", Double(bytes) / 1_000_000)
+            : String(format: "%.0f KB", Double(bytes) / 1_000)
+        return VStack(alignment: .leading, spacing: 10) {
+            MText(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size, weight: .semibold, color: c.primary)
+                .accessibilityIdentifier("estimatedSize")
+            MText(s.text("Based on resolution, format and quality. Actual size varies with image detail.",
+                         "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), size: 11)
+        }
     }
 }
