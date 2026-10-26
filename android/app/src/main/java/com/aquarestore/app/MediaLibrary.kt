@@ -22,7 +22,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MusicNote
@@ -44,9 +46,25 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** [date] is when a photo or video was taken, or when the file was added if that is unknown, in milliseconds. */
 private data class LibraryItem(val uri: Uri, val name: String, val video: Boolean, val audio: Boolean,
-    val albumId: String, val albumName: String)
-private data class LibraryAlbum(val id: String, val name: String, val cover: LibraryItem, val count: Int)
+    val albumId: String, val albumName: String, val date: Long)
+private data class LibraryAlbum(val id: String, val name: String, val cover: LibraryItem, val count: Int,
+    val newest: Long, val oldest: Long)
+
+internal enum class LibrarySort { NEWEST, OLDEST, NAME_AZ, NAME_ZA }
+
+/** Sorts files or albums; equal names fall back to the newest first, equal dates to the name. */
+internal fun <T> librarySorted(entries: List<T>, sort: LibrarySort, name: (T) -> String, date: (T) -> Long): List<T> {
+    val byName = compareBy(String.CASE_INSENSITIVE_ORDER, name)
+    val byDate = compareByDescending(date)
+    return entries.sortedWith(when (sort) {
+        LibrarySort.NEWEST -> byDate.then(byName)
+        LibrarySort.OLDEST -> byDate.reversed().then(byName)
+        LibrarySort.NAME_AZ -> byName.then(byDate)
+        LibrarySort.NAME_ZA -> byName.reversed().then(byDate)
+    })
+}
 
 private fun mediaPermissions(audioOnly: Boolean): Array<String> = when {
     audioOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
@@ -66,22 +84,28 @@ private fun loadLibrary(context: Context, audioOnly: Boolean): List<LibraryItem>
     val type = MediaStore.Files.FileColumns.MEDIA_TYPE
     val name = MediaStore.MediaColumns.DISPLAY_NAME
     val path = MediaStore.MediaColumns.RELATIVE_PATH
+    val taken = MediaStore.MediaColumns.DATE_TAKEN
+    val added = MediaStore.MediaColumns.DATE_ADDED
     val selection = if (audioOnly) "$type=?" else "($type=? OR $type=?)"
     val args = if (audioOnly) arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO.toString())
         else arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(), MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
     val result = mutableListOf<LibraryItem>()
-    context.contentResolver.query(collection, arrayOf(id, type, name, path), selection, args,
-        "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
+    context.contentResolver.query(collection, arrayOf(id, type, name, path, taken, added), selection, args,
+        "$added DESC")?.use { cursor ->
         val idColumn = cursor.getColumnIndexOrThrow(id)
         val typeColumn = cursor.getColumnIndexOrThrow(type)
         val nameColumn = cursor.getColumnIndexOrThrow(name)
         val pathColumn = cursor.getColumnIndexOrThrow(path)
+        val takenColumn = cursor.getColumnIndexOrThrow(taken)
+        val addedColumn = cursor.getColumnIndexOrThrow(added)
         while (cursor.moveToNext()) {
             val albumId = cursor.getString(pathColumn)?.trim('/')?.ifEmpty { "Other" } ?: "Other"
+            // Copied-in camera clips are added long after they were taken; audio has no date taken.
+            val date = cursor.getLong(takenColumn).takeIf { it > 0 } ?: (cursor.getLong(addedColumn) * 1000)
             result += LibraryItem(ContentUris.withAppendedId(collection, cursor.getLong(idColumn)),
                 cursor.getString(nameColumn).orEmpty(), cursor.getInt(typeColumn) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
                 cursor.getInt(typeColumn) == MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO,
-                albumId, albumId.substringAfterLast('/'))
+                albumId, albumId.substringAfterLast('/'), date)
         }
     }
     return result
@@ -104,14 +128,24 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
     val key = if (audioOnly) "library_music_" else "library_media_"
     var section by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "section", null) ?: "recent") }
     var selectedAlbum by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "album", null)) }
-    LaunchedEffect(section, selectedAlbum) {
-        prefs.edit().putString(key + "section", section).putString(key + "album", selectedAlbum).apply()
+    var sort by rememberSaveable(audioOnly) {
+        mutableStateOf(runCatching { LibrarySort.valueOf(prefs.getString(key + "sort", null)!!) }.getOrDefault(LibrarySort.NEWEST))
+    }
+    LaunchedEffect(section, selectedAlbum, sort) {
+        prefs.edit().putString(key + "section", section).putString(key + "album", selectedAlbum)
+            .putString(key + "sort", sort.name).apply()
     }
     var menuExpanded by remember { mutableStateOf(false) }
-    val albums = remember(items) {
-        items.orEmpty().groupBy { it.albumId }.map { (id, members) ->
-            LibraryAlbum(id, members.first().albumName, members.first(), members.size)
+    var sortExpanded by remember { mutableStateOf(false) }
+    val albums = remember(items, sort) {
+        val grouped = items.orEmpty().groupBy { it.albumId }.map { (id, members) ->
+            LibraryAlbum(id, members.first().albumName, members.first(), members.size,
+                members.maxOf { it.date }, members.minOf { it.date })
         }
+        librarySorted(grouped, sort, { it.name }, { if (sort == LibrarySort.OLDEST) it.oldest else it.newest })
+    }
+    val shown = remember(items, sort, section, selectedAlbum) {
+        librarySorted(items.orEmpty().filter { section == "recent" || it.albumId == selectedAlbum }, sort, { it.name }, { it.date })
     }
     // A remembered folder or album that is gone falls back to Recent.
     LaunchedEffect(albums) {
@@ -128,18 +162,32 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                         Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, s.text("Close", "關閉")) }
                 }
-                Box(Modifier.padding(horizontal = 12.dp)) {
-                    TextButton(onClick = { menuExpanded = true }) {
-                        Text(if (section == "recent") s.text("Recent", "最近") else if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿"))
-                        Icon(Icons.Rounded.ArrowDropDown, null)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        TextButton(onClick = { menuExpanded = true }) {
+                            Text(if (section == "recent") s.text("Recent", "最近") else if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿"))
+                            Icon(Icons.Rounded.ArrowDropDown, null)
+                        }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(text = { Text(s.text("Recent", "最近")) }, onClick = {
+                                section = "recent"; selectedAlbum = null; menuExpanded = false
+                            })
+                            DropdownMenuItem(text = { Text(if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿")) }, onClick = {
+                                section = "albums"; selectedAlbum = null; menuExpanded = false
+                            })
+                        }
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(text = { Text(s.text("Recent", "最近")) }, onClick = {
-                            section = "recent"; selectedAlbum = null; menuExpanded = false
-                        })
-                        DropdownMenuItem(text = { Text(if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿")) }, onClick = {
-                            section = "albums"; selectedAlbum = null; menuExpanded = false
-                        })
+                    Box {
+                        IconButton(onClick = { sortExpanded = true }) { Icon(Icons.AutoMirrored.Rounded.Sort, s.text("Sort", "排序")) }
+                        DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+                            listOf(LibrarySort.NEWEST to s.text("Date: newest first", "日期：由新到舊"),
+                                LibrarySort.OLDEST to s.text("Date: oldest first", "日期：由舊到新"),
+                                LibrarySort.NAME_AZ to s.text("Name: A to Z", "名稱：A 到 Z"),
+                                LibrarySort.NAME_ZA to s.text("Name: Z to A", "名稱：Z 到 A")).forEach { (option, label) ->
+                                DropdownMenuItem(text = { Text(label) }, onClick = { sort = option; sortExpanded = false },
+                                    leadingIcon = { if (option == sort) Icon(Icons.Rounded.Check, null) else Spacer(Modifier.size(24.dp)) })
+                            }
+                        }
                     }
                 }
                 if (section == "albums" && selectedAlbum != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -171,7 +219,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                                     modifier = Modifier.clickable { selectedAlbum = folder.id })
                             }
                         } else {
-                            listItems(items!!.filter { section == "recent" || it.albumId == selectedAlbum }, key = { it.uri.toString() }) { item ->
+                            listItems(shown, key = { it.uri.toString() }) { item ->
                                 ListItem(headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     supportingContent = { Text(item.albumName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingContent = { Icon(Icons.Rounded.MusicNote, null) },
@@ -189,7 +237,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, onDismiss: () -> Unit, 
                     else -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(items!!.filter { section == "recent" || it.albumId == selectedAlbum }, key = { it.uri.toString() }) { item ->
+                        items(shown, key = { it.uri.toString() }) { item ->
                             LibraryCell(item) { onChoose(item.uri) }
                         }
                     }
