@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build and verify the Google Play bundle (playRelease) locally, signed with the Play upload key. Does not upload.
-# Play re-signs what it delivers with the app signing key (the GitHub release key, registered via Play App Signing).
+# Build and verify the Google Play bundle (playRelease) locally. Does not upload.
+# It is signed with the same key as the GitHub APK. Register that key in Play App Signing before the first upload,
+# so what Play installs and what GitHub installs update each other (docs/RELEASING.md).
 # Usage: scripts/build-android-play.sh [--skip-tests]
-# Upload key: AQUARESTORE_UPLOAD_KEYSTORE (default ~/.aquarestore-signing/aquarestore-upload.jks),
-#   AQUARESTORE_UPLOAD_KEY_ALIAS (default upload), AQUARESTORE_UPLOAD_KEYSTORE_PASSWORD / _KEY_PASSWORD.
+# Signing configuration (keystore, alias, passwords): see _signing-common.sh.
 set +x
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -16,45 +16,42 @@ for arg in "$@"; do
     *) die "Unknown option: $arg" ;;
   esac
 done
-# The upload key is not the app signing key: never fall back to the release key's settings or passwords.
-keystore="${AQUARESTORE_UPLOAD_KEYSTORE:-$HOME/.aquarestore-signing/aquarestore-upload.jks}"
-alias_name="${AQUARESTORE_UPLOAD_KEY_ALIAS:-upload}"
-AQUARESTORE_KEYSTORE_PASSWORD="${AQUARESTORE_UPLOAD_KEYSTORE_PASSWORD:-}"
-AQUARESTORE_KEY_PASSWORD="${AQUARESTORE_UPLOAD_KEY_PASSWORD:-}"
-ensure_core --release
+check_sources --release
 find_toolchain
 find_signing_tools
 read_version
-[ -f "$keystore" ] || printf 'Play upload key (signs only what you upload; Play signs what users install).\n'
+read_min_sdk
 ensure_keystore
-trap 'unset AQUARESTORE_KEYSTORE_PASSWORD AQUARESTORE_KEY_PASSWORD' EXIT
-if [ "$run_tests" = 1 ]; then run_unsigned_gradle --no-daemon :app:testDebugUnitTest :app:lintPlayRelease; fi
-cd "$android_root"
+trap forget_passwords EXIT
+tasks=(clean)
+[ "$run_tests" = 0 ] || tasks+=(:app:testDebugUnitTest :app:lintPlayRelease)
+run_unsigned_gradle --no-daemon "${tasks[@]}"
 # The APK of the same variant is built only to check the merged manifest; the bundle is what goes to Play.
-AQUARESTORE_KEYSTORE_FILE="$keystore" AQUARESTORE_KEY_ALIAS="$alias_name" \
-  ./gradlew "${gradle_args[@]}" --no-daemon :app:bundlePlayRelease :app:assemblePlayRelease
+run_signed_gradle :app:bundlePlayRelease :app:assemblePlayRelease
 source_aab="$android_root/app/build/outputs/bundle/playRelease/app-playRelease.aab"
 check_apk="$android_root/app/build/outputs/apk/playRelease/app-playRelease.apk"
+source_mapping="$android_root/app/build/outputs/mapping/playRelease/mapping.txt"
 [ -f "$source_aab" ] && [ -f "$check_apk" ] || die 'The playRelease bundle was not produced.'
+[ -f "$source_mapping" ] || die 'The playRelease R8 mapping file was not produced.'
 verify_release_apk "$check_apk"
-# Play forbids updating outside Play, so the GitHub updater's install permission must not reach this build.
-case "$("$aapt" dump badging "$check_apk")" in
-  *REQUEST_INSTALL_PACKAGES*) die 'The Play build requests REQUEST_INSTALL_PACKAGES.' ;;
+permissions="$("$aapt" dump permissions "$check_apk")"
+for permission in ${play_forbidden_permissions[@]+"${play_forbidden_permissions[@]}"}; do
+  case "$permissions" in *"name='$permission'"*) die "The Play build requests $permission." ;; esac
+done
+# jarsigner -verify exits 0 even for an unsigned file, so check its verdict, then that the signer is our key.
+case "$("$JAVA_HOME/bin/jarsigner" -verify "$source_aab" 2>&1 || true)" in
+  *"jar verified."*) ;;
+  *) die 'The bundle signature does not verify.' ;;
 esac
-cert_file="$(mktemp "${TMPDIR:-/tmp}/aquarestore-cert.XXXXXX")"
-"$JAVA_HOME/bin/keytool" -exportcert -keystore "$keystore" -alias "$alias_name" \
-  -storepass:env AQUARESTORE_KEYSTORE_PASSWORD -file "$cert_file" >/dev/null 2>&1 \
-  || { rm -f "$cert_file"; die 'Cannot read the upload certificate.'; }
-expected_cert="$(sha256 "$cert_file" | awk '{print $1}')"
-rm -f "$cert_file"
+expected_cert="$(key_cert_sha256)"
 actual_cert="$("$JAVA_HOME/bin/keytool" -printcert -jarfile "$source_aab" | sed -n 's/^[[:space:]]*SHA256: //p' | head -n1 | tr -d ':' | tr 'A-F' 'a-f')"
-[ -n "$actual_cert" ] && [ "$actual_cert" = "$expected_cert" ] || die 'The bundle is not signed with the upload key.'
+[ -n "$actual_cert" ] && [ "$actual_cert" = "$expected_cert" ] || die "The bundle is not signed with '$alias_name' from $keystore."
 mkdir -p "$root/dist"
-aab="$root/dist/AquaRestore-$version-$code-play.aab"
+aab="$root/dist/$app_name-$version-$code-play.aab"
+mapping="$root/dist/$app_name-$version-$code-play-mapping.txt"
 cp "$source_aab" "$aab"
-# Play Console asks for this certificate when you register the upload key.
-"$JAVA_HOME/bin/keytool" -exportcert -rfc -keystore "$keystore" -alias "$alias_name" \
-  -storepass:env AQUARESTORE_KEYSTORE_PASSWORD -file "$root/dist/AquaRestore-upload-certificate.pem" >/dev/null 2>&1 \
-  || die 'Cannot export the upload certificate.'
-printf '\nPlay bundle: %s (upload key %s, SHA-256 %s)\nUpload certificate: %s\n' "$aab" "$alias_name" "$expected_cert" \
-  "$root/dist/AquaRestore-upload-certificate.pem"
+cp "$source_mapping" "$mapping"
+# Play Console shows certificate fingerprints in this form (Test and release > App integrity).
+fingerprint="$(printf '%s' "$expected_cert" | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')"
+printf '\nPlay bundle: %s\nR8 mapping:  %s (upload it with the bundle)\nSigning key: %s, SHA-256 %s\n' "$aab" "$mapping" "$alias_name" "$fingerprint"
+printf 'Play App Signing must show this same SHA-256 as its app signing key.\n'

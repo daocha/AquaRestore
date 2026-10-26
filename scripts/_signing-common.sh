@@ -1,39 +1,31 @@
-# Shared Android build/signing utilities. This file is sourced by the entry-point scripts.
-# Follows password-vault's local-signing convention (creates the key on first use), without iOS.
+# Shared Android build and signing functions, sourced by the scripts in this folder.
+# This file, build-android-*.sh, release-github.sh, rotate-signing-key.sh and tests/test_release_workflow.py are the
+# same in PassVault and AquaRestore; everything project-specific is in release-settings.sh (see docs/RELEASING.md).
 #
-# Optional environment:
-#   AQUARESTORE_KEYSTORE           keystore path         (default: ~/.aquarestore-signing/aquarestore-release.jks)
-#   AQUARESTORE_KEY_ALIAS          key alias             (default: release)
-#   AQUARESTORE_KEYSTORE_PASSWORD  password; prompted if unset
-#   AQUARESTORE_KEY_PASSWORD       key password; defaults to the keystore password (PKCS12 keystores share one)
-#   AQUARESTORE_LINEAGE            key-rotation lineage  (default: ~/.aquarestore-signing/lineage.bin)
+# Optional environment (<P> is env_prefix from release-settings.sh, e.g. PASSVAULT):
+#   <P>_KEYSTORE            keystore path         (default: default_keystore)
+#   <P>_KEY_ALIAS           key alias             (default: default_key_alias)
+#   <P>_KEYSTORE_PASSWORD   keystore password; prompted if unset
+#   <P>_KEY_PASSWORD        key password; defaults to the keystore password (PKCS12 keystores share one)
+#   <P>_LINEAGE             key-rotation lineage  (default: default_lineage)
+#   JAVA_HOME, ANDROID_HOME JDK 17 and Android SDK; detected from the usual locations if unset
+#   GRADLE_EXTRA_ARGS       extra Gradle flags, whitespace-separated (e.g. --offline)
+# One key signs both the GitHub APK and the Google Play bundle; Play App Signing holds the same key.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 android_root="$root/android"
-keystore="${AQUARESTORE_KEYSTORE:-$HOME/.aquarestore-signing/aquarestore-release.jks}"
-alias_name="${AQUARESTORE_KEY_ALIAS:-release}"
-lineage="${AQUARESTORE_LINEAGE:-$HOME/.aquarestore-signing/lineage.bin}"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# The tuned grading is the private core/ submodule; fetch it when a fresh clone lacks it.
-# --release also refuses the public stub and any core commit AquaRestore-Core does not have,
-# so every published version can be rebuilt from its tag.
-ensure_core() {
-  if [ ! -d "$root/core/android/main" ] && [ -f "$root/.gitmodules" ]; then
-    git -C "$root" submodule update --init core \
-      || die 'Cannot fetch the private core/. Without access, debug builds can use scripts/use-core-stub.sh.'
-  fi
-  [ -d "$root/core/android/main" ] \
-    || die 'core/ is empty. Run git submodule update --init, or scripts/use-core-stub.sh without access.'
-  [ "${1:-}" = --release ] || return 0
-  [ -e "$root/core/.git" ] || die 'core/ holds the public stub. Releases need the private core: git submodule update --init.'
-  case "$(git -C "$root" submodule status core)" in
-    [+-U]*) die 'core/ is not at the commit this repository records. Commit the core/ update, or run git submodule update.' ;;
-  esac
-  [ -z "$(git -C "$root/core" status --porcelain)" ] || die 'core/ has uncommitted changes. Commit and push them to AquaRestore-Core first.'
-  git -C "$root/core" fetch --quiet origin || die 'Cannot reach AquaRestore-Core to check the core/ commit.'
-  [ -n "$(git -C "$root/core" branch -r --contains HEAD)" ] || die 'The core/ commit is not on AquaRestore-Core. Push it there first.'
-}
+. "$root/scripts/release-settings.sh"
+
+# The value of the environment variable <env_prefix>_$1, or $2 when it is unset or empty.
+setting() { local name="${env_prefix}_$1"; printf '%s' "${!name:-${2:-}}"; }
+keystore="$(setting KEYSTORE "$default_keystore")"
+alias_name="$(setting KEY_ALIAS "$default_key_alias")"
+lineage="$(setting LINEAGE "$default_lineage")"
+# Names, not values: keytool, apksigner and Gradle read the passwords from these environment variables.
+keystore_password_var="${env_prefix}_KEYSTORE_PASSWORD"
+key_password_var="${env_prefix}_KEY_PASSWORD"
 
 find_toolchain() {
   if [ -z "${JAVA_HOME:-}" ] && [ -x /usr/libexec/java_home ]; then
@@ -61,7 +53,7 @@ find_toolchain() {
   if [ -n "${GRADLE_EXTRA_ARGS:-}" ]; then
     # Whitespace-delimited flags only, no eval or shell expansion.
     read -r -a extra_gradle_args <<< "$GRADLE_EXTRA_ARGS"
-    gradle_args+=("${extra_gradle_args[@]}")
+    gradle_args+=(${extra_gradle_args[@]+"${extra_gradle_args[@]}"})
   fi
 }
 
@@ -71,6 +63,7 @@ find_signing_tools() {
   for candidate in "$ANDROID_HOME"/build-tools/*/apksigner; do
     [ -x "$candidate" ] || continue
     version="$(basename "$(dirname "$candidate")")"
+    # Stable releases only: a preview such as 36.0.0-rc1 must not win over 36.0.0.
     [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
     major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
     if (( major > best_major || (major == best_major && minor > best_minor) || (major == best_major && minor == best_minor && patch > best_patch) )); then
@@ -88,6 +81,11 @@ read_version() {
   [[ "$code" =~ ^[1-9][0-9]*$ ]] || die 'Cannot read versionCode from android/app/build.gradle.kts.'
 }
 
+read_min_sdk() {
+  min_sdk="$(sed -n 's/^[[:space:]]*minSdk = \([0-9]*\)[[:space:]]*$/\1/p' "$android_root/app/build.gradle.kts")"
+  [[ "$min_sdk" =~ ^[1-9][0-9]*$ ]] || die 'Cannot read minSdk from android/app/build.gradle.kts.'
+}
+
 sha256() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"
   elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"
@@ -96,18 +94,28 @@ sha256() {
 
 # Debug/test processes never receive signing material, even if the caller exported it.
 run_unsigned_gradle() (
-  unset AQUARESTORE_KEYSTORE_PASSWORD AQUARESTORE_KEY_PASSWORD AQUARESTORE_KEYSTORE_FILE AQUARESTORE_KEY_ALIAS
+  unset "$keystore_password_var" "$key_password_var" "${env_prefix}_KEYSTORE_FILE" "${env_prefix}_KEY_ALIAS"
   cd "$android_root"
   ./gradlew "${gradle_args[@]}" "$@"
 )
 
+# Signed builds: a single-use Gradle process and in-process Kotlin compilation, so no daemon keeps the password.
+run_signed_gradle() (
+  export "${env_prefix}_KEYSTORE_FILE=$keystore" "${env_prefix}_KEY_ALIAS=$alias_name"
+  cd "$android_root"
+  ./gradlew "${gradle_args[@]}" --no-daemon "$@"
+)
+
+forget_passwords() { unset "$keystore_password_var" "$key_password_var"; }
+
 # Creates the keystore on first use (after asking), then makes sure the alias opens with the password.
 ensure_keystore() {
   if [ ! -f "$keystore" ]; then
-    [ -t 0 ] || die "No signing keystore at $keystore. Run this in a terminal to create one, or set AQUARESTORE_KEYSTORE."
+    [ -t 0 ] || die "No signing keystore at $keystore. Run this in a terminal to create one, or set ${env_prefix}_KEYSTORE."
     printf 'No signing keystore at %s.\n' "$keystore"
-    read -r -p 'Create a new AquaRestore signing key now? [y/N] ' yn
-    [ "$yn" = y ] || [ "$yn" = Y ] || die 'Aborted. Set AQUARESTORE_KEYSTORE to an existing keystore.'
+    printf 'If you already have a %s signing key (for example on another computer), answer no and set %s_KEYSTORE.\n' "$app_name" "$env_prefix"
+    read -r -p "Create a new $app_name signing key now? [y/N] " yn
+    [ "$yn" = y ] || [ "$yn" = Y ] || die "Aborted. Set ${env_prefix}_KEYSTORE to an existing keystore."
     # Only a directory created here is made private; an existing one (e.g. $HOME) keeps its permissions.
     [ -d "$(dirname "$keystore")" ] || (umask 077; mkdir -p "$(dirname "$keystore")")
     printf 'keytool will ask for a password (choose a long one) and your name/organisation details.\n'
@@ -119,42 +127,49 @@ ensure_keystore() {
 
 Keystore created: $keystore (alias: $alias_name)
 BACK IT UP NOW (with its password) in at least two places, one offline. Every update to an installed
-AquaRestore must be signed with this key; without it, people who installed your APK cannot update.
+$app_name, from GitHub or Google Play, must be signed with this key; without it, installs cannot update.
 MSG
   fi
   keystore="$(cd "$(dirname "$keystore")" && pwd)/$(basename "$keystore")"
-  if [ -z "${AQUARESTORE_KEYSTORE_PASSWORD:-}" ]; then
-    [ -t 0 ] || die 'Set AQUARESTORE_KEYSTORE_PASSWORD when running without a terminal.'
-    read -r -s -p 'Keystore password: ' AQUARESTORE_KEYSTORE_PASSWORD; printf '\n'
+  if [ -z "${!keystore_password_var:-}" ]; then
+    [ -t 0 ] || die "Set $keystore_password_var when running without a terminal."
+    read -r -s -p 'Keystore password: ' "$keystore_password_var"; printf '\n'
   fi
-  [ -n "$AQUARESTORE_KEYSTORE_PASSWORD" ] || die 'Keystore password cannot be empty.'
-  if [ -z "${AQUARESTORE_KEY_PASSWORD:-}" ]; then
+  [ -n "${!keystore_password_var:-}" ] || die 'Keystore password cannot be empty.'
+  if [ -z "${!key_password_var:-}" ]; then
     if [ -t 0 ]; then
-      read -r -s -p 'Key password [Enter = keystore password]: ' AQUARESTORE_KEY_PASSWORD; printf '\n'
+      read -r -s -p 'Key password [Enter = keystore password]: ' "$key_password_var"; printf '\n'
     fi
-    AQUARESTORE_KEY_PASSWORD="${AQUARESTORE_KEY_PASSWORD:-$AQUARESTORE_KEYSTORE_PASSWORD}"
+    [ -n "${!key_password_var:-}" ] || printf -v "$key_password_var" '%s' "${!keystore_password_var}"
   fi
-  export AQUARESTORE_KEYSTORE_PASSWORD AQUARESTORE_KEY_PASSWORD
+  export "$keystore_password_var" "$key_password_var"
   "$JAVA_HOME/bin/keytool" -list -keystore "$keystore" -alias "$alias_name" \
-    -storepass:env AQUARESTORE_KEYSTORE_PASSWORD >/dev/null 2>&1 \
+    -storepass:env "$keystore_password_var" >/dev/null 2>&1 \
     || die "Cannot open alias '$alias_name' in $keystore. Check the alias and keystore password."
 }
 
-verify_release_apk() {
-  local artifact="$1" expected_cert actual_cert metadata cert_file
-  "$apksigner" verify --verbose --print-certs --min-sdk-version 29 "$artifact"
-  actual_cert="$("$apksigner" verify --print-certs "$artifact" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
-  cert_file="$(mktemp "${TMPDIR:-/tmp}/aquarestore-cert.XXXXXX")"
+# SHA-256 of the key's certificate, lowercase hex without colons (as apksigner prints it).
+key_cert_sha256() {
+  local cert_file
+  cert_file="$(mktemp "${TMPDIR:-/tmp}/signing-cert.XXXXXX")"
   if ! "$JAVA_HOME/bin/keytool" -exportcert -keystore "$keystore" -alias "$alias_name" \
-      -storepass:env AQUARESTORE_KEYSTORE_PASSWORD -file "$cert_file" >/dev/null 2>&1; then
+      -storepass:env "$keystore_password_var" -file "$cert_file" >/dev/null 2>&1; then
     rm -f "$cert_file"; die 'Cannot read the public signing certificate.'
   fi
-  expected_cert="$(sha256 "$cert_file" | awk '{print $1}')"
+  sha256 "$cert_file" | awk '{print $1}'
   rm -f "$cert_file"
-  [ -n "$actual_cert" ] && [ "$actual_cert" = "$expected_cert" ] || die 'APK signer does not match the requested JKS alias.'
+}
+
+# Checks the signature, signer, package, version and that the APK is not debuggable.
+verify_release_apk() {
+  local artifact="$1" expected_cert actual_cert metadata
+  "$apksigner" verify --verbose --print-certs --min-sdk-version "$min_sdk" "$artifact"
+  actual_cert="$("$apksigner" verify --print-certs --min-sdk-version "$min_sdk" "$artifact" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+  expected_cert="$(key_cert_sha256)"
+  [ -n "$actual_cert" ] && [ "$actual_cert" = "$expected_cert" ] || die "The APK is not signed with '$alias_name' from $keystore."
   metadata="$("$aapt" dump badging "$artifact")"
   case "$metadata" in
-    "package: name='com.aquarestore.app' versionCode='$code' versionName='$version'"*) ;;
+    "package: name='$app_id' versionCode='$code' versionName='$version'"*) ;;
     *) die 'APK package/version does not match this source tree.' ;;
   esac
   case "$metadata" in *application-debuggable*) die 'Refusing to publish a debuggable APK.' ;; esac

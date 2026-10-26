@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the debug APK; unit tests and Android lint run by default.
+# Build the debug APK; unit tests and Android lint run by default. No signing key is needed (Android debug key).
 # Usage: scripts/build-android-debug.sh [--skip-tests] [--install]
 # JAVA_HOME / ANDROID_HOME are auto-detected where possible.
 # GRADLE_EXTRA_ARGS='--offline' is optional. ANDROID_SERIAL selects an adb device.
@@ -15,7 +15,7 @@ for arg in "$@"; do
     *) die "Unknown option: $arg" ;;
   esac
 done
-ensure_core
+check_sources
 find_toolchain
 tasks=(:app:assembleDebug :app:lintDebug)
 [ "$run_tests" = 0 ] || tasks+=(:app:testDebugUnitTest)
@@ -23,10 +23,10 @@ run_unsigned_gradle "${tasks[@]}"
 apk="$android_root/app/build/outputs/apk/debug/app-debug.apk"
 [ -f "$apk" ] || die 'Gradle finished without creating the debug APK.'
 mkdir -p "$root/dist"
-cp "$apk" "$root/dist/AquaRestore-debug.apk"
+cp "$apk" "$root/dist/$app_name-debug.apk"
 if [ "$install" = 1 ]; then
   adb="$ANDROID_HOME/platform-tools/adb"
   [ -x "$adb" ] || die 'Install Android SDK platform-tools to use --install.'
   "$adb" install -r "$apk"
 fi
-printf '\nDebug APK: %s\n' "$root/dist/AquaRestore-debug.apk"
+printf '\nDebug APK: %s\n' "$root/dist/$app_name-debug.apk"

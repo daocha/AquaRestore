@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time key rotation: makes your signing key (AQUARESTORE_KEYSTORE) the successor of an OLD key, by creating the
-# rotation lineage that build-android-release.sh then attaches to every release APK automatically.
-# Phones with a build signed by the old key can then update in place and keep their settings.
+# One-time key rotation: makes your signing key (<P>_KEYSTORE, see _signing-common.sh) the successor of an OLD key,
+# by creating the rotation lineage that build-android-release.sh then attaches to every release APK automatically.
+# Phones with a build signed by the old key can then update in place and keep their data.
 #
 #   scripts/rotate-signing-key.sh            create the lineage (does nothing if one already exists)
 #   scripts/rotate-signing-key.sh --force    replace an existing lineage (the old file is kept as a timestamped backup)
@@ -42,7 +42,7 @@ if [ -z "${OLD_KEYSTORE_PASSWORD:-}" ]; then
 fi
 export OLD_KEYSTORE_PASSWORD
 ensure_keystore
-trap 'unset AQUARESTORE_KEYSTORE_PASSWORD AQUARESTORE_KEY_PASSWORD OLD_KEYSTORE_PASSWORD' EXIT
+trap 'forget_passwords; unset OLD_KEYSTORE_PASSWORD' EXIT
 old_ks="$(cd "$(dirname "$old_ks")" && pwd)/$(basename "$old_ks")"
 [ "$old_ks" != "$keystore" ] || die 'The old and new keystore are the same file.'
 
@@ -52,7 +52,7 @@ tmp="$lineage.tmp"; rm -f "$tmp"
 (umask 077; "$apksigner" rotate --out "$tmp" \
   --old-signer --ks "$old_ks" --ks-key-alias "$old_alias" --ks-pass env:OLD_KEYSTORE_PASSWORD \
   --new-signer --ks "$keystore" --ks-key-alias "$alias_name" \
-    --ks-pass env:AQUARESTORE_KEYSTORE_PASSWORD --key-pass env:AQUARESTORE_KEY_PASSWORD) \
+    --ks-pass "env:$keystore_password_var" --key-pass "env:$key_password_var") \
   || { rm -f "$tmp"; die 'Rotation failed; the existing lineage (if any) is unchanged.'; }
 [ ! -f "$lineage" ] || cp -p "$lineage" "$lineage.bak-$(date +%Y%m%d-%H%M%S)"
 chmod 600 "$tmp"; mv "$tmp" "$lineage"
@@ -63,4 +63,5 @@ Lineage created: $lineage
   new key: $keystore ($alias_name)
 Back it up together with both keystores. From now on run scripts/build-android-release.sh as usual: it detects the
 lineage and attaches it to the release APK. Never distribute a build signed with only the old key.
+The Play bundle never carries the lineage: phones still on an old-key build must update once from GitHub.
 MSG

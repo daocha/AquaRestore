@@ -70,3 +70,5 @@ Never write the address from `.env` into a committed file, commit message or pul
   cannot reach that secret.
 - Releases come from `scripts/release-github.sh` (see `docs/RELEASING.md`). Release builds refuse the
   stub and any core commit that is modified, unrecorded or not pushed.
+- The release scripts are shared with PassVault: keep them identical there, and put anything
+  project-specific in `scripts/release-settings.sh` (see `docs/RELEASING.md`).

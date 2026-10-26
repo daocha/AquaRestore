@@ -28,3 +28,6 @@ ios/build/
 ios/.build/
 *.xcuserstate
 xcuserdata/
+# Play App Signing key export (pepk); upload it, then delete it
+encrypted_private_key*.zip
+pepk*.jar
