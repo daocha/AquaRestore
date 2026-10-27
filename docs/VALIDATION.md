@@ -1,65 +1,65 @@
-# 驗證紀錄
+# Validation record
 
-本次環境：JDK 17、Android SDK 36、Gradle 8.13；Android 15（API 35）ARM64 模擬器，SwiftShader GPU。
+Environment: JDK 17, Android SDK 36, Gradle 8.13; Android 15 (API 35) ARM64 emulator with the SwiftShader GPU.
 
-已完成：
+Done:
 
-- `scripts/build-android-debug.sh` 實際執行成功，產生 `dist/AquaRestore-debug.apk`。
-- Android debug／release 編譯成功；debug／release Lint 無阻擋錯誤（仍有依賴更新等警告）。
-- 18 項 JVM 單元測試通過：自動推薦、黑畫面不誤判、透明邊緣、異常影格穩健性、強度混合、尺寸與位元率，以及抽幀比例與微秒時間戳邊界。
-- 14 項裝置端測試通過：3 項 GPU、8 項媒體／狀態流程、3 項真實 Compose 介面操作。
-  - GPU：實際編譯 shader、FP16 HDR 高光保留、即時 uniforms、原色對比與 SDR 零強度。
-  - 媒體：圖片 Original PNG、連續匯出、自訂尺寸及 JPEG 畫質差異、EXIF 旋轉、取消及再次匯出、匯入壞檔案後恢復、偏好持久儲存。
-  - 影片：640×360／30fps 實際輸出為 320×180／約 24fps，逐一讀取輸出影格時間戳及數量驗證，且存在音軌；帶 90° 旋轉 metadata 的直式影片輸出比例正確。
-  - 介面：主滑桿不需捲動即能操作，按住原色對比、鬆開與觸控取消後恢復還原預覽；進階區捲到陰影時預覽仍可見；點擊匯出直到可見的完成提示；中文／深色模式與 Activity 重建。
-  - 暫停影片：Activity 重建後保留約 800ms 的位置及暫停狀態；直接比較 SurfaceView 的螢幕像素，確認暫停時調色也會刷新。
-- SDR 合成影片實際匯入、自動分析、代理預覽及 Original 匯出成功；ffprobe 確認 1280×720／30fps／H.264，AAC 音訊資料 SHA-256 與來源一致。
-- JPEG 實際匯入、預覽與 Original 圖片匯出成功；結果為 1280×720 PNG。
-- `scripts/release-github.sh --dry-run` 使用 `/tmp` 臨時 JKS 實際完成簽署；JKS 路徑包含空白，store／key 密碼不同。apksigner、憑證比對、版本與非 debug APK 檢查通過。測試簽署 APK 已移出專案交付目錄，不作為正式版本。
-- 6 項發布腳本隔離測試通過，覆蓋版本／tag／提交對應、原子 push、draft 上傳後才公開、dry-run 不寫 GitHub、dirty tree／重複 tag 阻擋、上傳失敗不公開。
-- Shell 語法與 `git diff --check` 通過。
+- `scripts/build-android-debug.sh` ran successfully and produced `dist/AquaRestore-debug.apk`.
+- Android debug and release builds compile; debug and release Lint report no blocking errors (warnings such as dependency updates remain).
+- 18 JVM unit tests pass: automatic recommendation, black frames not misjudged, transparent edges, robustness to unusual frames, intensity blending, size and bitrate, and frame-sampling ratios and microsecond timestamp boundaries.
+- 14 on-device tests pass: 3 GPU, 8 media / state flow, 3 real Compose UI interaction tests.
+  - GPU: the shader actually compiles, FP16 HDR highlights are kept, live uniforms, original-color compare and SDR at zero intensity.
+  - Media: image Original PNG, consecutive exports, custom size and JPEG quality differences, EXIF rotation, cancel and export again, recovery after importing a corrupt file, persisted preferences.
+  - Video: a 640×360 / 30 fps clip exports as 320×180 / about 24 fps, verified by reading every output frame's timestamp and count, with an audio track present; a portrait video with 90° rotation metadata exports with the right aspect ratio.
+  - UI: the main slider works without scrolling; holding compare shows the original, and releasing or a touch cancel restores the graded preview; the preview stays visible when the advanced section is scrolled to shadows; tapping export through to the visible completion message; Chinese / dark mode and Activity recreation.
+  - Paused video: after Activity recreation the position (about 800 ms) and paused state are kept; comparing SurfaceView screen pixels directly confirms that color changes also refresh while paused.
+- A synthetic SDR video was imported, analyzed, previewed through the proxy and exported as Original; ffprobe confirms 1280×720 / 30 fps / H.264, and the SHA-256 of the AAC audio data matches the source.
+- A JPEG was imported, previewed and exported as Original; the result is a 1280×720 PNG.
+- `scripts/release-github.sh --dry-run` completed signing with a temporary JKS under `/tmp`, with a space in the JKS path and different store and key passwords. apksigner, certificate match, version and non-debug APK checks pass. The test-signed APK was moved out of the project's output folder and is not a release.
+- 6 isolated release-script tests pass, covering version / tag / commit mapping, atomic push, publishing only after the draft upload, dry-run never writing to GitHub, blocking on a dirty tree or an existing tag, and not publishing after a failed upload.
+- Shell syntax and `git diff --check` pass.
 
-未做或仍需真機驗收：
+Not done, or still needing acceptance on a real device:
 
-- 未使用正式 JKS，未 push、建立真實 GitHub Release 或上傳資產。發布 orchestration 使用隔離 Git 儲存庫及模擬 gh／push 驗證。
-- HDR10／HLG 的完整硬體解碼→10-bit 編碼→實體 HDR 螢幕顯示，須在具 HDR 編碼能力的 Android 13+ 手機驗證。模擬器 GPU 測試不等於 HDR 編碼器驗收。
-- 4K60、實際 VFR 檔案、長片音畫同步、低階裝置幀時間、熱節流、其他 EXIF 旋轉／鏡像組合、各廠牌背景服務行為等，依 [真機清單](DEVICE_TESTS.md) 執行。
+- The real JKS was not used; nothing was pushed, no real GitHub Release was created and no assets were uploaded. The release orchestration was verified with an isolated Git repository and mocked gh / push.
+- HDR10 / HLG end to end (hardware decode → 10-bit encode → display on a physical HDR screen) must be verified on an Android 13+ phone with an HDR-capable encoder. Emulator GPU tests are not HDR encoder acceptance.
+- 4K60, real VFR files, audio/video sync on long clips, frame time on low-end devices, thermal throttling, other EXIF rotation / mirror combinations, and background service behavior across manufacturers: run the [device checklist](DEVICE_TESTS.md).
 
-## 功能審查修正
+## Fixes from the feature review
 
-- 改成依整段時間軸選取影格，修正原抽幀器在 30→24fps 時未達到指定幀率；等幀率亦不會因微秒四捨五入丟幀。
-- 調整強度或進階參數時自動離開原色對比，避免誤以為滑桿無效。
-- 保留影片位置與播放／暫停意圖，改善畫面重建和背景回前景行為。
-- 匯入新素材會回到預覽頂部；匯入錯誤、匯出成功／失敗／取消使用直接可見的對話框，不藏在捲動區末端。
-- 匯出在前景服務清理後才回報完成，避免緊接下一次匯出時工作被忽略；最後發布步驟以短交易完成，避免已儲存卻顯示取消。
-- 匯出期間禁止更換素材，包含 Activity 重新建立後的空白首頁，避免撤銷正在匯出的來源權限。
-- 來源全黑／全透明時不捏造紅色缺失或偏藍判斷；透明邊緣不干擾推薦統計。
+- Frames are now chosen across the whole timeline, fixing the old frame sampler that missed the target rate when going from 30 to 24 fps; equal frame rates no longer drop frames through microsecond rounding.
+- Changing intensity or advanced parameters automatically leaves the original-color compare, so the sliders never seem to do nothing.
+- The video position and play / pause intent are kept, improving behavior on recreation and when returning from the background.
+- Importing new media scrolls back to the top of the preview; import errors and export success / failure / cancel use dialogs that are visible at once, not hidden at the end of the scroll area.
+- An export reports completion only after the foreground service has cleaned up, so a following export is not ignored; the final publish step is a short transaction, so a saved file is never shown as cancelled.
+- Media cannot be replaced during an export, including from the empty home screen after Activity recreation, so the permission for the source being exported is never revoked.
+- All-black or fully transparent sources do not produce made-up missing-red or blue-cast judgements; transparent edges do not affect the recommendation statistics.
 
-重新執行功能回歸測試（需先啟動 Android 模擬器或連接測試裝置）：
+To run the feature regression tests again (start an Android emulator or connect a test device first):
 
 ```bash
 cd android
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:connectedDebugAndroidTest
 ```
 
-`android/app/src/androidTest/assets` 為自行產生的合成測試素材，包含彩色測試片、旋轉 metadata 及 EXIF 圖片，不是實際水下畫質驗收素材。
+`android/app/src/androidTest/assets` holds synthetic test media generated for these tests (color test clips, rotation metadata and EXIF images), not real underwater footage for judging quality.
 
-## 本輪互動改善回歸
+## Interaction improvements regression
 
-- 完整 14 項 Android 測試、16 項 JVM 測試及 debug Lint／APK 編譯通過。
-- 200% 強度在 CPU 與 GPU 均會提高實際紅色補償，基礎滑桿數值不被覆寫。
-- 合成 2 秒有音軌影片分別以 0.5×、2×、4× Original 匯出，檢查兩軌時長與來源時長／速度相符（容許編碼封包邊界 180ms），且來源尺寸保留。
-- 影片預覽 2× 實際播放器參數及 Activity 重建後速度、暫停狀態與位置驗證通過。
-- 上述短片驗證不代表長片同步、實際音高聽感、高 fps 真機編碼及橫向／大字體佈局均已驗收。
+- All 14 Android tests, 16 JVM tests and the debug Lint / APK build pass.
+- 200% intensity raises the actual red compensation on both CPU and GPU, without overwriting the base slider values.
+- A synthetic 2-second clip with audio was exported as Original at 0.5×, 2× and 4×; both tracks' durations match the source duration and speed (within 180 ms for encoder packet boundaries), and the source size is kept.
+- Video preview at 2×: the actual player parameters, and speed, paused state and position after Activity recreation, verified.
+- These short-clip checks do not mean that sync on long clips, perceived pitch, high-fps encoding on real devices, or landscape / large-font layouts have been accepted.
 
-## Original 位元率與大小預估修正
+## Original bitrate and size estimate fixes
 
-- Original 優先使用來源影片位元率，不再取高畫質推算值的較大者；影片軌位元率缺失時，由總位元率扣除音訊估算，仍缺資料才使用解析度／fps 公式。
-- 變速以速度比例調整 Original 影片位元率，保留每影格的位元預算，避免慢速時無理由加倍大小。
-- 預估大小與實際匯出共用設定計算，包含音訊、變速後時長及約 1% 容器開銷；並非硬性檔案大小限制。未知時長顯示無法估算。
-- 18 項 JVM 測試通過，包含低於舊推算值／舊最低值的來源位元率、速度、音訊、缺少時長、解析度／fps／畫質對預估大小的影響。
-- 不曾取得使用者的 621MB 原片，尚未對該原片核對 codec、位元率或重新匯出大小；不能保證更新後產物剛好等於原始大小。
-- 本輪 14 項 Android 裝置測試與 Lint 通過；包含匯出頁 Original／Custom 預估值可見，調低 Quality 後預估大小更新，以及實際影片匯出回歸。6 項發布腳本隔離測試亦通過。
+- Original now prefers the source video's bitrate instead of the larger of it and a value derived from high quality; when the video track's bitrate is missing it is estimated as the total bitrate minus audio, and only without that data does it fall back to the resolution / fps formula.
+- Speed changes scale the Original video bitrate by the speed ratio, keeping the bit budget per frame, so slow motion no longer doubles the size for no reason.
+- The size estimate and the actual export share the same settings calculation, including audio, duration after speed change and about 1% container overhead; it is not a hard file size limit. An unknown duration shows that the size cannot be estimated.
+- 18 JVM tests pass, including source bitrates below the old derived value and old minimum, speed, audio, missing duration, and the effect of resolution / fps / quality on the estimate.
+- The user's 621 MB source clip was never available, so its codec, bitrate and re-exported size have not been checked; an updated export is not guaranteed to match the original size exactly.
+- This round's 14 Android device tests and Lint pass, including the Original / Custom estimates being visible on the export screen, the estimate updating after lowering Quality, and an actual video export regression. The 6 isolated release-script tests also pass.
 
 ## iOS
 
