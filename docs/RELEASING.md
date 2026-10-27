@@ -96,6 +96,8 @@ export AQUARESTORE_KEY_ALIAS="your-existing-alias"
 
 不需要把密碼放在命令列、Gradle properties 或專案檔案中。JKS／keystore／p12 與常見簽署設定檔已加入 `.gitignore`。Release 使用單次 Gradle 程序與程序內 Kotlin 編譯，不留長時間持有密碼的編譯 daemon。
 
+`scripts/print-signing-fingerprint.sh [cert.pem]` 會印出金鑰的 SHA-256 指紋（用來比對 Play Console 的「應用程式完整性」頁面，或在 Android 開發人員驗證登錄套件名稱），並可另存公開憑證。只需要 JDK 或 openssl，不需要 Android SDK，也不會建立金鑰。
+
 ### 金鑰輪替
 
 若手機已安裝以另一把金鑰簽署的版本（預設為 debug 版），執行一次：
@@ -212,11 +214,11 @@ Play 版是 `playRelease`：與 GitHub 版同為 `com.aquarestore.app`，但不�
 
 ## 與 PassVault 同步腳本
 
-`_signing-common.sh`、`build-android-debug.sh`、`build-android-release.sh`、`build-android-play.sh`、`release-github.sh`、`rotate-signing-key.sh` 與 `tests/test_release_workflow.py` 在 AquaRestore 與 PassVault 是同一份檔案。專案特有的設定（App 名稱、套件名稱、金鑰預設值、建置目錄、Play 版禁止的權限、發布說明、`core/` 檢查）都在 `scripts/release-settings.sh`。修改共用檔案時兩邊一起改，並以下列命令確認：
+`_signing-common.sh`、`build-android-debug.sh`、`build-android-release.sh`、`build-android-play.sh`、`release-github.sh`、`rotate-signing-key.sh`、`print-signing-fingerprint.sh` 與 `tests/test_release_workflow.py` 在 AquaRestore 與 PassVault 是同一份檔案。專案特有的設定（App 名稱、套件名稱、金鑰預設值、建置目錄、Play 版禁止的權限、發布說明、`core/` 檢查）都在 `scripts/release-settings.sh`。修改共用檔案時兩邊一起改，並以下列命令確認：
 
 ```bash
 for f in _signing-common.sh build-android-debug.sh build-android-release.sh build-android-play.sh \
-         release-github.sh rotate-signing-key.sh tests/test_release_workflow.py; do
+         release-github.sh rotate-signing-key.sh print-signing-fingerprint.sh tests/test_release_workflow.py; do
   diff -q ~/git/AquaRestore/scripts/$f ~/git/password-vault/scripts/$f
 done
 ```
