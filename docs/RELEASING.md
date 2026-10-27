@@ -1,143 +1,145 @@
-# Android 建置與 GitHub 發布
+# Android builds and GitHub releases
 
-## 應用程式內更新
+## In-app updates
 
-一般 `release` APK 安裝版會在開啟時靜默查詢 `daocha/AquaRestore` 最新公開 GitHub Release（每六小時最多一次）。僅在該 Release 含版本碼更高、名稱符合 `AquaRestore-<version>-<versionCode>.apk` 的 APK，以及對應的 `AquaRestore-<version>-<versionCode>.SHA256SUMS` 時顯示更新。下載時核對 SHA-256、檔案大小、套件名稱及版本碼，最後交由 Android 安裝確認；使用者可能需允許從 AquaRestore 安裝應用程式。升級必須沿用相容的簽署金鑰。`debug` 版預設不檢查更新，也沒有網路與 APK 安裝權限；可改為從區域網路更新，見下方「區域網路更新 debug 版」。
+The regular `release` APK install quietly checks the latest public GitHub Release of `daocha/AquaRestore` when it opens (at most once every six hours). It offers an update only when that Release has an APK with a higher version code named `AquaRestore-<version>-<versionCode>.apk` and the matching `AquaRestore-<version>-<versionCode>.SHA256SUMS`. The download is checked for its SHA-256, file size, package name and version code, then handed to Android's install confirmation; the user may need to allow installing apps from AquaRestore. Updates must use a compatible signing key. The `debug` build does not check for updates by default and has no network or APK install permission; it can update over the local network instead, see "LAN updates for the debug build" below.
 
-未來上架 Google Play 時，使用 `:app:bundlePlayRelease` 建立 Play 專用 AAB；此版本走 Google Play 應用程式內更新，不含 `REQUEST_INSTALL_PACKAGES` 權限或 GitHub APK 安裝流程。請以與既有安裝相容的簽署方式及遞增的 `versionCode` 發布。若以一般 `release` 版本經 Google Play 安裝，程式也會依安裝來源走 Google Play 更新。請先在 Play 測試軌道測試更新流程；Play 更新是否可用由 Play 服務決定。
+For Google Play, `:app:bundlePlayRelease` builds the Play AAB. That build uses Google Play in-app updates and has neither the `REQUEST_INSTALL_PACKAGES` permission nor the GitHub APK install flow. Release it with signing compatible with existing installs and an increasing `versionCode`. If a regular `release` build is installed through Google Play, the app also uses Play updates, based on its install source. Test the update flow on a Play testing track first; whether a Play update is available is up to the Play services.
 
-Android 建置與發布腳本與 PassVault 共用同一份（見文末「與 PassVault 同步腳本」），沒有 iOS 步驟。發布時不需要把 JKS 上傳到 GitHub。
+The Android build and release scripts are shared with another project (see "Shared scripts" at the end); there are no iOS steps. Releasing does not require uploading the JKS to GitHub.
 
-## 1. 在另一台電腦準備環境
+## 1. Set up another computer
 
-經過調校的調色核心是私人 submodule `core/`（`daocha/AquaRestore-Core`），這台電腦的 SSH 金鑰需能讀取它：
+The tuned color grading core is the private submodule `core/` (`daocha/AquaRestore-Core`); this computer's SSH key must be able to read it:
 
 ```bash
 git clone --recurse-submodules git@github.com:daocha/AquaRestore.git
 ```
 
-建置腳本在 `core/` 為空時會自動抓取。發布版本拒絕使用 `core-stub/` 的基本調色，並要求 `core/` 沒有未提交的修改、與本儲存庫記錄的 commit 一致，且該 commit 已推送到 AquaRestore-Core。修改調色時，先在 `core/` 提交並推送，再在本儲存庫提交 `core` 的新指標。
+The build scripts fetch `core/` when it is empty. Release builds refuse the basic grading in `core-stub/`, and require `core/` to have no uncommitted changes, to be at the commit this repository records, and that commit to be pushed to AquaRestore-Core. To change the grading, commit and push in `core/` first, then commit the new `core` pointer here.
 
-需要 Bash、JDK 17+、Android SDK 36、Build-Tools 35／36，以及 GitHub CLI。macOS 可直接執行：
+You need Bash, JDK 17+, Android SDK 36, Build-Tools 35 / 36 and the GitHub CLI. On macOS run:
 
 ```bash
 ./scripts/setup-release-env.sh
 gh auth login
 ```
 
-此準備腳本會安裝缺少的 Homebrew 套件、接受 Android SDK 授權並安裝 SDK；可重複執行。Linux 請自行安裝上述工具。建置腳本支援 macOS／Linux，會從常用路徑偵測工具，也可手動設定：
+This setup script installs missing Homebrew packages, accepts the Android SDK licenses and installs the SDK; it can be run again. On Linux, install these tools yourself. The build scripts support macOS and Linux and detect the tools in the usual locations, or you can set them:
 
 ```bash
 export JAVA_HOME="/path/to/jdk-17"
 export ANDROID_HOME="/path/to/Android/sdk"
 ```
 
-## 2. 一鍵 debug APK
+## 2. One-step debug APK
 
 ```bash
 ./scripts/build-android-debug.sh
 ```
 
-預設執行單元測試、Lint，再輸出：
+By default it runs the unit tests and Lint, then writes:
 
 ```text
 dist/AquaRestore-debug.apk
 ```
 
-可選項：
+Options:
 
 ```bash
-./scripts/build-android-debug.sh --install       # 同時安裝至 adb 裝置
-./scripts/build-android-debug.sh --skip-tests    # 省略單元測試，仍執行 Lint
+./scripts/build-android-debug.sh --install       # also install on the adb device
+./scripts/build-android-debug.sh --skip-tests    # skip unit tests; Lint still runs
 ANDROID_SERIAL=emulator-5554 ./scripts/build-android-debug.sh --install
 ```
 
-不需要 release JKS。即使 shell 已設定簽署密碼，debug／測試的 Gradle 程序也不會收到它們。
+No release JKS is needed. Even when the shell has signing passwords set, the debug and test Gradle processes never receive them.
 
-### 區域網路更新 debug 版
+### LAN updates for the debug build
 
-將 `.env.example` 複製為 `.env`（已列入 `.gitignore`），填入這台電腦的區域網路位址：
+Copy `.env.example` to `.env` (it is in `.gitignore`) and fill in this computer's LAN address:
 
 ```bash
 AQUARESTORE_DEV_UPDATE_HOST=192.168.1.10
-AQUARESTORE_DEV_UPDATE_PORT=8765   # 選填，預設 8765
+AQUARESTORE_DEV_UPDATE_PORT=8765   # optional, default 8765
 ```
 
-設定後，debug 版會：
+With it set, the debug build:
 
-- 以建置時間（自 2026-01-01 起的分鐘數）作為版本碼，讓每次建置都比已安裝的版本新；版本名稱也帶上此編號（例如 `2026.10.25-debug.425918`），同一天的建置也能分辨。
-- 只對該位址允許 HTTP，並取得網路與 APK 安裝權限；沒有 `.env` 時（例如 CI）與以往相同。
-- 在 `assembleDebug` 後寫出 `android/dist/dev-update/`：APK、`SHA256SUMS` 與 `latest.json`。
+- Uses the build time (minutes since 2026-01-01) as its version code, so every build is newer than the installed one; the version name carries the same number (for example `2026.10.25-debug.425918`), so builds from the same day can be told apart.
+- Allows HTTP to that address only, and gets the network and APK install permissions; without `.env` (for example in CI) nothing changes.
+- Writes `android/dist/dev-update/` after `assembleDebug`: the APK, `SHA256SUMS` and `latest.json`.
 
-接著執行 `scripts/serve-dev-update.sh`，它只綁定該位址。手機上的 debug 版每次回到前景都會檢查，也可在設定中手動檢查。
-位址只寫入 debug APK，不會進入原始碼或 Git；請勿公開散布設定過的 debug APK。
-Android 只接受與已安裝版本相同簽署金鑰的更新，因此區域網路上的他人無法以自己的 APK 取代它。
+Then run `scripts/serve-dev-update.sh`, which binds to that address only. The debug build on the phone checks every time it comes to the foreground, or manually from settings.
+The address is written only into the debug APK, never into the source or Git; do not distribute a debug APK built with it.
+Android accepts only updates signed with the same key as the installed build, so others on the LAN cannot replace it with their own APK.
 
-## 3. 簽署金鑰
+## 3. Signing key
 
-預設金鑰：
+Default key:
 
-- JKS：`~/.aquarestore-signing/aquarestore-release.jks`
-- alias：`release`
+- JKS: `~/.aquarestore-signing/aquarestore-release.jks`
+- alias: `release`
 
-找不到金鑰時，release 腳本會在終端詢問是否建立（PKCS12、RSA 4096、有效期 10000 天；新建資料夾與檔案僅本人可讀）。keytool 會要求設定密碼與姓名／組織資料。建立後請立即將金鑰與密碼備份到至少兩處，其中一處離線：已安裝的 App 之後每次更新都必須使用同一把金鑰。請勿與其他 App（例如 PassVault）共用金鑰。腳本永不覆蓋既有金鑰；無終端時不會建立，會直接停止。
+When no key is found, the release scripts ask in the terminal whether to create one (PKCS12, RSA 4096, valid for 10000 days; a newly created folder and file are readable only by you). keytool asks for a password and your name / organization details. Back up the key and its password right away in at least two places, one of them offline: every later update to an installed app must be signed with the same key. Do not share the key with another app. The scripts never overwrite an existing key, and without a terminal they stop instead of creating one.
 
-若要使用既有金鑰（路徑可以包含空白）：
+To use an existing key (the path may contain spaces):
 
 ```bash
 export AQUARESTORE_KEYSTORE="$HOME/path/to/existing-release.jks"
 export AQUARESTORE_KEY_ALIAS="your-existing-alias"
 ```
 
-可將這兩個非密碼設定放入該電腦的 `~/.zshrc`。密碼由終端隱藏輸入；key 密碼可與 keystore 密碼不同，直接 Enter 表示相同。也可由秘密管理工具提供環境變數：
+You can put these two non-secret settings in that computer's `~/.zshrc`. Passwords are typed hidden in the terminal; the key password may differ from the keystore password, and Enter means the same. A secrets manager can also provide them as environment variables:
 
 - `AQUARESTORE_KEYSTORE_PASSWORD`
-- `AQUARESTORE_KEY_PASSWORD`（未設定時預設使用 keystore 密碼）
+- `AQUARESTORE_KEY_PASSWORD` (defaults to the keystore password when unset)
 
-不需要把密碼放在命令列、Gradle properties 或專案檔案中。JKS／keystore／p12 與常見簽署設定檔已加入 `.gitignore`。Release 使用單次 Gradle 程序與程序內 Kotlin 編譯，不留長時間持有密碼的編譯 daemon。
+Passwords never need to be on the command line, in Gradle properties or in project files. JKS / keystore / p12 files and common signing config files are in `.gitignore`. Release builds use a single-use Gradle process with in-process Kotlin compilation, so no long-lived compile daemon holds the passwords.
 
-### 金鑰輪替
+`scripts/print-signing-fingerprint.sh [cert.pem]` prints the key's SHA-256 fingerprint (to compare with Play Console's **App integrity** page or to register the package for Android developer verification), and can save the public certificate. It needs only a JDK or openssl, not the Android SDK, and never creates a key.
 
-若手機已安裝以另一把金鑰簽署的版本（預設為 debug 版），執行一次：
+### Key rotation
+
+If phones have a build signed with another key (the debug key by default), run once:
 
 ```bash
 ./scripts/rotate-signing-key.sh
 ```
 
-腳本以 `apksigner rotate` 建立 lineage（`~/.aquarestore-signing/lineage.bin`，可用 `AQUARESTORE_LINEAGE` 指定），證明新金鑰是舊金鑰的繼任者。之後 `build-android-release.sh` 會自動以 APK Signature Scheme v3 附上 lineage，讓舊版原地升級並保留設定。舊金鑰預設為 `~/.android/debug.keystore`（alias `androiddebugkey`）；其他舊金鑰可設定 `OLD_KEYSTORE`、`OLD_KEY_ALIAS`、`OLD_KEYSTORE_PASSWORD`。已有 lineage 時不會重做；`--force` 會先備份舊檔再取代。若只剩 `lineage.bin.bak-*` 而沒有 `lineage.bin`，release 會停止，避免發出無法升級的版本。請將 lineage 與新舊金鑰一起備份。
+The script builds a lineage with `apksigner rotate` (`~/.aquarestore-signing/lineage.bin`, or `AQUARESTORE_LINEAGE`) proving that the new key succeeds the old one. From then on `build-android-release.sh` attaches the lineage with APK Signature Scheme v3, so old installs update in place and keep their settings. The old key defaults to `~/.android/debug.keystore` (alias `androiddebugkey`); set `OLD_KEYSTORE`, `OLD_KEY_ALIAS` and `OLD_KEYSTORE_PASSWORD` for another one. An existing lineage is not redone; `--force` backs up the old file before replacing it. If only `lineage.bin.bak-*` exists without `lineage.bin`, release builds stop, so a version that cannot update in place is never shipped. Back up the lineage together with the old and new keys.
 
-## 4. 一鍵簽署並發布 GitHub Release
+## 4. One-step signed GitHub Release
 
-先確認程式碼已提交、工作目錄乾淨，並已登入有權限發布 `origin` 儲存庫的 GitHub 帳號。JKS 在本機，Git／GitHub 憑證也須能推送 `origin`。
+First make sure the code is committed, the working tree is clean, and you are logged in to a GitHub account that can publish to the `origin` repository. The JKS is local, and the Git / GitHub credentials must be able to push to `origin`.
 
 ```bash
 ./scripts/release-github.sh --version 1.0.0
 ```
 
-不帶 `--version` 時，在互動終端詢問版本，Enter 沿用目前版本：
+Without `--version`, an interactive terminal asks for the version; Enter keeps the current one:
 
 ```bash
 ./scripts/release-github.sh
 ```
 
-在終端執行時，建置與驗證完成後會先詢問是否發布；非互動執行則直接發布：
+In a terminal it asks before publishing, once the build and checks are done; a non-interactive run publishes directly:
 
-1. 檢查已追蹤的檔案都已提交、`android/`、`core/`、`scripts/` 內沒有未追蹤檔案（根目錄的發布說明等不影響建置，允許存在），以及分支、GitHub 登入及版本 tag 是否已存在。
-2. 新版本名稱會自動增加 `versionCode`，並更新 `android/app/build.gradle.kts`。
-3. 執行測試與 release Lint，以指定 JKS 簽署 APK。
-4. 驗證 APK 簽章、簽署憑證與 JKS alias 一致、application ID／版本正確，且不是 debuggable APK。
-5. 產生 APK 與 SHA-256 校驗檔；確認建置期間原始碼沒有被修改。
-6. 如有版本變更，建立版本提交；建立 `vX.Y.Z` tag，將目前分支與 tag 原子推送到 `origin`：推送被拒時兩者都不會推送，本機 tag 也會刪除。
-7. 建立 draft Release，附上 APK 與 SHA256SUMS；上傳成功後轉為正式發布。
+1. Checks that tracked files are committed, that `android/`, `core/` and `scripts/` have no untracked files (release notes and the like at the root cannot affect the build and are allowed), and the branch, GitHub login and whether the version tag already exists.
+2. A new version name automatically increments `versionCode` and updates `android/app/build.gradle.kts`.
+3. Runs the tests and release Lint, and signs the APK with the configured JKS.
+4. Verifies the APK signature, that the signing certificate matches the JKS alias, that the application ID and version are right, and that the APK is not debuggable.
+5. Writes the APK and its SHA-256 checksum file, and checks that the sources did not change during the build.
+6. Commits the version change if there is one, creates the `vX.Y.Z` tag, and pushes the current branch and the tag to `origin` atomically: if the push is rejected, neither is pushed and the local tag is deleted.
+7. Creates a draft Release with the APK and SHA256SUMS, and publishes it after the upload succeeds.
 
-輸出範例：
+Example output:
 
 ```text
 dist/AquaRestore-1.0.0-1.apk
 dist/AquaRestore-1.0.0-1.SHA256SUMS
 ```
 
-其他選項：
+Other options:
 
 ```bash
 ./scripts/release-github.sh --version 1.0.1 --version-code 2
@@ -146,86 +148,86 @@ dist/AquaRestore-1.0.0-1.SHA256SUMS
 ./scripts/release-github.sh --version 1.0.1 --notes-file /path/to/notes.md
 ```
 
-`--draft` 保持 GitHub Release 未公開，但仍會提交版本、推送分支與 tag。`--skip-tests` 可跳過測試／release Lint，APK 簽署與憑證／版本驗證仍會執行。
+`--draft` keeps the GitHub Release unpublished, but still commits the version and pushes the branch and tag. `--skip-tests` skips the tests and release Lint; APK signing and the certificate and version checks still run.
 
-已有的本機／遠端 tag 不會覆寫。發布使用 `origin` 指向的 GitHub 儲存庫，不會自行建立或切換儲存庫。預發布版本請明確帶 `--prerelease`。
+Existing local or remote tags are never overwritten. Releases go to the GitHub repository `origin` points to; the script never creates or switches repositories. Pass `--prerelease` explicitly for pre-release versions.
 
-## 5. 只驗證簽署，不發布
+## 5. Verify signing without releasing
 
 ```bash
 ./scripts/build-android-release.sh
-# 或檢查完整發布入口（不需要 GitHub 登入，也允許工作目錄有變更）
+# or check the full release entry point (no GitHub login needed, and the working tree may have changes)
 ./scripts/release-github.sh --dry-run
 ```
 
-`--dry-run` 仍會真的建置、簽署及驗證 APK，但不 commit／tag／push，不呼叫 GitHub。若另外指定了新版本，版本檔案的變更會保留在本機供檢查。
+`--dry-run` still really builds, signs and verifies the APK, but does not commit, tag or push, and never calls GitHub. If a new version was given, the version file changes stay in the working tree for review.
 
-Debug 版使用獨立的套件名稱 `com.aquarestore.app.debug`，App 名稱為「AquaRestore Dev」，會與正式版並存安裝，不會互相覆蓋。在這項變更之前安裝的舊 debug 版仍使用 `com.aquarestore.app` 與 debug key：可先移除，或執行一次 `scripts/rotate-signing-key.sh`，讓正式版原地升級並保留設定。後續正式版本需繼續使用同一把簽署 key 才能原地升級。
+The debug build uses its own package name `com.aquarestore.app.debug` and the app name "AquaRestore Dev", so it installs next to the release build without replacing it. Debug builds installed before this change still use `com.aquarestore.app` and the debug key: uninstall them, or run `scripts/rotate-signing-key.sh` once so the release build updates them in place and keeps their settings. Later releases must keep using the same signing key to update in place.
 
-## 6. 發布中斷
+## 6. Interrupted releases
 
-- 建置失敗：不會 push；若有版本編輯，留在工作目錄，不自動回復你的檔案。
-- Git push 被拒（例如受保護的 `main`）：分支與 tag 都沒有推送，本機 tag 已刪除，版本提交留在本機。以 pull request 合併該提交後，在合併後的分支以相同 `--version` 重新執行，不要換版號。
-- GitHub 上傳失敗：tag 可能已推送，Release 保持 draft；先用 `gh release view vX.Y.Z` 檢查，再補上缺少的資產。
-- 發布狀態切換失敗：已上傳的資產留在 draft，可從 GitHub 檢查後發布。
+- Build failure: nothing is pushed; version edits stay in the working tree, and your files are not reverted.
+- Git push rejected (for example a protected `main`): neither the branch nor the tag is pushed, the local tag is deleted and the version commit stays local. Merge that commit through a pull request, then run again on the merged branch with the same `--version`; do not change the version number.
+- GitHub upload failure: the tag may already be pushed and the Release stays a draft; check with `gh release view vX.Y.Z`, then upload the missing assets.
+- Publish failure: the uploaded assets stay in the draft; check it on GitHub and publish it.
 
-## 7. 上架 Google Play
+## 7. Google Play
 
-Play 版是 `playRelease`：與 GitHub 版同為 `com.aquarestore.app`，但不含 `REQUEST_INSTALL_PACKAGES` 與 GitHub 更新流程，改用 Play 更新。要讓 GitHub APK 與 Play 安裝版互相原地升級，Play 交付的 APK 必須以 GitHub 版的同一把金鑰簽署，因此**第一次上傳前**就要在 Play App Signing 選擇上傳自己的金鑰。這個選擇之後無法改回；若讓 Google 產生金鑰，兩邊的簽署將永遠不同，無法互相升級。
+The Play build is `playRelease`: the same `com.aquarestore.app` as the GitHub build, but without `REQUEST_INSTALL_PACKAGES` and the GitHub update flow, using Play updates instead. For the GitHub APK and Play installs to update each other in place, the APKs Play delivers must be signed with the same key as the GitHub build, so **before the first upload** choose to upload your own key in Play App Signing. This choice cannot be undone; if Google generates the key, the two builds will always be signed differently and cannot update each other.
 
-### 建置
+### Build
 
 ```bash
 ./scripts/build-android-play.sh
-# 或與 GitHub 發布一起，確保同一個 commit 與 versionCode：
+# or together with the GitHub release, so both use the same commit and versionCode:
 ./scripts/release-github.sh --version 1.0.1 --play
 ```
 
-- 產出 `dist/AquaRestore-<version>-<versionCode>-play.aab`；AAB 不會上傳到 GitHub。
-- AAB 與 GitHub APK 使用**同一把金鑰**（第 3 節的 release JKS）簽署，不另設上傳金鑰：GitHub APK 本來就需要這把金鑰在建置電腦上，另一把上傳金鑰幾乎沒有增加保護。`--play` 時密碼只詢問一次。
-- 腳本驗證 AAB 簽章與簽署憑證，並以同一 variant 的 APK 檢查套件名稱、版本、不可除錯，以及不含 `REQUEST_INSTALL_PACKAGES`。
-- 同時產出 `dist/AquaRestore-<version>-<versionCode>-play-mapping.txt`（R8 對照檔），與 AAB 一起上傳，Play Console 的當機報告才看得懂。
-- 結尾印出金鑰 SHA-256（Play Console 的格式），供第一次上傳後比對。
+- Writes `dist/AquaRestore-<version>-<versionCode>-play.aab`; the AAB is not uploaded to GitHub.
+- The AAB and the GitHub APK are signed with **the same key** (the release JKS from section 3), with no separate upload key: the GitHub APK already needs this key on the build computer, so another upload key adds almost no protection. With `--play` the password is asked for only once.
+- The script verifies the AAB signature and signing certificate, and uses the APK of the same variant to check the package name, version, that it is not debuggable, and that it lacks `REQUEST_INSTALL_PACKAGES`.
+- It also writes `dist/AquaRestore-<version>-<versionCode>-play-mapping.txt` (the R8 mapping); upload it with the AAB so Play Console's crash reports are readable.
+- At the end it prints the key's SHA-256 (in Play Console's format) to compare after the first upload.
 
-### 第一次上傳
+### First upload
 
-1. Play Console 建立應用程式，進入「測試與發布 → 應用程式完整性 → Play 應用程式簽署」。
-2. 選擇使用自己的金鑰，「從 Java KeyStore 匯出並上傳金鑰」。依畫面下載 `pepk.jar` 與加密公鑰，對 release JKS 執行：
+1. Create the app in Play Console and open **Test and release → App integrity → Play app signing**.
+2. Choose to use your own key, **Export and upload a key from Java keystore**. Download `pepk.jar` and the encryption public key as shown, and run on the release JKS:
 
    ```bash
    java -jar pepk.jar --keystore="$HOME/.aquarestore-signing/aquarestore-release.jks" --alias=release \
      --output=encrypted_private_key.zip --include-cert --rsa-aes-encryption --encryption-key-path=encryption_public_key.pem
    ```
 
-   上傳產生的 zip，之後刪除它與 `pepk.jar`。不要另外登錄上傳金鑰：AAB 由同一把金鑰簽署。
-3. 在內部測試軌道上傳 AAB，並在「App bundle 探索工具 → 下載」上傳 mapping 檔。完成後到「應用程式完整性」確認「應用程式簽署金鑰憑證」的 SHA-256 與下列輸出相同：
+   Upload the generated zip, then delete it and `pepk.jar`. Do not register a separate upload key: the AAB is signed with the same key.
+3. Upload the AAB to the internal testing track, and the mapping file under **App bundle explorer → Downloads**. Then in **App integrity**, check that the SHA-256 of the "App signing key certificate" matches the output of:
 
    ```bash
    keytool -list -v -keystore ~/.aquarestore-signing/aquarestore-release.jks -alias release | grep SHA256
    ```
 
-4. 用內部測試安裝 Play 版，確認能覆蓋 GitHub 版（反之亦然）並保留設定。
+4. Install the Play build from internal testing and check that it updates the GitHub build in place (and the other way round) and keeps the settings.
 
-### 後續版本
+### Later releases
 
-每次發布執行 `release-github.sh --play` 並把 AAB 與 mapping 檔上傳到 Play，讓兩邊使用相同 `versionCode`；Play 不會提供低於裝置上版本的更新。以 `scripts/rotate-signing-key.sh` 建立的 lineage 只附在 GitHub APK，Play 版不含：仍安裝舊 debug 金鑰版的裝置要先更新一次 GitHub 版。
+For every release, run `release-github.sh --play` and upload the AAB and mapping file to Play, so both use the same `versionCode`; Play never offers an update lower than the version on the device. The lineage made by `scripts/rotate-signing-key.sh` is attached only to the GitHub APK, not the Play build: devices that still have a build signed with the old debug key must update once through the GitHub build first.
 
-## 與 PassVault 同步腳本
+## Shared scripts
 
-`_signing-common.sh`、`build-android-debug.sh`、`build-android-release.sh`、`build-android-play.sh`、`release-github.sh`、`rotate-signing-key.sh` 與 `tests/test_release_workflow.py` 在 AquaRestore 與 PassVault 是同一份檔案。專案特有的設定（App 名稱、套件名稱、金鑰預設值、建置目錄、Play 版禁止的權限、發布說明、`core/` 檢查）都在 `scripts/release-settings.sh`。修改共用檔案時兩邊一起改，並以下列命令確認：
+`_signing-common.sh`, `build-android-debug.sh`, `build-android-release.sh`, `build-android-play.sh`, `release-github.sh`, `rotate-signing-key.sh`, `print-signing-fingerprint.sh` and `tests/test_release_workflow.py` are the same files in AquaRestore and another project. Everything project-specific (app name, package name, key defaults, build directories, permissions forbidden in the Play build, release notes, `core/` checks) is in `scripts/release-settings.sh`. Change a shared file in both repositories, and check with (`OTHER` is the other project's checkout):
 
 ```bash
 for f in _signing-common.sh build-android-debug.sh build-android-release.sh build-android-play.sh \
-         release-github.sh rotate-signing-key.sh tests/test_release_workflow.py; do
-  diff -q ~/git/AquaRestore/scripts/$f ~/git/password-vault/scripts/$f
+         release-github.sh rotate-signing-key.sh print-signing-fingerprint.sh tests/test_release_workflow.py; do
+  diff -q scripts/$f "$OTHER/scripts/$f"
 done
 ```
 
-## 腳本驗證
+## Script checks
 
 ```bash
 bash -n scripts/*.sh
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-工作流程測試在隔離的臨時 Git 儲存庫執行，模擬 `gh` 與 push，驗證版本遞增、tag 對應提交、資產上傳順序、dirty tree／既有 tag 攔截、dry-run，以及失敗不公開半成品。測試不會存取真實 GitHub。
+The workflow tests run in an isolated temporary Git repository with mocked `gh` and push, and check version increments, tags pointing at the right commit, asset upload order, blocking on a dirty tree or an existing tag, dry-run, and that failures never publish a partial release. The tests never touch the real GitHub.
