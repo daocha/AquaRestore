@@ -6,7 +6,7 @@ The regular `release` APK install quietly checks the latest public GitHub Releas
 
 For Google Play, `:app:bundlePlayRelease` builds the Play AAB. That build uses Google Play in-app updates and has neither the `REQUEST_INSTALL_PACKAGES` permission nor the GitHub APK install flow. Release it with signing compatible with existing installs and an increasing `versionCode`. If a regular `release` build is installed through Google Play, the app also uses Play updates, based on its install source. Test the update flow on a Play testing track first; whether a Play update is available is up to the Play services.
 
-The Android build and release scripts are shared with PassVault (see "Keeping the scripts in sync with PassVault" at the end); there are no iOS steps. Releasing does not require uploading the JKS to GitHub.
+The Android build and release scripts are shared with another project (see "Shared scripts" at the end); there are no iOS steps. Releasing does not require uploading the JKS to GitHub.
 
 ## 1. Set up another computer
 
@@ -212,14 +212,14 @@ The Play build is `playRelease`: the same `com.aquarestore.app` as the GitHub bu
 
 For every release, run `release-github.sh --play` and upload the AAB and mapping file to Play, so both use the same `versionCode`; Play never offers an update lower than the version on the device. The lineage made by `scripts/rotate-signing-key.sh` is attached only to the GitHub APK, not the Play build: devices that still have a build signed with the old debug key must update once through the GitHub build first.
 
-## Keeping the scripts in sync with PassVault
+## Shared scripts
 
-`_signing-common.sh`, `build-android-debug.sh`, `build-android-release.sh`, `build-android-play.sh`, `release-github.sh`, `rotate-signing-key.sh`, `print-signing-fingerprint.sh` and `tests/test_release_workflow.py` are the same files in AquaRestore and PassVault. Everything project-specific (app name, package name, key defaults, build directories, permissions forbidden in the Play build, release notes, `core/` checks) is in `scripts/release-settings.sh`. Change a shared file in both repositories, and check with:
+`_signing-common.sh`, `build-android-debug.sh`, `build-android-release.sh`, `build-android-play.sh`, `release-github.sh`, `rotate-signing-key.sh`, `print-signing-fingerprint.sh` and `tests/test_release_workflow.py` are the same files in AquaRestore and another project. Everything project-specific (app name, package name, key defaults, build directories, permissions forbidden in the Play build, release notes, `core/` checks) is in `scripts/release-settings.sh`. Change a shared file in both repositories, and check with (`OTHER` is the other project's checkout):
 
 ```bash
 for f in _signing-common.sh build-android-debug.sh build-android-release.sh build-android-play.sh \
          release-github.sh rotate-signing-key.sh print-signing-fingerprint.sh tests/test_release_workflow.py; do
-  diff -q ~/git/AquaRestore/scripts/$f ~/git/password-vault/scripts/$f
+  diff -q scripts/$f "$OTHER/scripts/$f"
 done
 ```
 
