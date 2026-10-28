@@ -39,6 +39,43 @@ object DevTools {
     private fun installed(context: Context) = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
     fun enabled(context: Context) = runCatching { prefs(context).getLong(KEY, -1L) == installed(context) }.getOrDefault(false)
     fun enable(context: Context) = prefs(context).edit().putLong(KEY, installed(context)).apply()
+    fun disable(context: Context) = prefs(context).edit().remove(KEY).apply()
+
+    /** Where saved logs and analysis frames go, in separate folders, so they can be copied off the phone. */
+    const val FOLDER = "AquaRestore-analysis"
+
+    /**
+     * Writes a file to Download/[FOLDER]/[subfolder], replacing one this app saved there under the same name,
+     * and returns its path as the Files app shows it.
+     */
+    fun saveDownload(context: Context, subfolder: String, name: String, mime: String, write: (java.io.OutputStream) -> Unit): String {
+        val resolver = context.contentResolver
+        val folder = "${android.os.Environment.DIRECTORY_DOWNLOADS}/$FOLDER/$subfolder/"
+        val collection = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        runCatching {
+            resolver.delete(collection, "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? AND " +
+                "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?", arrayOf(name, folder))
+        }
+        val uri = resolver.insert(collection, android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, folder)
+        }) ?: error("no Downloads entry for $name")
+        resolver.openOutputStream(uri)?.use(write) ?: error("cannot write $uri")
+        return folder + name
+    }
+
+    /** Saves the whole log since it was last cleared (no share limit) to Download/[FOLDER]/logs, or null on failure. */
+    suspend fun saveLog(context: Context, log: String? = null): String? = withContext(Dispatchers.IO) {
+        val text = log ?: log()
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        runCatching {
+            saveDownload(context, "logs", "AquaRestore-log-$stamp.txt", "text/plain") { it.write((header() + text).toByteArray()) }
+        }.onFailure { android.util.Log.w("AquaRestore", "Log not saved", it) }.getOrNull()
+    }
+
+    private fun header() = "AquaRestore ${BuildConfig.VERSION_NAME} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · " +
+        "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n"
 
     /** When the log was last cleared, in epoch milliseconds; lines before it are left out. */
     private var clearedAt = 0L
@@ -57,13 +94,17 @@ object DevTools {
     }
 
     /** The end of [log], short enough to share or copy. */
-    fun shareable(log: String): String {
-        val header = "AquaRestore ${BuildConfig.VERSION_NAME} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · " +
-            "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n"
-        return header + log.takeLast(SHARE_LIMIT)
-    }
+    fun shareable(log: String): String = header() + log.takeLast(SHARE_LIMIT)
 }
 
+/** Saves the log and says where it went. */
+suspend fun saveLogToast(context: Context, s: Strings, log: String? = null) {
+    val path = DevTools.saveLog(context, log)
+    android.widget.Toast.makeText(context, if (path != null) s.text("Saved to $path", "已儲存至 $path")
+        else s.text("Could not save the log", "無法儲存日誌"), android.widget.Toast.LENGTH_LONG).show()
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DevLogPanel(s: Strings, dismiss: () -> Unit) {
     val context = LocalContext.current
@@ -92,7 +133,7 @@ fun DevLogPanel(s: Strings, dismiss: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { scope.launch { refresh() } }) { Text(s.text("Refresh", "重新整理")) }
                     TextButton(onClick = { DevTools.clear(); scope.launch { refresh() } }) { Text(s.text("Clear", "清除")) }
                     TextButton(onClick = { log?.let { scope.launch { clipboard.setClipEntry(ClipEntry(android.content.ClipData.newPlainText("AquaRestore log", DevTools.shareable(it)))) } } }, enabled = log != null) {
@@ -104,7 +145,9 @@ fun DevLogPanel(s: Strings, dismiss: () -> Unit) {
                             .putExtra(Intent.EXTRA_SUBJECT, "AquaRestore log")
                             .putExtra(Intent.EXTRA_TEXT, DevTools.shareable(text)), null))
                     }, enabled = log != null) { Text(s.text("Share", "分享")) }
-                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { log?.let { scope.launch { saveLogToast(context, s, it) } } }, enabled = log != null) {
+                        Text(s.text("Save", "儲存"))
+                    }
                     TextButton(onClick = dismiss) { Text(s.text("Close", "關閉")) }
                 }
             }

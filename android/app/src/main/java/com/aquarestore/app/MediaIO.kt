@@ -132,28 +132,112 @@ object MediaIO {
         if (pixels * 2 > heapFree || pixels * 4 > (device.availMem - device.threshold) / 2) throw MediaProblem("memory")
     }
 
+    /** The video times the analysis samples, as fractions of the clip. */
+    private val analysisTimes = listOf(0.05, 0.23, 0.41, 0.59, 0.77, 0.95)
+
+    /** Calls [each] with each sampled video analysis frame and its requested time; the bitmap is recycled afterwards. */
+    private suspend fun videoFrames(context: Context, source: SourceMedia, each: (Long, Bitmap) -> Unit) = coroutineScope {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, source.uri)
+            if (BuildConfig.DEBUG) {
+                fun meta(key: Int) = retriever.extractMetadata(key)
+                android.util.Log.i("AquaRestore", "Analysis source: ${source.name} " +
+                    "${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)}x${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)} " +
+                    "rotation=${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)} " +
+                    "standard=${meta(MediaMetadataRetriever.METADATA_KEY_COLOR_STANDARD)} " +
+                    "transfer=${meta(MediaMetadataRetriever.METADATA_KEY_COLOR_TRANSFER)} " +
+                    "range=${meta(MediaMetadataRetriever.METADATA_KEY_COLOR_RANGE)} " +
+                    "durationMs=${source.durationMs} hdr=${source.isHdr} keepsHdr=${source.keepsHdr} toneMapped=${source.toneMapped}")
+            }
+            for (fraction in analysisTimes) {
+                ensureActive()
+                val timeUs = (source.durationMs * 1000 * fraction).toLong()
+                val frame = retriever.getScaledFrameAtTime(timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 192, 192) ?: continue
+                try { each(timeUs, frame) } finally { frame.recycle() }
+            }
+        } finally { retriever.release() }
+    }
+
     suspend fun analyze(context: Context, source: SourceMedia): Analysis = withContext(Dispatchers.IO) {
         val frames = mutableListOf<IntArray>()
+        val described = mutableListOf<String>()
         if (source.video) {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(context, source.uri)
-                for (fraction in listOf(0.05, 0.23, 0.41, 0.59, 0.77, 0.95)) {
-                    ensureActive()
-                    val frame = retriever.getScaledFrameAtTime((source.durationMs * 1000 * fraction).toLong(),
-                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 192, 192) ?: continue
-                    frames += pixels(frame)
-                    frame.recycle()
-                }
-            } finally { retriever.release() }
+            videoFrames(context, source) { timeUs, frame ->
+                frames += pixels(frame)
+                if (BuildConfig.DEBUG) described += "at ${timeUs / 1000}ms " + describe(frame, frames.last())
+            }
         } else {
             val frame = bitmap(context, source.uri, 192)
             frames += pixels(frame)
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i("AquaRestore", "Analysis source: ${source.name} ${source.width}x${source.height} photo")
+                described += describe(frame, frames.last())
+            }
             frame.recycle()
         }
         if (frames.isEmpty()) throw MediaProblem("analysisFailed")
-        AutoGrade.analyze(frames, hdr = source.keepsHdr)
+        AutoGrade.analyze(frames, hdr = source.keepsHdr).also { analysis ->
+            if (BuildConfig.DEBUG) {
+                // One line per frame keeps each under logcat's line limit.
+                described.forEachIndexed { i, line ->
+                    android.util.Log.i("AquaRestore", "Analysis frame ${i + 1}/${frames.size} $line")
+                    android.util.Log.i("AquaRestore", "Analysis frame ${i + 1} alone: " +
+                        describe(AutoGrade.analyze(listOf(frames[i]), hdr = source.keepsHdr).grade))
+                }
+                android.util.Log.i("AquaRestore", "Analysis grade: ${describe(analysis.grade)}")
+                android.util.Log.i("AquaRestore", "Analysis applied: ${describe(analysis.grade.effective())}")
+                android.util.Log.i("AquaRestore", "Analysis cast=${analysis.cast} confidence=${analysis.confidence} redLoss=${analysis.redLoss}")
+            }
+        }
     }
+
+    /**
+     * Saves a video's analysis frames, exactly as analyzed, to Download/AquaRestore-analysis/frames as
+     * NN-frame-i.png (for a clip named NN-original.mp4), replacing earlier ones, so a sample's frames can be
+     * taken from the phone. Returns how many were saved.
+     */
+    suspend fun saveAnalysisFrames(context: Context, source: SourceMedia): Int = withContext(Dispatchers.IO) {
+        val stem = source.name.substringBeforeLast('.').removeSuffix("-original")
+        var index = 0
+        var saved = 0
+        videoFrames(context, source) { _, frame ->
+            index++
+            val path = runCatching {
+                DevTools.saveDownload(context, "frames", "$stem-frame-$index.png", "image/png") {
+                    check(frame.compress(Bitmap.CompressFormat.PNG, 100, it))
+                }
+            }.onFailure { android.util.Log.w("AquaRestore", "Analysis frame not saved", it) }.getOrNull()
+            if (path != null) { saved++; android.util.Log.i("AquaRestore", "Analysis frame saved: $path") }
+        }
+        saved
+    }
+
+    /** An analysis frame for the debug log: size, format and an 8×8 grid of mean colors, to compare with desktop decodes. */
+    private fun describe(frame: Bitmap, pixels: IntArray): String {
+        val cells = 8
+        val sums = LongArray(cells * cells * 4)
+        for (y in 0 until frame.height) for (x in 0 until frame.width) {
+            val p = pixels[y * frame.width + x]
+            val c = ((y * cells / frame.height) * cells + x * cells / frame.width) * 4
+            sums[c] += (p ushr 16 and 255).toLong(); sums[c + 1] += (p ushr 8 and 255).toLong()
+            sums[c + 2] += (p and 255).toLong(); sums[c + 3]++
+        }
+        val grid = (0 until cells * cells).joinToString("") { i ->
+            val n = max(1L, sums[i * 4 + 3])
+            String.format(java.util.Locale.ROOT, "%02x%02x%02x", sums[i * 4] / n, sums[i * 4 + 1] / n, sums[i * 4 + 2] / n)
+        }
+        return "${frame.width}x${frame.height} config=${frame.config} colorSpace=${frame.colorSpace?.name} grid=$grid"
+    }
+
+    private fun describe(grade: Grade) = String.format(java.util.Locale.ROOT,
+        "strength=%.4f red=%.4f temperature=%.4f tint=%.4f exposure=%.4f haze=%.4f contrast=%.4f saturation=%.4f " +
+            "shadows=%.4f levels=%.4f blackR=%.4f blackG=%.4f blackB=%.4f whiteR=%.4f whiteG=%.4f whiteB=%.4f " +
+            "coolProtection=%.4f clarity=%.4f",
+        grade.strength, grade.red, grade.temperature, grade.tint, grade.exposure, grade.haze, grade.contrast,
+        grade.saturation, grade.shadows, grade.levels, grade.blackR, grade.blackG, grade.blackB,
+        grade.whiteR, grade.whiteG, grade.whiteB, grade.coolProtection, grade.clarity)
 
     /**
      * The frame rate from the spacing of the first frames. Android's declared rate is counted over the edited
