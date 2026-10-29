@@ -34,7 +34,6 @@ object Exports {
         catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
     }
     fun photoSizeKey(png: Boolean) = if (png) "photo:png" else "photo:jpeg"
-    fun videoSizeKey(mime: String) = "video:$mime"
     private fun sizeHistory(context: Context, key: String) = context.getSharedPreferences("preferences", 0)
         .getString("sizeHistory:$key", null)?.split(',')?.mapNotNull(String::toDoubleOrNull).orEmpty()
     /** The learned factor for estimates of [key] on this device (see [SizeCalibration]). */
@@ -147,8 +146,6 @@ class ExportService : Service() {
                     source.audioBitrate, source.durationMs, o, request.audio.changesAudio)
                 MediaIO.transform(this, source, temp, effects, plan.bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
                     audio = request.audio) { update(it?.let { p -> p * 90 / 100 }) }
-                if (plan.estimatedBytes != null && o.trimmedMs(source.durationMs) / o.speed >= SizeCalibration.MIN_VIDEO_LENGTH_MS)
-                    Exports.recordSize(this, Exports.videoSizeKey(mime), plan.estimatedBytes, temp.length())
             } else {
                 withContext(Dispatchers.Default) {
                     // The memory check is an estimate; running out anyway still reports it instead of crashing.

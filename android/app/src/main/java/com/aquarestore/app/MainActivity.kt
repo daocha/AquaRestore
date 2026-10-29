@@ -1428,18 +1428,13 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
             if (source.video) {
                 val plan = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
                     source.audioBitrate, source.durationMs, options, audio.changesAudio)
-                val context = LocalContext.current
-                val mime = exportVideoMime(source, options)
-                val correction = remember(mime) { Exports.sizeCorrection(context, Exports.videoSizeKey(mime)) }
-                val size = plan.estimatedBytes?.let { (it * correction).toLong() }?.let { bytes ->
+                val size = plan.estimatedBytes?.let { bytes ->
                     if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
                     else "%.1f MB".format(bytes / 1_000_000.0)
                 } ?: s.text("Unavailable", "無法估算")
                 Text(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size,
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(if (correction != 1.0) s.text("Based on target bitrate, audio and duration, corrected by this phone's earlier exports. Actual size varies with scene detail; this is not a size limit.",
-                        "依目標位元率、音訊與時長估算，並按此手機先前的匯出結果校正；實際大小受畫面複雜度影響，不是檔案大小上限。")
-                    else s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
+                Text(s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
                         "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), fontSize = 11.sp)
             } else {
                 val context = LocalContext.current

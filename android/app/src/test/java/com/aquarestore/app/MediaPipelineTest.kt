@@ -63,10 +63,10 @@ class MediaPipelineTest {
     }
 
     @Test fun sizeCalibrationLearnsASteadyMarginButNotMissesThatGoBothWays() {
-        // Two 4K exports landed 26% and 27% above their estimates; two photos 8% below and 38% above.
-        val video = SizeCalibration.record(SizeCalibration.record(emptyList(), 63_500_000, 79_830_000), 57_200_000, 72_850_000)
-        assertEquals(1.0, SizeCalibration.correction(video.take(1)), 0.0)
-        assertEquals(1.265, SizeCalibration.correction(video), 0.005)
+        // Two exports landed 26% and 27% above their estimates; two others 8% below and 38% above.
+        val steady = SizeCalibration.record(SizeCalibration.record(emptyList(), 63_500_000, 79_830_000), 57_200_000, 72_850_000)
+        assertEquals(1.0, SizeCalibration.correction(steady.take(1)), 0.0)
+        assertEquals(1.265, SizeCalibration.correction(steady), 0.005)
         val photo = SizeCalibration.record(SizeCalibration.record(emptyList(), 4_200_000, 3_870_000), 4_100_000, 5_640_000)
         assertEquals(1.0, SizeCalibration.correction(photo), 0.0)
         assertEquals(8, (1..12).fold(emptyList<Double>()) { history, _ -> SizeCalibration.record(history, 1, 1) }.size)

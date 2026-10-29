@@ -112,12 +112,11 @@ fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
 
 /**
  * Learns how far exports land from their estimates on this device. Each export's actual size against its uncorrected
- * estimate is kept as a log ratio. A correction applies only when the ratios agree, so a steady margin (an encoder that
- * overshoots its bitrate) is learned, while one-off misses, which go either way, are not.
+ * estimate is kept as a log ratio. A correction applies only when the ratios agree, so a steady margin is learned,
+ * while one-off misses, which go either way, are not. Photos only: a video's margin depends on the clip as much as on
+ * the device, so a margin learned from earlier clips does not carry over.
  */
 object SizeCalibration {
-    /** Clips shorter than this are mostly container overhead and encoder ramp-up, so they are not recorded. */
-    const val MIN_VIDEO_LENGTH_MS = 3_000L
     private const val HISTORY = 8
 
     fun record(history: List<Double>, estimatedBytes: Long, actualBytes: Long): List<Double> =
