@@ -35,6 +35,9 @@ object Exports {
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
 
+fun exportVideoMime(source: SourceMedia, options: ExportOptions): String =
+    if (options.original) source.mime else if (source.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
+
 class ExportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
@@ -128,10 +131,10 @@ class ExportService : Service() {
                 val fpsLimit = if (!o.original && o.fps > 0) min(o.fps.toFloat(), source.fps) else source.fps
                 if (fpsLimit < source.fps * o.speed) effects += FrameRateCap(fpsLimit)
                 effects += UnderwaterEffect(GradeState(request.grade))
-                val mime = if (o.original) source.mime else if (source.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
-                val bitrate = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
-                    source.audioBitrate, source.durationMs, o, request.audio.changesAudio).bitrate
-                MediaIO.transform(this, source, temp, effects, bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
+                val mime = exportVideoMime(source, o)
+                val plan = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
+                    source.audioBitrate, source.durationMs, o, request.audio.changesAudio)
+                MediaIO.transform(this, source, temp, effects, plan.bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
                     audio = request.audio) { update(it?.let { p -> p * 90 / 100 }) }
             } else {
                 withContext(Dispatchers.Default) {
@@ -157,6 +160,8 @@ class ExportService : Service() {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, exportFileName(source.name, extension))
                     put(MediaStore.MediaColumns.MIME_TYPE, mime)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, if (source.video) "Movies/AquaRestore" else "Pictures/AquaRestore")
+                    // A restoration is a new picture: file it under when it was made, not when the source was taken.
+                    put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis())
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
                 val uri = contentResolver.insert(collection, values) ?: error("Cannot create destination")

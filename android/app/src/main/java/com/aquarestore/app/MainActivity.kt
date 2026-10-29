@@ -83,7 +83,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlin.math.min
@@ -100,6 +104,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CacheCleanup.onProcessStart(this)
         enableEdgeToEdge()
         setContent { AquaApp() }
     }
@@ -408,7 +413,7 @@ private fun Editor(model: EditorModel, s: Strings) {
             "調色、剪輯與音樂設定將不會保留，原始檔案不受影響。")) },
         confirmButton = { TextButton(onClick = { confirmClose = false; model.closeMedia() }) { Text(s.text("Discard", "放棄")) } },
         dismissButton = { TextButton(onClick = { confirmClose = false }) { Text(s.text("Keep editing", "繼續編輯")) } })
-    if (showExport && source != null) ExportDialog(source!!, s, speed, trim, model.audioMix(),
+    if (showExport && source != null) ExportDialog(source!!, grade, s, speed, trim, model.audioMix(),
         if (source!!.video) videoExportSelection else photoExportSelection,
         onSelectionChange = { model.setExportSelection(source!!.video, it) },
         onResetCustom = { model.resetCustomExport(source!!.video) }, onDismiss = { showExport = false }) { options ->
@@ -1284,8 +1289,47 @@ private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -
     }
 }
 
+/** A photo export's size measured from graded samples, null while measuring; [failed] when it cannot be sampled. */
+private data class PhotoSizeMeasurement(val bytes: Long?, val failed: Boolean)
+
 @Composable
-private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
+private fun measurePhotoSize(source: SourceMedia, grade: Grade, options: ExportOptions, dimensions: Pair<Int, Int>): PhotoSizeMeasurement {
+    val context = LocalContext.current
+    // Patches are graded once per output size; quality and format changes only encode them again.
+    // An empty list means the photo could not be sampled.
+    val samples by produceState<List<Bitmap>?>(null, source.uri, grade, dimensions) {
+        value = null
+        value = try {
+            withContext(Dispatchers.Default) {
+                MediaIO.sizeSamples(context, source.uri, dimensions.first, dimensions.second, grade)
+            }
+        } catch (e: Exception) { if (e is CancellationException) throw e; emptyList() }
+    }
+    // JPEG is measured once at every quality on the curve, so moving the slider only reads it off.
+    val curve by produceState<DoubleArray?>(null, samples) {
+        value = null
+        val tiles = samples?.takeIf { it.isNotEmpty() } ?: return@produceState
+        value = withContext(Dispatchers.Default) {
+            DoubleArray(SIZE_CURVE_QUALITIES.size).also { values ->
+                SIZE_CURVE_QUALITIES.forEachIndexed { i, quality ->
+                    ensureActive()
+                    values[i] = MediaIO.sampleBytesPerPixel(tiles, false, quality)
+                }
+            }
+        }
+    }
+    val pngBytesPerPixel by produceState<Double?>(null, samples, options.png) {
+        value = null
+        val tiles = samples?.takeIf { it.isNotEmpty() && options.png } ?: return@produceState
+        value = withContext(Dispatchers.Default) { MediaIO.sampleBytesPerPixel(tiles, true, 100) }
+    }
+    val bytesPerPixel = if (options.png) pngBytesPerPixel else curve?.let { interpolateBytesPerPixel(it, options.quality) }
+    return PhotoSizeMeasurement(bytesPerPixel?.let { (dimensions.first.toLong() * dimensions.second * it).roundToLong() },
+        samples?.isEmpty() == true)
+}
+
+@Composable
+private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
     selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
     onDismiss: () -> Unit, export: (ExportOptions) -> Unit) {
     // Only a real cut is passed on, so an untrimmed export keeps the source's exact end.
@@ -1306,6 +1350,7 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
     }.copy(speed = speed, startMs = startMs, endMs = endMs)
     val dimensions = if (options.original) source.width to source.height
         else ExportSizing.dimensions(source.width, source.height, options.longEdge, source.video)
+    val photoSize = if (source.video) null else measurePhotoSize(source, grade, options, dimensions)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(s.text("Export your restoration", "匯出還原作品")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Choices(listOf(ExportMode.RECOMMENDED to s.text("Recommended", "建議"),
@@ -1390,16 +1435,21 @@ private fun ExportDialog(source: SourceMedia, s: Strings, speed: Float, trim: Lo
                 Text(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size,
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                 Text(s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
-                    "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), fontSize = 11.sp)
+                        "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), fontSize = 11.sp)
             } else {
-                val bytes = photoEstimatedBytes(source.width, source.height, options)
-                val size = if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
-                    else if (bytes >= 1_000_000L) "%.1f MB".format(bytes / 1_000_000.0)
-                    else "%.0f KB".format(bytes / 1_000.0)
-                Text(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size,
+                val measured = photoSize!!
+                val bytes = measured.bytes
+                    ?: if (measured.failed) photoEstimatedBytes(source.width, source.height, options) else null
+                val size = if (bytes == null) s.text("measuring…", "測量中…")
+                    else if (bytes >= 1_000_000_000L) "≈ %.2f GB".format(bytes / 1_000_000_000.0)
+                    else if (bytes >= 1_000_000L) "≈ %.1f MB".format(bytes / 1_000_000.0)
+                    else "≈ %.0f KB".format(bytes / 1_000.0)
+                Text(s.text("Estimated file size", "預估檔案大小") + " · " + size,
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(s.text("Based on resolution, format and quality. Actual size varies with image detail.",
-                    "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
+                Text(if (!measured.failed) s.text("Measured by encoding samples of this photo with these settings. Actual size may differ slightly.",
+                        "以所選設定編碼此照片的取樣測得；實際大小可能略有差異。")
+                    else s.text("Based on resolution, format and quality. Actual size varies with image detail.",
+                        "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
             }
             Text(s.text("Saved to Gallery / AquaRestore. The original file is never overwritten.", "儲存至相簿／AquaRestore，不覆蓋原始檔案。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

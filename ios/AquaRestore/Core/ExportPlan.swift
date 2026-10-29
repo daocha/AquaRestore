@@ -62,8 +62,11 @@ struct VideoExportPlan: Equatable { let bitrate: Int; let estimatedBytes: Int64?
 /// A rough encoded size from output pixels, format and JPEG quality. Image detail changes compression substantially.
 func photoEstimatedBytes(width: Int, height: Int, options: ExportOptions) -> Int64 {
     let (w, h) = ExportSizing.dimensions(width, height, options.original ? 0 : options.longEdge)
-    let quality = Double(min(max(options.quality, 1), 100)) / 100
-    let bytesPerPixel = options.png ? 2.5 : 0.08 + 0.5 * quality * quality
+    // The encoder scales its quantization tables by this percentage, and size follows the scale, not the
+    // quality number: it rises steeply only near 100. Fitted to measured exports of graded photos.
+    let quality = min(max(options.quality, 1), 100)
+    let scale = quality < 50 ? 5000 / Double(quality) : 200 - 2 * Double(quality)
+    let bytesPerPixel = options.png ? 2.5 : 1.82 * pow(scale + 5, -0.68)
     return max(1, Int64((Double(w) * Double(h) * bytesPerPixel).rounded()))
 }
 

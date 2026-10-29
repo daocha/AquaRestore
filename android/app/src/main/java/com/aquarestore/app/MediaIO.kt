@@ -3,6 +3,10 @@ package com.aquarestore.app
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
+import android.os.Build
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.media.MediaExtractor
@@ -13,7 +17,12 @@ import android.provider.OpenableColumns
 import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Format
+import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
+import androidx.media3.container.Mp4TimestampData
+import androidx.media3.muxer.BufferInfo
+import androidx.media3.muxer.Muxer
 import androidx.media3.common.util.Clock
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
@@ -23,7 +32,9 @@ import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.*
 import kotlinx.coroutines.*
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.ceil
@@ -271,7 +282,8 @@ object MediaIO {
         bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
 
-    suspend fun gradeBitmap(bitmap: Bitmap, grade: Grade, progress: (Int) -> Unit = {}): Bitmap {
+    suspend fun gradeBitmap(bitmap: Bitmap, grade: Grade, radius: Int = Clarity.radius(bitmap.width, bitmap.height),
+        progress: (Int) -> Unit = {}): Bitmap {
         val row = IntArray(bitmap.width)
         val effective = grade.effective()
         val exposureGain = 2f.pow(effective.exposure)
@@ -282,7 +294,6 @@ object MediaIO {
                 Clarity.luma(row, it, y * bitmap.width)
             }
         } else null
-        val radius = Clarity.radius(bitmap.width, bitmap.height)
         for (y in 0 until bitmap.height) {
             currentCoroutineContext().ensureActive()
             bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
@@ -292,6 +303,48 @@ object MediaIO {
             if (y % 32 == 0) progress((y + 1) * 100 / bitmap.height)
         }
         return bitmap
+    }
+
+    /**
+     * Graded patches from a 3×3 grid across a photo, at the export's output scale. Encoding them measures how
+     * this photo compresses, which depends on its detail far more than on its resolution.
+     */
+    suspend fun sizeSamples(context: Context, uri: Uri, outWidth: Int, outHeight: Int, grade: Grade): List<Bitmap> {
+        val decoder = context.contentResolver.openInputStream(uri)!!.use {
+            if (Build.VERSION.SDK_INT >= 31) BitmapRegionDecoder.newInstance(it) else @Suppress("DEPRECATION") BitmapRegionDecoder.newInstance(it, false)
+        }!!
+        try {
+            // The region decoder ignores EXIF orientation, so the grid is laid out on the stored pixels, which a portrait
+            // photo may hold turned a quarter. A turned patch compresses the same, so the patches are not turned back.
+            val width = decoder.width
+            val height = decoder.height
+            val scale = maxOf(outWidth, outHeight).toDouble() / maxOf(width, height)
+            val edge = minOf(320.0 / scale, width / 3.0, height / 3.0).toInt().coerceAtLeast(1)
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = Integer.highestOneBit((1 / scale).toInt().coerceAtLeast(1))
+                inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                inMutable = true
+            }
+            val tile = (edge * scale).roundToInt().coerceAtLeast(1)
+            return (0 until 9).map { i ->
+                currentCoroutineContext().ensureActive()
+                val left = ((i % 3 + 0.5) * width / 3 - edge / 2.0).toInt()
+                val top = ((i / 3 + 0.5) * height / 3 - edge / 2.0).toInt()
+                val region = decoder.decodeRegion(Rect(left, top, left + edge, top + edge), options)
+                val scaled = if (region.width == tile && region.height == tile) region
+                    else Bitmap.createScaledBitmap(region, tile, tile, true).also { if (it !== region) region.recycle() }
+                val sample = if (scaled.isMutable) scaled else scaled.copy(Bitmap.Config.ARGB_8888, true).also { scaled.recycle() }
+                gradeBitmap(sample, grade, Clarity.radius(outWidth, outHeight))
+            }
+        } finally { decoder.recycle() }
+    }
+
+    /** Bytes per pixel of [samples] encoded as the export encodes, without each file's fixed headers. */
+    fun sampleBytesPerPixel(samples: List<Bitmap>, png: Boolean, quality: Int): Double {
+        val format = if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+        fun size(bitmap: Bitmap) = ByteArrayOutputStream().also { bitmap.compress(format, quality, it) }.size()
+        val header = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).let { size(it).also { _ -> it.recycle() } }
+        return samples.sumOf { max(0, size(it) - header).toLong() }.toDouble() / samples.sumOf { it.width.toLong() * it.height }
     }
 
     private fun hdrEncoderAvailable(source: SourceMedia, mime: String): Boolean {
@@ -400,7 +453,7 @@ object MediaIO {
                         .setEnableFallback(!strict)
                         .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
                         .build()
-                    val active = Transformer.Builder(context).setEncoderFactory(encoder)
+                    val active = Transformer.Builder(context).setEncoderFactory(encoder).setMuxerFactory(ExportTimeMuxerFactory())
                         .apply { if (source.softwareDecoding) setAssetLoaderFactory(softwareVideoDecoding(context)) }
                         .setVideoMimeType(mime)
                         .addListener(object : Transformer.Listener {
@@ -461,4 +514,24 @@ object MediaIO {
             } finally { poll.cancel() }
         }
     }
+}
+
+/**
+ * Writes the export time as the video's creation time. Transformer copies the source's, so galleries would file a
+ * restored video under the day the original was recorded.
+ */
+private class ExportTimeMuxerFactory(private val inner: Muxer.Factory = DefaultMuxer.Factory()) : Muxer.Factory {
+    override fun create(path: String): Muxer {
+        val muxer = inner.create(path)
+        val now = Mp4TimestampData.unixTimeToMp4TimeSeconds(System.currentTimeMillis())
+        muxer.addMetadataEntry(Mp4TimestampData(now, now))
+        return object : Muxer {
+            override fun addTrack(format: Format) = muxer.addTrack(format)
+            override fun writeSampleData(trackId: Int, data: ByteBuffer, bufferInfo: BufferInfo) = muxer.writeSampleData(trackId, data, bufferInfo)
+            override fun addMetadataEntry(entry: Metadata.Entry) { if (entry !is Mp4TimestampData) muxer.addMetadataEntry(entry) }
+            override fun close() = muxer.close()
+        }
+    }
+    override fun getSupportedSampleMimeTypes(trackType: Int) = inner.getSupportedSampleMimeTypes(trackType)
+    override fun supportsWritingNegativeTimestampsInEditList() = inner.supportsWritingNegativeTimestampsInEditList()
 }

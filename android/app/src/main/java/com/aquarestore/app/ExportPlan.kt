@@ -84,12 +84,28 @@ object ExportSizing {
 /** Shared by the export pipeline and its size preview. Decimal MB/GB match the UI. */
 data class VideoExportPlan(val bitrate: Int, val estimatedBytes: Long?)
 
+/** The JPEG qualities a photo's samples are measured at. Size changes fastest near 100, so they are densest there. */
+val SIZE_CURVE_QUALITIES = intArrayOf(10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 88, 90, 92, 94, 95, 96, 97, 98, 99, 100)
+
+/** Bytes per pixel at [quality] from [measured] values at [SIZE_CURVE_QUALITIES], interpolated in log space. */
+fun interpolateBytesPerPixel(measured: DoubleArray, quality: Int): Double {
+    val q = quality.coerceIn(SIZE_CURVE_QUALITIES.first(), SIZE_CURVE_QUALITIES.last())
+    val upper = SIZE_CURVE_QUALITIES.indexOfFirst { it >= q }
+    if (SIZE_CURVE_QUALITIES[upper] == q) return measured[upper]
+    val (q0, q1) = SIZE_CURVE_QUALITIES[upper - 1] to SIZE_CURVE_QUALITIES[upper]
+    val (b0, b1) = measured[upper - 1].coerceAtLeast(1e-6) to measured[upper].coerceAtLeast(1e-6)
+    return exp(ln(b0) + (ln(b1) - ln(b0)) * (q - q0) / (q1 - q0))
+}
+
 /** A rough encoded size from output pixels, format and JPEG quality. Image detail changes compression substantially. */
 fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
     val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)
     val bytesPerPixel = if (options.png) 2.5 else {
-        val quality = options.quality.coerceIn(1, 100) / 100.0
-        0.08 + 0.5 * quality * quality
+        // The encoder scales its quantization tables by this percentage, and size follows the scale, not the
+        // quality number: it rises steeply only near 100. Fitted to measured exports of graded photos.
+        val quality = options.quality.coerceIn(1, 100)
+        val scale = if (quality < 50) 5000.0 / quality else 200.0 - 2 * quality
+        1.82 * (scale + 5).pow(-0.68)
     }
     return (w.toDouble() * h * bytesPerPixel).roundToLong().coerceAtLeast(1)
 }

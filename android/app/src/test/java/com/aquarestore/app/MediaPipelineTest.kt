@@ -1,5 +1,6 @@
 package com.aquarestore.app
 
+import kotlin.math.abs
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -50,6 +51,24 @@ class MediaPipelineTest {
         assertTrue(photoEstimatedBytes(4032, 3024, small) < photoEstimatedBytes(4032, 3024, full))
         assertTrue(photoEstimatedBytes(4032, 3024, full.copy(quality = 50)) < photoEstimatedBytes(4032, 3024, full))
         assertTrue(photoEstimatedBytes(4032, 3024, full.copy(png = true)) > photoEstimatedBytes(4032, 3024, full))
+    }
+
+    @Test fun photoSizeCurveReturnsMeasuredPointsAndInterpolatesBetweenThem() {
+        // Doubling every ten points of quality: halfway between two points is the geometric mean.
+        val measured = DoubleArray(SIZE_CURVE_QUALITIES.size) { 0.01 * Math.pow(2.0, SIZE_CURVE_QUALITIES[it] / 10.0) }
+        assertEquals(measured[0], interpolateBytesPerPixel(measured, 10), 1e-12)
+        assertEquals(0.01 * Math.pow(2.0, 2.5), interpolateBytesPerPixel(measured, 25), 1e-9)
+        assertEquals(measured.last(), interpolateBytesPerPixel(measured, 100), 1e-12)
+        assertEquals(measured[0], interpolateBytesPerPixel(measured, 5), 1e-12)
+    }
+
+    @Test fun photoSizeEstimateMatchesMeasuredJpegExports() {
+        // A graded 3840x3360 photo exported at full size measured 1.37 MB at 70, 2.64 MB at 90 and 7.88 MB at 100.
+        val full = ExportOptions(quality = 90)
+        listOf(70 to 1_370_000.0, 90 to 2_640_000.0, 100 to 7_880_000.0).forEach { (quality, measured) ->
+            val estimate = photoEstimatedBytes(3840, 3360, full.copy(quality = quality))
+            assertTrue("quality $quality estimated $estimate", abs(estimate / measured - 1) < 0.1)
+        }
     }
 
     @Test fun videoRecommendationNeverExceedsSourceDimensionsFrameRateOrBitrate() {
