@@ -44,6 +44,14 @@ final class MediaPipelineTests: XCTestCase {
         var png = full; png.png = true
         XCTAssertGreaterThan(photoEstimatedBytes(width: 4032, height: 3024, options: png), photoEstimatedBytes(width: 4032, height: 3024, options: full))
     }
+    func testPhotoSizeEstimateMatchesMeasuredJpegExports() {
+        // A graded 3840x3360 photo exported at full size measured 1.37 MB at 70, 2.64 MB at 90 and 7.88 MB at 100.
+        for (quality, measured) in [(70, 1_370_000.0), (90, 2_640_000.0), (100, 7_880_000.0)] {
+            var options = ExportOptions(); options.quality = quality
+            let estimate = Double(photoEstimatedBytes(width: 3840, height: 3360, options: options))
+            XCTAssertLessThan(abs(estimate / measured - 1), 0.1, "quality \(quality) estimated \(estimate)")
+        }
+    }
     func testOriginalUsesSourceRateEvenBelowHeuristicAndMinimum() {
         XCTAssertEqual(8_000_000, ExportSizing.bitrate(3840, 2160, 60, 100, 8_000_000, true))
         XCTAssertEqual(200_000, ExportSizing.bitrate(640, 360, 30, 100, 200_000, true))

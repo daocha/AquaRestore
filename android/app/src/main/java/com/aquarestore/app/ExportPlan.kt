@@ -88,8 +88,11 @@ data class VideoExportPlan(val bitrate: Int, val estimatedBytes: Long?)
 fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
     val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)
     val bytesPerPixel = if (options.png) 2.5 else {
-        val quality = options.quality.coerceIn(1, 100) / 100.0
-        0.08 + 0.5 * quality * quality
+        // The encoder scales its quantization tables by this percentage, and size follows the scale, not the
+        // quality number: it rises steeply only near 100. Fitted to measured exports of graded photos.
+        val quality = options.quality.coerceIn(1, 100)
+        val scale = if (quality < 50) 5000.0 / quality else 200.0 - 2 * quality
+        1.82 * (scale + 5).pow(-0.68)
     }
     return (w.toDouble() * h * bytesPerPixel).roundToLong().coerceAtLeast(1)
 }
