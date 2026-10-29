@@ -3,6 +3,10 @@ package com.aquarestore.app
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
+import android.os.Build
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.media.MediaExtractor
@@ -23,6 +27,7 @@ import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.*
 import kotlinx.coroutines.*
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -271,7 +276,8 @@ object MediaIO {
         bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
 
-    suspend fun gradeBitmap(bitmap: Bitmap, grade: Grade, progress: (Int) -> Unit = {}): Bitmap {
+    suspend fun gradeBitmap(bitmap: Bitmap, grade: Grade, radius: Int = Clarity.radius(bitmap.width, bitmap.height),
+        progress: (Int) -> Unit = {}): Bitmap {
         val row = IntArray(bitmap.width)
         val effective = grade.effective()
         val exposureGain = 2f.pow(effective.exposure)
@@ -282,7 +288,6 @@ object MediaIO {
                 Clarity.luma(row, it, y * bitmap.width)
             }
         } else null
-        val radius = Clarity.radius(bitmap.width, bitmap.height)
         for (y in 0 until bitmap.height) {
             currentCoroutineContext().ensureActive()
             bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
@@ -292,6 +297,44 @@ object MediaIO {
             if (y % 32 == 0) progress((y + 1) * 100 / bitmap.height)
         }
         return bitmap
+    }
+
+    /**
+     * Graded patches from a 3×3 grid across a photo, at the export's output scale. Encoding them measures how
+     * this photo compresses, which depends on its detail far more than on its resolution.
+     */
+    suspend fun sizeSamples(context: Context, uri: Uri, width: Int, height: Int, outWidth: Int, outHeight: Int, grade: Grade): List<Bitmap> {
+        val scale = outWidth.toDouble() / width
+        val edge = minOf(320.0 / scale, width / 3.0, height / 3.0).toInt().coerceAtLeast(1)
+        val decoder = context.contentResolver.openInputStream(uri)!!.use {
+            if (Build.VERSION.SDK_INT >= 31) BitmapRegionDecoder.newInstance(it) else @Suppress("DEPRECATION") BitmapRegionDecoder.newInstance(it, false)
+        }!!
+        try {
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = Integer.highestOneBit((1 / scale).toInt().coerceAtLeast(1))
+                inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                inMutable = true
+            }
+            val tile = (edge * scale).roundToInt().coerceAtLeast(1)
+            return (0 until 9).map { i ->
+                currentCoroutineContext().ensureActive()
+                val left = ((i % 3 + 0.5) * width / 3 - edge / 2.0).toInt()
+                val top = ((i / 3 + 0.5) * height / 3 - edge / 2.0).toInt()
+                val region = decoder.decodeRegion(Rect(left, top, left + edge, top + edge), options)
+                val scaled = if (region.width == tile && region.height == tile) region
+                    else Bitmap.createScaledBitmap(region, tile, tile, true).also { if (it !== region) region.recycle() }
+                val sample = if (scaled.isMutable) scaled else scaled.copy(Bitmap.Config.ARGB_8888, true).also { scaled.recycle() }
+                gradeBitmap(sample, grade, Clarity.radius(outWidth, outHeight))
+            }
+        } finally { decoder.recycle() }
+    }
+
+    /** Bytes per pixel of [samples] encoded as the export encodes, without each file's fixed headers. */
+    fun sampleBytesPerPixel(samples: List<Bitmap>, png: Boolean, quality: Int): Double {
+        val format = if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+        fun size(bitmap: Bitmap) = ByteArrayOutputStream().also { bitmap.compress(format, quality, it) }.size()
+        val header = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).let { size(it).also { _ -> it.recycle() } }
+        return samples.sumOf { max(0, size(it) - header).toLong() }.toDouble() / samples.sumOf { it.width.toLong() * it.height }
     }
 
     private fun hdrEncoderAvailable(source: SourceMedia, mime: String): Boolean {
