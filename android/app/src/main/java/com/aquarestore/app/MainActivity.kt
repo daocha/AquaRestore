@@ -1301,7 +1301,7 @@ private fun measurePhotoSize(source: SourceMedia, grade: Grade, options: ExportO
         value = null
         value = try {
             withContext(Dispatchers.Default) {
-                MediaIO.sizeSamples(context, source.uri, source.width, source.height, dimensions.first, dimensions.second, grade)
+                MediaIO.sizeSamples(context, source.uri, dimensions.first, dimensions.second, grade)
             }
         } catch (e: Exception) { if (e is CancellationException) throw e; emptyList() }
     }

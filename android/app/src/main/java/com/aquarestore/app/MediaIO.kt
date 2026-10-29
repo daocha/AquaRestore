@@ -309,13 +309,17 @@ object MediaIO {
      * Graded patches from a 3×3 grid across a photo, at the export's output scale. Encoding them measures how
      * this photo compresses, which depends on its detail far more than on its resolution.
      */
-    suspend fun sizeSamples(context: Context, uri: Uri, width: Int, height: Int, outWidth: Int, outHeight: Int, grade: Grade): List<Bitmap> {
-        val scale = outWidth.toDouble() / width
-        val edge = minOf(320.0 / scale, width / 3.0, height / 3.0).toInt().coerceAtLeast(1)
+    suspend fun sizeSamples(context: Context, uri: Uri, outWidth: Int, outHeight: Int, grade: Grade): List<Bitmap> {
         val decoder = context.contentResolver.openInputStream(uri)!!.use {
             if (Build.VERSION.SDK_INT >= 31) BitmapRegionDecoder.newInstance(it) else @Suppress("DEPRECATION") BitmapRegionDecoder.newInstance(it, false)
         }!!
         try {
+            // The region decoder ignores EXIF orientation, so the grid is laid out on the stored pixels, which a portrait
+            // photo may hold turned a quarter. A turned patch compresses the same, so the patches are not turned back.
+            val width = decoder.width
+            val height = decoder.height
+            val scale = maxOf(outWidth, outHeight).toDouble() / maxOf(width, height)
+            val edge = minOf(320.0 / scale, width / 3.0, height / 3.0).toInt().coerceAtLeast(1)
             val options = BitmapFactory.Options().apply {
                 inSampleSize = Integer.highestOneBit((1 / scale).toInt().coerceAtLeast(1))
                 inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
