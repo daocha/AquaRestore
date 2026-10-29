@@ -86,6 +86,7 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
@@ -1288,9 +1289,6 @@ private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -
     }
 }
 
-/** Bytes per pixel of a photo's graded samples, encoded with this format and quality. */
-private data class PhotoMeasurement(val png: Boolean, val quality: Int, val bytesPerPixel: Double)
-
 @Composable
 private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
     selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
@@ -1415,20 +1413,27 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
                         }
                     } catch (e: Exception) { if (e is CancellationException) throw e; emptyList() }
                 }
-                // The last measurement stays until the next one is ready, so the estimate does not jump to the formula.
-                val measured by produceState<PhotoMeasurement?>(null, samples, options.png, options.quality) {
+                // JPEG is measured once at every quality on the curve, so moving the slider only reads it off.
+                val curve by produceState<DoubleArray?>(null, samples) {
+                    value = null
                     val tiles = samples?.takeIf { it.isNotEmpty() } ?: return@produceState
-                    delay(150) // The quality slider moves in steps; encode only where it rests.
-                    value = PhotoMeasurement(options.png, options.quality,
-                        withContext(Dispatchers.Default) { MediaIO.sampleBytesPerPixel(tiles, options.png, options.quality) })
+                    value = withContext(Dispatchers.Default) {
+                        DoubleArray(SIZE_CURVE_QUALITIES.size).also { values ->
+                            SIZE_CURVE_QUALITIES.forEachIndexed { i, quality ->
+                                ensureActive()
+                                values[i] = MediaIO.sampleBytesPerPixel(tiles, false, quality)
+                            }
+                        }
+                    }
                 }
-                // Until the new quality is measured, the formula's change from the measured quality carries it over.
-                val last = measured?.takeIf { it.png == options.png }
-                val bytes = if (last != null) (dimensions.first.toLong() * dimensions.second * last.bytesPerPixel *
-                        photoEstimatedBytes(source.width, source.height, options) /
-                        photoEstimatedBytes(source.width, source.height, options.copy(quality = last.quality))).roundToLong()
-                    else if (samples?.isEmpty() == true) photoEstimatedBytes(source.width, source.height, options)
-                    else null
+                val pngBytesPerPixel by produceState<Double?>(null, samples, options.png) {
+                    value = null
+                    val tiles = samples?.takeIf { it.isNotEmpty() && options.png } ?: return@produceState
+                    value = withContext(Dispatchers.Default) { MediaIO.sampleBytesPerPixel(tiles, true, 100) }
+                }
+                val bytesPerPixel = if (options.png) pngBytesPerPixel else curve?.let { interpolateBytesPerPixel(it, options.quality) }
+                val bytes = bytesPerPixel?.let { (dimensions.first.toLong() * dimensions.second * it).roundToLong() }
+                    ?: if (samples?.isEmpty() == true) photoEstimatedBytes(source.width, source.height, options) else null
                 val size = if (bytes == null) s.text("measuring…", "測量中…")
                     else if (bytes >= 1_000_000_000L) "≈ %.2f GB".format(bytes / 1_000_000_000.0)
                     else if (bytes >= 1_000_000L) "≈ %.1f MB".format(bytes / 1_000_000.0)

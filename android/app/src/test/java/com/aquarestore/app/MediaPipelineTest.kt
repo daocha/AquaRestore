@@ -53,6 +53,15 @@ class MediaPipelineTest {
         assertTrue(photoEstimatedBytes(4032, 3024, full.copy(png = true)) > photoEstimatedBytes(4032, 3024, full))
     }
 
+    @Test fun photoSizeCurveReturnsMeasuredPointsAndInterpolatesBetweenThem() {
+        // Doubling every ten points of quality: halfway between two points is the geometric mean.
+        val measured = DoubleArray(SIZE_CURVE_QUALITIES.size) { 0.01 * Math.pow(2.0, SIZE_CURVE_QUALITIES[it] / 10.0) }
+        assertEquals(measured[0], interpolateBytesPerPixel(measured, 10), 1e-12)
+        assertEquals(0.01 * Math.pow(2.0, 2.5), interpolateBytesPerPixel(measured, 25), 1e-9)
+        assertEquals(measured.last(), interpolateBytesPerPixel(measured, 100), 1e-12)
+        assertEquals(measured[0], interpolateBytesPerPixel(measured, 5), 1e-12)
+    }
+
     @Test fun videoSizeCalibrationLearnsTheEncoderMarginAndDampsOutliers() {
         // A 4K export measured 79.83 MB against a 63.5 MB estimate.
         val first = VideoSizeCalibration.update(null, 63_500_000, 79_830_000)
