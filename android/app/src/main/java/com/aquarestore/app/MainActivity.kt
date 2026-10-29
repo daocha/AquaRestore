@@ -416,10 +416,10 @@ private fun Editor(model: EditorModel, s: Strings) {
     if (showExport && source != null) ExportDialog(source!!, grade, s, speed, trim, model.audioMix(),
         if (source!!.video) videoExportSelection else photoExportSelection,
         onSelectionChange = { model.setExportSelection(source!!.video, it) },
-        onResetCustom = { model.resetCustomExport(source!!.video) }, onDismiss = { showExport = false }) { options, estimatedBytes ->
+        onResetCustom = { model.resetCustomExport(source!!.video) }, onDismiss = { showExport = false }) { options ->
         showExport = false
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-        Exports.start(context, ExportRequest(source!!, grade, options.copy(speed = speed), s.chinese, model.audioMix(), estimatedBytes))
+        Exports.start(context, ExportRequest(source!!, grade, options.copy(speed = speed), s.chinese, model.audioMix()))
     }
     if (mediaLibrary) MediaLibrary(s, onDismiss = { mediaLibrary = false }) { uri ->
         mediaLibrary = false
@@ -1331,7 +1331,7 @@ private fun measurePhotoSize(source: SourceMedia, grade: Grade, options: ExportO
 @Composable
 private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
     selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
-    onDismiss: () -> Unit, export: (ExportOptions, Long?) -> Unit) {
+    onDismiss: () -> Unit, export: (ExportOptions) -> Unit) {
     // Only a real cut is passed on, so an untrimmed export keeps the source's exact end.
     val startMs = trim.first
     val endMs = if (trim.last in 1 until source.durationMs) trim.last else 0L
@@ -1437,10 +1437,8 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
                 Text(s.text("Based on target bitrate, audio and duration. Actual size varies with the encoder and scene detail; this is not a size limit.",
                         "依目標位元率、音訊與時長估算；實際大小受編碼器及畫面複雜度影響，不是檔案大小上限。"), fontSize = 11.sp)
             } else {
-                val context = LocalContext.current
-                val correction = remember(options.png) { Exports.sizeCorrection(context, Exports.photoSizeKey(options.png)) }
                 val measured = photoSize!!
-                val bytes = measured.bytes?.let { (it * correction).roundToLong() }
+                val bytes = measured.bytes
                     ?: if (measured.failed) photoEstimatedBytes(source.width, source.height, options) else null
                 val size = if (bytes == null) s.text("measuring…", "測量中…")
                     else if (bytes >= 1_000_000_000L) "≈ %.2f GB".format(bytes / 1_000_000_000.0)
@@ -1448,14 +1446,13 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
                     else "≈ %.0f KB".format(bytes / 1_000.0)
                 Text(s.text("Estimated file size", "預估檔案大小") + " · " + size,
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(if (!measured.failed) s.text("Measured by encoding samples of this photo with these settings", "以所選設定編碼此照片的取樣測得") +
-                        (if (correction != 1.0) s.text(", corrected by this phone's earlier exports", "，並按此手機先前的匯出結果校正") else "") +
-                        s.text(". Actual size may differ slightly.", "；實際大小可能略有差異。")
+                Text(if (!measured.failed) s.text("Measured by encoding samples of this photo with these settings. Actual size may differ slightly.",
+                        "以所選設定編碼此照片的取樣測得；實際大小可能略有差異。")
                     else s.text("Based on resolution, format and quality. Actual size varies with image detail.",
                         "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
             }
             Text(s.text("Saved to Gallery / AquaRestore. The original file is never overwritten.", "儲存至相簿／AquaRestore，不覆蓋原始檔案。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }, confirmButton = { Button(onClick = { export(options, photoSize?.bytes) }) { Text(s.text("Start export", "開始匯出")) } },
+    }, confirmButton = { Button(onClick = { export(options) }) { Text(s.text("Start export", "開始匯出")) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(s.text("Cancel", "取消")) } })
 }

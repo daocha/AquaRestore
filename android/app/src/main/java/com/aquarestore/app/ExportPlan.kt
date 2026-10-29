@@ -110,27 +110,6 @@ fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
     return (w.toDouble() * h * bytesPerPixel).roundToLong().coerceAtLeast(1)
 }
 
-/**
- * Learns how far exports land from their estimates on this device. Each export's actual size against its uncorrected
- * estimate is kept as a log ratio. A correction applies only when the ratios agree, so a steady margin is learned,
- * while one-off misses, which go either way, are not. Photos only: a video's margin depends on the clip as much as on
- * the device, so a margin learned from earlier clips does not carry over.
- */
-object SizeCalibration {
-    private const val HISTORY = 8
-
-    fun record(history: List<Double>, estimatedBytes: Long, actualBytes: Long): List<Double> =
-        (history + ln((actualBytes.toDouble() / estimatedBytes).coerceIn(0.5, 2.0))).takeLast(HISTORY)
-
-    /** The factor for later estimates: 1 until at least two exports agree on a margin larger than their spread. */
-    fun correction(history: List<Double>): Double {
-        if (history.size < 2) return 1.0
-        val mean = history.average()
-        val spread = sqrt(history.sumOf { (it - mean) * (it - mean) } / (history.size - 1))
-        return if (spread < abs(mean)) exp(mean) else 1.0
-    }
-}
-
 fun videoExportPlan(width: Int, height: Int, fps: Float, sourceBitrate: Int,
     audioBitrate: Int, durationMs: Long, options: ExportOptions, mixedAudio: Boolean = false): VideoExportPlan {
     val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)

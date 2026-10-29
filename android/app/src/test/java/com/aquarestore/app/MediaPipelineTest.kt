@@ -62,16 +62,6 @@ class MediaPipelineTest {
         assertEquals(measured[0], interpolateBytesPerPixel(measured, 5), 1e-12)
     }
 
-    @Test fun sizeCalibrationLearnsASteadyMarginButNotMissesThatGoBothWays() {
-        // Two exports landed 26% and 27% above their estimates; two others 8% below and 38% above.
-        val steady = SizeCalibration.record(SizeCalibration.record(emptyList(), 63_500_000, 79_830_000), 57_200_000, 72_850_000)
-        assertEquals(1.0, SizeCalibration.correction(steady.take(1)), 0.0)
-        assertEquals(1.265, SizeCalibration.correction(steady), 0.005)
-        val photo = SizeCalibration.record(SizeCalibration.record(emptyList(), 4_200_000, 3_870_000), 4_100_000, 5_640_000)
-        assertEquals(1.0, SizeCalibration.correction(photo), 0.0)
-        assertEquals(8, (1..12).fold(emptyList<Double>()) { history, _ -> SizeCalibration.record(history, 1, 1) }.size)
-    }
-
     @Test fun photoSizeEstimateMatchesMeasuredJpegExports() {
         // A graded 3840x3360 photo exported at full size measured 1.37 MB at 70, 2.64 MB at 90 and 7.88 MB at 100.
         val full = ExportOptions(quality = 90)

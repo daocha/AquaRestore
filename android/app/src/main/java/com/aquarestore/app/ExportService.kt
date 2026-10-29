@@ -17,9 +17,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
 // The request holds a frozen grade and the original URI, never the proxy URI.
-/** [estimatedBytes] is the photo's measured estimate before any learned correction, recorded against the result. */
 data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, val chinese: Boolean,
-    val audio: AudioMix = AudioMix(), val estimatedBytes: Long? = null)
+    val audio: AudioMix = AudioMix())
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
     val stage: String = "exporting", val uri: Uri? = null, val error: String? = null)
 
@@ -32,15 +31,6 @@ object Exports {
         status.value = ExportStatus(busy = true)
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
         catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
-    }
-    fun photoSizeKey(png: Boolean) = if (png) "photo:png" else "photo:jpeg"
-    private fun sizeHistory(context: Context, key: String) = context.getSharedPreferences("preferences", 0)
-        .getString("sizeHistory:$key", null)?.split(',')?.mapNotNull(String::toDoubleOrNull).orEmpty()
-    /** The learned factor for estimates of [key] on this device (see [SizeCalibration]). */
-    fun sizeCorrection(context: Context, key: String) = SizeCalibration.correction(sizeHistory(context, key))
-    internal fun recordSize(context: Context, key: String, estimatedBytes: Long, actualBytes: Long) {
-        val history = SizeCalibration.record(sizeHistory(context, key), estimatedBytes, actualBytes)
-        context.getSharedPreferences("preferences", 0).edit().putString("sizeHistory:$key", history.joinToString(",")).apply()
     }
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
@@ -157,7 +147,6 @@ class ExportService : Service() {
                         temp.outputStream().use {
                             check(bitmap.compress(if (losslessImage) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, o.quality, it))
                         }
-                        request.estimatedBytes?.let { Exports.recordSize(this@ExportService, Exports.photoSizeKey(losslessImage), it, temp.length()) }
                     } catch (_: OutOfMemoryError) { throw MediaProblem("memory") }
                     finally { bitmap.recycle() }
                 }
