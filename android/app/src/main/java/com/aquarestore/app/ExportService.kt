@@ -32,8 +32,18 @@ object Exports {
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
         catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
     }
+    /** How far this device's encoder lands from the estimate for [mime]; null before its first export. */
+    fun videoSizeRatio(context: Context, mime: String): Double? =
+        context.getSharedPreferences("preferences", 0).getFloat("videoSizeRatio:$mime", 0f).takeIf { it > 0 }?.toDouble()
+    internal fun recordVideoSize(context: Context, mime: String, estimatedBytes: Long, actualBytes: Long) {
+        val ratio = VideoSizeCalibration.update(videoSizeRatio(context, mime), estimatedBytes, actualBytes)
+        context.getSharedPreferences("preferences", 0).edit().putFloat("videoSizeRatio:$mime", ratio.toFloat()).apply()
+    }
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
+
+fun exportVideoMime(source: SourceMedia, options: ExportOptions): String =
+    if (options.original) source.mime else if (source.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
 
 class ExportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -128,11 +138,13 @@ class ExportService : Service() {
                 val fpsLimit = if (!o.original && o.fps > 0) min(o.fps.toFloat(), source.fps) else source.fps
                 if (fpsLimit < source.fps * o.speed) effects += FrameRateCap(fpsLimit)
                 effects += UnderwaterEffect(GradeState(request.grade))
-                val mime = if (o.original) source.mime else if (source.keepsHdr) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
-                val bitrate = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
-                    source.audioBitrate, source.durationMs, o, request.audio.changesAudio).bitrate
-                MediaIO.transform(this, source, temp, effects, bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
+                val mime = exportVideoMime(source, o)
+                val plan = videoExportPlan(source.width, source.height, source.fps, source.bitrate,
+                    source.audioBitrate, source.durationMs, o, request.audio.changesAudio)
+                MediaIO.transform(this, source, temp, effects, plan.bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
                     audio = request.audio) { update(it?.let { p -> p * 90 / 100 }) }
+                if (plan.estimatedBytes != null && o.trimmedMs(source.durationMs) / o.speed >= VideoSizeCalibration.MIN_LENGTH_MS)
+                    Exports.recordVideoSize(this, mime, plan.estimatedBytes, temp.length())
             } else {
                 withContext(Dispatchers.Default) {
                     // The memory check is an estimate; running out anyway still reports it instead of crashing.

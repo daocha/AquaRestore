@@ -53,6 +53,13 @@ class MediaPipelineTest {
         assertTrue(photoEstimatedBytes(4032, 3024, full.copy(png = true)) > photoEstimatedBytes(4032, 3024, full))
     }
 
+    @Test fun videoSizeCalibrationLearnsTheEncoderMarginAndDampsOutliers() {
+        // A 4K export measured 79.83 MB against a 63.5 MB estimate.
+        val first = VideoSizeCalibration.update(null, 63_500_000, 79_830_000)
+        assertEquals(1.257, first, 0.001)
+        assertEquals((1.257 + 2.0) / 2, VideoSizeCalibration.update(first, 10_000_000, 50_000_000), 0.001)
+    }
+
     @Test fun photoSizeEstimateMatchesMeasuredJpegExports() {
         // A graded 3840x3360 photo exported at full size measured 1.37 MB at 70, 2.64 MB at 90 and 7.88 MB at 100.
         val full = ExportOptions(quality = 90)

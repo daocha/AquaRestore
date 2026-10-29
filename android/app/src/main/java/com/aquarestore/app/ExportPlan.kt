@@ -97,6 +97,21 @@ fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
     return (w.toDouble() * h * bytesPerPixel).roundToLong().coerceAtLeast(1)
 }
 
+/**
+ * Encoders treat the target bitrate as a guide, and some exceed it by a steady margin. Each video export's actual
+ * size against its estimate is remembered per output codec and applied to later estimates.
+ */
+object VideoSizeCalibration {
+    /** Clips shorter than this are mostly container overhead and encoder ramp-up, so they are not recorded. */
+    const val MIN_LENGTH_MS = 3_000L
+
+    /** Blends a new export into the remembered ratio, so one unusual clip moves it only halfway. */
+    fun update(previous: Double?, estimatedBytes: Long, actualBytes: Long): Double {
+        val ratio = (actualBytes.toDouble() / estimatedBytes).coerceIn(0.5, 2.0)
+        return if (previous == null) ratio else (previous + ratio) / 2
+    }
+}
+
 fun videoExportPlan(width: Int, height: Int, fps: Float, sourceBitrate: Int,
     audioBitrate: Int, durationMs: Long, options: ExportOptions, mixedAudio: Boolean = false): VideoExportPlan {
     val (w, h) = ExportSizing.dimensions(width, height, if (options.original) 0 else options.longEdge)
