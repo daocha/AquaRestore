@@ -17,7 +17,12 @@ import android.provider.OpenableColumns
 import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Format
+import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
+import androidx.media3.container.Mp4TimestampData
+import androidx.media3.muxer.BufferInfo
+import androidx.media3.muxer.Muxer
 import androidx.media3.common.util.Clock
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
@@ -29,6 +34,7 @@ import androidx.media3.transformer.*
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.ceil
@@ -443,7 +449,7 @@ object MediaIO {
                         .setEnableFallback(!strict)
                         .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
                         .build()
-                    val active = Transformer.Builder(context).setEncoderFactory(encoder)
+                    val active = Transformer.Builder(context).setEncoderFactory(encoder).setMuxerFactory(ExportTimeMuxerFactory())
                         .apply { if (source.softwareDecoding) setAssetLoaderFactory(softwareVideoDecoding(context)) }
                         .setVideoMimeType(mime)
                         .addListener(object : Transformer.Listener {
@@ -504,4 +510,24 @@ object MediaIO {
             } finally { poll.cancel() }
         }
     }
+}
+
+/**
+ * Writes the export time as the video's creation time. Transformer copies the source's, so galleries would file a
+ * restored video under the day the original was recorded.
+ */
+private class ExportTimeMuxerFactory(private val inner: Muxer.Factory = DefaultMuxer.Factory()) : Muxer.Factory {
+    override fun create(path: String): Muxer {
+        val muxer = inner.create(path)
+        val now = Mp4TimestampData.unixTimeToMp4TimeSeconds(System.currentTimeMillis())
+        muxer.addMetadataEntry(Mp4TimestampData(now, now))
+        return object : Muxer {
+            override fun addTrack(format: Format) = muxer.addTrack(format)
+            override fun writeSampleData(trackId: Int, data: ByteBuffer, bufferInfo: BufferInfo) = muxer.writeSampleData(trackId, data, bufferInfo)
+            override fun addMetadataEntry(entry: Metadata.Entry) { if (entry !is Mp4TimestampData) muxer.addMetadataEntry(entry) }
+            override fun close() = muxer.close()
+        }
+    }
+    override fun getSupportedSampleMimeTypes(trackType: Int) = inner.getSupportedSampleMimeTypes(trackType)
+    override fun supportsWritingNegativeTimestampsInEditList() = inner.supportsWritingNegativeTimestampsInEditList()
 }

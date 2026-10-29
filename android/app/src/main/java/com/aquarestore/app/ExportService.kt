@@ -169,6 +169,8 @@ class ExportService : Service() {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, exportFileName(source.name, extension))
                     put(MediaStore.MediaColumns.MIME_TYPE, mime)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, if (source.video) "Movies/AquaRestore" else "Pictures/AquaRestore")
+                    // A restoration is a new picture: file it under when it was made, not when the source was taken.
+                    put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis())
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
                 val uri = contentResolver.insert(collection, values) ?: error("Cannot create destination")
