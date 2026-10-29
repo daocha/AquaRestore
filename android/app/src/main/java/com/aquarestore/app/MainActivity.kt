@@ -1288,6 +1288,9 @@ private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -
     }
 }
 
+/** Bytes per pixel of a photo's graded samples, encoded with this format and quality. */
+private data class PhotoMeasurement(val png: Boolean, val quality: Int, val bytesPerPixel: Double)
+
 @Composable
 private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: Float, trim: LongRange, audio: AudioMix,
     selection: ExportSelection, onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
@@ -1403,28 +1406,36 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
             } else {
                 val context = LocalContext.current
                 // Patches are graded once per output size; quality and format changes only encode them again.
+                // An empty list means the photo could not be sampled.
                 val samples by produceState<List<Bitmap>?>(null, source.uri, grade, dimensions) {
                     value = null
                     value = try {
                         withContext(Dispatchers.Default) {
                             MediaIO.sizeSamples(context, source.uri, source.width, source.height, dimensions.first, dimensions.second, grade)
                         }
-                    } catch (e: Exception) { if (e is CancellationException) throw e; null }
+                    } catch (e: Exception) { if (e is CancellationException) throw e; emptyList() }
                 }
-                val measured by produceState<Double?>(null, samples, options.png, options.quality) {
-                    value = null
-                    val tiles = samples ?: return@produceState
+                // The last measurement stays until the next one is ready, so the estimate does not jump to the formula.
+                val measured by produceState<PhotoMeasurement?>(null, samples, options.png, options.quality) {
+                    val tiles = samples?.takeIf { it.isNotEmpty() } ?: return@produceState
                     delay(150) // The quality slider moves in steps; encode only where it rests.
-                    value = withContext(Dispatchers.Default) { MediaIO.sampleBytesPerPixel(tiles, options.png, options.quality) }
+                    value = PhotoMeasurement(options.png, options.quality,
+                        withContext(Dispatchers.Default) { MediaIO.sampleBytesPerPixel(tiles, options.png, options.quality) })
                 }
-                val bytes = measured?.let { (dimensions.first.toLong() * dimensions.second * it).roundToLong() }
-                    ?: photoEstimatedBytes(source.width, source.height, options)
-                val size = if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
-                    else if (bytes >= 1_000_000L) "%.1f MB".format(bytes / 1_000_000.0)
-                    else "%.0f KB".format(bytes / 1_000.0)
-                Text(s.text("Estimated file size", "預估檔案大小") + " · ≈ " + size,
+                // Until the new quality is measured, the formula's change from the measured quality carries it over.
+                val last = measured?.takeIf { it.png == options.png }
+                val bytes = if (last != null) (dimensions.first.toLong() * dimensions.second * last.bytesPerPixel *
+                        photoEstimatedBytes(source.width, source.height, options) /
+                        photoEstimatedBytes(source.width, source.height, options.copy(quality = last.quality))).roundToLong()
+                    else if (samples?.isEmpty() == true) photoEstimatedBytes(source.width, source.height, options)
+                    else null
+                val size = if (bytes == null) s.text("measuring…", "測量中…")
+                    else if (bytes >= 1_000_000_000L) "≈ %.2f GB".format(bytes / 1_000_000_000.0)
+                    else if (bytes >= 1_000_000L) "≈ %.1f MB".format(bytes / 1_000_000.0)
+                    else "≈ %.0f KB".format(bytes / 1_000.0)
+                Text(s.text("Estimated file size", "預估檔案大小") + " · " + size,
                     Modifier.testTag("estimatedSize"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(if (measured != null) s.text("Measured by encoding samples of this photo with these settings. Actual size may differ slightly.",
+                Text(if (samples?.isEmpty() != true) s.text("Measured by encoding samples of this photo with these settings. Actual size may differ slightly.",
                         "以所選設定編碼此照片的取樣測得；實際大小可能略有差異。")
                     else s.text("Based on resolution, format and quality. Actual size varies with image detail.",
                         "依解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
