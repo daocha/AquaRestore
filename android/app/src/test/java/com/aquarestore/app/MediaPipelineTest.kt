@@ -62,11 +62,14 @@ class MediaPipelineTest {
         assertEquals(measured[0], interpolateBytesPerPixel(measured, 5), 1e-12)
     }
 
-    @Test fun videoSizeCalibrationLearnsTheEncoderMarginAndDampsOutliers() {
-        // A 4K export measured 79.83 MB against a 63.5 MB estimate.
-        val first = VideoSizeCalibration.update(null, 63_500_000, 79_830_000)
-        assertEquals(1.257, first, 0.001)
-        assertEquals((1.257 + 2.0) / 2, VideoSizeCalibration.update(first, 10_000_000, 50_000_000), 0.001)
+    @Test fun sizeCalibrationLearnsASteadyMarginButNotMissesThatGoBothWays() {
+        // Two 4K exports landed 26% and 27% above their estimates; two photos 8% below and 38% above.
+        val video = SizeCalibration.record(SizeCalibration.record(emptyList(), 63_500_000, 79_830_000), 57_200_000, 72_850_000)
+        assertEquals(1.0, SizeCalibration.correction(video.take(1)), 0.0)
+        assertEquals(1.265, SizeCalibration.correction(video), 0.005)
+        val photo = SizeCalibration.record(SizeCalibration.record(emptyList(), 4_200_000, 3_870_000), 4_100_000, 5_640_000)
+        assertEquals(1.0, SizeCalibration.correction(photo), 0.0)
+        assertEquals(8, (1..12).fold(emptyList<Double>()) { history, _ -> SizeCalibration.record(history, 1, 1) }.size)
     }
 
     @Test fun photoSizeEstimateMatchesMeasuredJpegExports() {

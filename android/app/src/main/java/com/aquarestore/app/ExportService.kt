@@ -17,8 +17,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
 // The request holds a frozen grade and the original URI, never the proxy URI.
+/** [estimatedBytes] is the photo's measured estimate before any learned correction, recorded against the result. */
 data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, val chinese: Boolean,
-    val audio: AudioMix = AudioMix())
+    val audio: AudioMix = AudioMix(), val estimatedBytes: Long? = null)
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
     val stage: String = "exporting", val uri: Uri? = null, val error: String? = null)
 
@@ -32,12 +33,15 @@ object Exports {
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
         catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
     }
-    /** How far this device's encoder lands from the estimate for [mime]; null before its first export. */
-    fun videoSizeRatio(context: Context, mime: String): Double? =
-        context.getSharedPreferences("preferences", 0).getFloat("videoSizeRatio:$mime", 0f).takeIf { it > 0 }?.toDouble()
-    internal fun recordVideoSize(context: Context, mime: String, estimatedBytes: Long, actualBytes: Long) {
-        val ratio = VideoSizeCalibration.update(videoSizeRatio(context, mime), estimatedBytes, actualBytes)
-        context.getSharedPreferences("preferences", 0).edit().putFloat("videoSizeRatio:$mime", ratio.toFloat()).apply()
+    fun photoSizeKey(png: Boolean) = if (png) "photo:png" else "photo:jpeg"
+    fun videoSizeKey(mime: String) = "video:$mime"
+    private fun sizeHistory(context: Context, key: String) = context.getSharedPreferences("preferences", 0)
+        .getString("sizeHistory:$key", null)?.split(',')?.mapNotNull(String::toDoubleOrNull).orEmpty()
+    /** The learned factor for estimates of [key] on this device (see [SizeCalibration]). */
+    fun sizeCorrection(context: Context, key: String) = SizeCalibration.correction(sizeHistory(context, key))
+    internal fun recordSize(context: Context, key: String, estimatedBytes: Long, actualBytes: Long) {
+        val history = SizeCalibration.record(sizeHistory(context, key), estimatedBytes, actualBytes)
+        context.getSharedPreferences("preferences", 0).edit().putString("sizeHistory:$key", history.joinToString(",")).apply()
     }
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
@@ -143,8 +147,8 @@ class ExportService : Service() {
                     source.audioBitrate, source.durationMs, o, request.audio.changesAudio)
                 MediaIO.transform(this, source, temp, effects, plan.bitrate, mime, true, speed = o.speed, startMs = o.startMs, endMs = o.endMs,
                     audio = request.audio) { update(it?.let { p -> p * 90 / 100 }) }
-                if (plan.estimatedBytes != null && o.trimmedMs(source.durationMs) / o.speed >= VideoSizeCalibration.MIN_LENGTH_MS)
-                    Exports.recordVideoSize(this, mime, plan.estimatedBytes, temp.length())
+                if (plan.estimatedBytes != null && o.trimmedMs(source.durationMs) / o.speed >= SizeCalibration.MIN_VIDEO_LENGTH_MS)
+                    Exports.recordSize(this, Exports.videoSizeKey(mime), plan.estimatedBytes, temp.length())
             } else {
                 withContext(Dispatchers.Default) {
                     // The memory check is an estimate; running out anyway still reports it instead of crashing.
@@ -156,6 +160,7 @@ class ExportService : Service() {
                         temp.outputStream().use {
                             check(bitmap.compress(if (losslessImage) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, o.quality, it))
                         }
+                        request.estimatedBytes?.let { Exports.recordSize(this@ExportService, Exports.photoSizeKey(losslessImage), it, temp.length()) }
                     } catch (_: OutOfMemoryError) { throw MediaProblem("memory") }
                     finally { bitmap.recycle() }
                 }

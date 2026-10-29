@@ -111,17 +111,24 @@ fun photoEstimatedBytes(width: Int, height: Int, options: ExportOptions): Long {
 }
 
 /**
- * Encoders treat the target bitrate as a guide, and some exceed it by a steady margin. Each video export's actual
- * size against its estimate is remembered per output codec and applied to later estimates.
+ * Learns how far exports land from their estimates on this device. Each export's actual size against its uncorrected
+ * estimate is kept as a log ratio. A correction applies only when the ratios agree, so a steady margin (an encoder that
+ * overshoots its bitrate) is learned, while one-off misses, which go either way, are not.
  */
-object VideoSizeCalibration {
+object SizeCalibration {
     /** Clips shorter than this are mostly container overhead and encoder ramp-up, so they are not recorded. */
-    const val MIN_LENGTH_MS = 3_000L
+    const val MIN_VIDEO_LENGTH_MS = 3_000L
+    private const val HISTORY = 8
 
-    /** Blends a new export into the remembered ratio, so one unusual clip moves it only halfway. */
-    fun update(previous: Double?, estimatedBytes: Long, actualBytes: Long): Double {
-        val ratio = (actualBytes.toDouble() / estimatedBytes).coerceIn(0.5, 2.0)
-        return if (previous == null) ratio else (previous + ratio) / 2
+    fun record(history: List<Double>, estimatedBytes: Long, actualBytes: Long): List<Double> =
+        (history + ln((actualBytes.toDouble() / estimatedBytes).coerceIn(0.5, 2.0))).takeLast(HISTORY)
+
+    /** The factor for later estimates: 1 until at least two exports agree on a margin larger than their spread. */
+    fun correction(history: List<Double>): Double {
+        if (history.size < 2) return 1.0
+        val mean = history.average()
+        val spread = sqrt(history.sumOf { (it - mean) * (it - mean) } / (history.size - 1))
+        return if (spread < abs(mean)) exp(mean) else 1.0
     }
 }
 
