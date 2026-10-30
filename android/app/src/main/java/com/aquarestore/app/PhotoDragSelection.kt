@@ -13,6 +13,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.isActive
 
@@ -35,8 +36,12 @@ internal class PhotoRangeSelection(private val photos: List<String>, selected: L
     }
 }
 
-private fun LazyGridState.photoAt(point: Offset, nearest: Boolean = false): Int? {
+internal val PHOTO_GRID_PADDING = 8.dp
+
+/** [padding] is the grid's content padding: item offsets exclude it, while pointer positions include it. */
+private fun LazyGridState.photoAt(touch: Offset, padding: Float, nearest: Boolean = false): Int? {
     val visible = layoutInfo.visibleItemsInfo
+    val point = touch - Offset(padding, padding)
     fun distance(index: Int): Float {
         val item = visible[index]
         val dx = maxOf(item.offset.x - point.x, 0f, point.x - item.offset.x - item.size.width)
@@ -50,10 +55,11 @@ private fun LazyGridState.photoAt(point: Offset, nearest: Boolean = false): Int?
 /** A normal swipe scrolls; a swipe after holding a photo selects or deselects a range. */
 @Composable
 internal fun Modifier.photoDragSelection(state: LazyGridState, photos: List<String>, selected: List<String>,
-    onSelectionChange: (ArrayList<String>) -> Unit): Modifier {
+    contentPadding: Dp, onSelectionChange: (ArrayList<String>) -> Unit): Modifier {
     val latestSelected by rememberUpdatedState(selected)
     val changeSelection by rememberUpdatedState(onSelectionChange)
     val haptic = LocalHapticFeedback.current
+    val padding = with(LocalDensity.current) { contentPadding.toPx() }
     val edge = with(LocalDensity.current) { 56.dp.toPx() }
     val scrollSpeed = with(LocalDensity.current) { 900.dp.toPx() }
     var gesture by remember(photos) { mutableStateOf<PhotoRangeSelection?>(null) }
@@ -72,26 +78,26 @@ internal fun Modifier.photoDragSelection(state: LazyGridState, photos: List<Stri
 
     fun updateRange() {
         val active = gesture ?: return
-        val index = state.photoAt(position, nearest = true) ?: return
+        val index = state.photoAt(position, padding, nearest = true) ?: return
         changeSelection(active.through(index))
     }
 
     // Keep extending the range as rows scroll underneath a stationary finger near either edge.
-    LaunchedEffect(gesture, scrollDirection) {
-        if (gesture == null || scrollDirection == 0f) return@LaunchedEffect
+    // Keyed on whether to scroll, not the speed, so finger jitter does not restart it and drop frames.
+    LaunchedEffect(scrollDirection != 0f) {
         var previousFrame = 0L
-        while (isActive) {
+        while (isActive && scrollDirection != 0f) {
             val frame = withFrameNanos { it }
             val seconds = if (previousFrame == 0L) 0f else ((frame - previousFrame) / 1_000_000_000f).coerceAtMost(0.032f)
             previousFrame = frame
             if (state.scrollBy(scrollDirection * scrollSpeed * seconds) != 0f) updateRange()
         }
     }
-    return pointerInput(photos, state) {
+    return pointerInput(photos, state, padding) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val held = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
-            val index = state.photoAt(held.position) ?: return@awaitEachGesture
+            val index = state.photoAt(held.position, padding) ?: return@awaitEachGesture
             if (latestSelected.size >= MAX_BATCH_PHOTOS && photos[index] !in latestSelected) return@awaitEachGesture
             position = held.position
             gesture = PhotoRangeSelection(photos, latestSelected, index)

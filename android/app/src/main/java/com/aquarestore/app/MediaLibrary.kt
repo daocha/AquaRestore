@@ -259,9 +259,9 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         }
                     }
                     else -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize().testTag("libraryPhotos")
-                        .then(if (multiple) Modifier.photoDragSelection(photoGrid, photoKeys, chosen) { chosen = it } else Modifier),
+                        .then(if (multiple) Modifier.photoDragSelection(photoGrid, photoKeys, chosen, PHOTO_GRID_PADDING) { chosen = it } else Modifier),
                         state = photoGrid,
-                        contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(PHOTO_GRID_PADDING), horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(shown, key = { it.uri.toString() }) { item ->
                             val picked = item.uri.toString() in chosen

@@ -24,8 +24,22 @@ data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
     val stage: String = "exporting", val uri: Uri? = null, val error: String? = null,
     val batch: BatchExportStatus? = null)
 
+const val EXPORT_RESULT_NOTIFICATION = 8
+
+/** What the finished-export notification says; null when the user cancelled, since they already know. */
+fun ExportStatus.resultNotice(s: Strings): Pair<String, String>? {
+    if (error == null && stage == "cancelled") return null
+    val title = if (error != null) s.text("Export failed", "匯出失敗") else s[stage]
+    val lines = listOfNotNull(error?.let { s[it] }, batch?.resultText(s),
+        if (batch == null && error == null) s.text("Find your restored media in Gallery / AquaRestore.", "還原作品已儲存至相簿／AquaRestore。") else null) +
+        batch?.failures.orEmpty().map { "${it.name}: ${s[it.error]}" }
+    return title to lines.joinToString("\n")
+}
+
 object Exports {
     val status = MutableStateFlow(ExportStatus())
+    /** Set by the activity; a finished export is announced by notification only while the app is out of sight. */
+    @Volatile var appVisible = false
     internal var request: ExportWork? = null
     fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return
@@ -99,10 +113,25 @@ class ExportService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 job = null
                 stopSelf(startId)
+                // Posted before the status, so whoever sees the result can already find the notification.
+                if (!Exports.appVisible) try { notifyResult(terminal.copy(batch = batch)) }
+                    catch (e: Exception) { android.util.Log.w("AquaRestore", "Could not post the export result", e) }
                 Exports.status.value = terminal.copy(batch = batch)
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun notifyResult(status: ExportStatus) {
+        val (title, text) = status.resultNotice(Strings(chinese)) ?: return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel("exportResults",
+            if (chinese) "匯出結果" else "Export results", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        manager.notify(EXPORT_RESULT_NOTIFICATION, NotificationCompat.Builder(this, "exportResults")
+            .setSmallIcon(R.drawable.ic_notification).setColor(0xFF3EDBC0.toInt())
+            .setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(open).setAutoCancel(true).build())
     }
 
     private fun notification(progress: Int?): Notification {
@@ -130,6 +159,8 @@ class ExportService : Service() {
             currentCoroutineContext().ensureActive()
             batch = batch!!.copy(currentName = Strings(chinese).text("Photo ${index + 1}", "照片 ${index + 1}"))
             update(0, "analyzing")
+            // Failures before export mean the photo itself could not be read, not that saving failed.
+            var reading = true
             try {
                 val source = withContext(Dispatchers.IO) {
                     batch = batch!!.copy(currentName = MediaIO.displayName(this@ExportService, uri))
@@ -144,6 +175,7 @@ class ExportService : Service() {
                 val grade = MediaIO.analyze(this, source).grade
                 currentCoroutineContext().ensureActive()
                 val options = request.selection.photoOptions(source.width, source.height, source.mime)
+                reading = false
                 val saved = export(ExportRequest(source, grade, options, chinese))
                 // Publication finishes even if cancelled at the last instant; count that saved photo.
                 batch = batch!!.copy(saved = batch!!.saved + saved)
@@ -151,7 +183,7 @@ class ExportService : Service() {
             catch (e: Exception) {
                 android.util.Log.w("AquaRestore", "Batch photo failed", e)
                 batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
-                    (e as? MediaProblem)?.key ?: "exportFailed"))
+                    (e as? MediaProblem)?.key ?: if (reading) "photoUnreadable" else "exportFailed"))
             } catch (_: OutOfMemoryError) {
                 batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!, "memory"))
             }

@@ -1,6 +1,7 @@
 package com.aquarestore.app
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -109,9 +110,21 @@ class MainActivity : ComponentActivity() {
         setContent { AquaApp() }
     }
 
+    override fun onStart() {
+        super.onStart()
+        Exports.appVisible = true
+        // The app shows the result itself, so the notification is no longer needed.
+        getSystemService(NotificationManager::class.java).cancel(EXPORT_RESULT_NOTIFICATION)
+    }
+
     override fun onResume() {
         super.onResume()
         updates?.onResume()
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) Exports.appVisible = false
+        super.onStop()
     }
 
     override fun onDestroy() {

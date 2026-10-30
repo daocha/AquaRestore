@@ -1,11 +1,16 @@
 package com.aquarestore.app
 
+import android.Manifest
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ActivityScenario
@@ -118,13 +123,31 @@ class MediaWorkflowTest {
         assertEquals("batchFinished", result.stage)
         assertEquals(2, result.batch!!.saved.size)
         assertEquals(2, result.batch.failures.size)
-        assertEquals("batchPhotosOnly", result.batch.failures.first().error)
+        assertEquals(listOf("batchPhotosOnly", "photoUnreadable"), result.batch.failures.map { it.error })
         result.batch.saved.forEach {
             val saved = MediaIO.inspect(app, it)
             assertEquals(320, saved.width)
             assertEquals("image/jpeg", saved.mime)
         }
         assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+    }
+
+    @Test fun finishedExportNotifiesOnlyWhileTheAppIsInTheBackground() = runBlocking {
+        if (Build.VERSION.SDK_INT >= 33) InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        val notifications = app.getSystemService(NotificationManager::class.java)
+        fun resultShown() = notifications.activeNotifications.any { it.id == EXPORT_RESULT_NOTIFICATION }
+        batch(listOf(photo()))
+        assertFalse("The app shows the result itself while it is open", resultShown())
+        scenario.moveToState(Lifecycle.State.CREATED)
+        Exports.status.value = ExportStatus()
+        val result = batch(listOf(photo(), media("audit-video.mp4", "video/mp4")))
+        assertEquals("batchFinished", result.stage)
+        val shown = notifications.activeNotifications.first { it.id == EXPORT_RESULT_NOTIFICATION }
+        val text = shown.notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+        assertTrue(text, text.contains("1 of 2 photos saved") && text.contains("photos only"))
+        scenario.moveToState(Lifecycle.State.RESUMED)
+        assertFalse("Returning to the app clears the notification", resultShown())
     }
 
     @Test fun batchCancellationKeepsCompletedPhotosAndAllowsAnotherExport() = runBlocking {
