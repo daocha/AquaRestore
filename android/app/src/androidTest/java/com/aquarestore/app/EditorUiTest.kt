@@ -76,14 +76,19 @@ class EditorUiTest {
             if (selected) ui.onNodeWithText(names[index]).assertIsSelected() else ui.onNodeWithText(names[index]).assertIsNotSelected()
         }
         val hold = android.view.ViewConfiguration.getLongPressTimeout().toLong() + 150
+        // Scroll to each photo before touching it, so the test holds on smaller screens too.
+        fun show(index: Int) = ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names[index]))
         // Keep an unrelated selection; reverse the drag before lifting to shrink its range.
+        show(6)
         ui.onNodeWithText(names[6]).performClick()
+        show(0)
         var start = center(0); val second = center(1); val fourth = center(3)
         ui.onNodeWithTag("libraryPhotos").performTouchInput {
             down(start); advanceEventTime(hold); moveTo(fourth, 250); moveTo(second, 250); up()
         }
         ui.onNodeWithText("Continue (3)").assertIsEnabled()
         check(0, true); check(1, true); check(2, false); check(3, false); check(6, true)
+        show(0)
         start = center(0)
         val end = center(1)
         ui.onNodeWithTag("libraryPhotos").performTouchInput {
@@ -269,7 +274,7 @@ class EditorUiTest {
         ui.onNodeWithTag("mediaPreview").assertIsDisplayed()
         ui.onNodeWithContentDescription("Close").performClick()
         ui.onNodeWithText("Discard").performClick()
-        ui.onNodeWithText("Import video or photo").assertIsDisplayed()
+        ui.onNodeWithText("Import video or photo").performScrollTo().assertIsDisplayed()
         ui.runOnIdle { assertNull(model.source.value) }
     }
 
