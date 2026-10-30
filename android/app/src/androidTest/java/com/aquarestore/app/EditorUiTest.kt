@@ -91,6 +91,39 @@ class EditorUiTest {
         ui.onNodeWithText("JPEG").performClick()
         ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
         ui.onNodeWithText("Cancel").performClick()
+        fun assertSelectionKept() {
+            ui.onNodeWithText("Choose photos").assertIsDisplayed()
+            ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").assertIsEnabled()
+            names.drop(1).forEach { name ->
+                ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(name))
+                ui.onNodeWithText(name).assertIsSelected()
+            }
+            ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names.first()))
+            ui.onNodeWithText(names.first()).assertIsNotSelected()
+        }
+        assertSelectionKept()
+        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
+        // The left edge is outside the centered export dialog and inside the photo picker behind it.
+        val time = android.os.SystemClock.uptimeMillis()
+        listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
+            android.view.MotionEvent.obtain(time, time + if (action == android.view.MotionEvent.ACTION_UP) 50 else 0,
+                action, 2f, ui.activity.resources.displayMetrics.heightPixels / 2f, 0).also { event ->
+                event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                automation.injectInputEvent(event, true)
+                event.recycle()
+            }
+        }
+        ui.waitForIdle()
+        assertSelectionKept()
+        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
+        ui.activityRule.scenario.recreate()
+        ui.onNodeWithText("Export $MAX_BATCH_PHOTOS photos").assertIsDisplayed()
+        listOf(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.ACTION_UP).forEach { action ->
+            automation.injectInputEvent(android.view.KeyEvent(action, android.view.KeyEvent.KEYCODE_BACK), true)
+        }
+        ui.waitForIdle()
+        assertSelectionKept()
+        ui.onNodeWithContentDescription("Close").performClick()
         ui.onNodeWithText("Batch restore photos").assertExists()
         ui.runOnUiThread {
             model = ViewModelProvider(ui.activity)[EditorModel::class.java]

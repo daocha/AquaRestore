@@ -442,13 +442,13 @@ private fun Editor(model: EditorModel, s: Strings) {
     }
     if (batchLibrary) MediaLibrary(s, photosOnly = true, onChoosePhotos = {
         model.batchPhotos.value = it
-        batchLibrary = false
-    }, onDismiss = { batchLibrary = false })
+    }, onDismiss = { batchLibrary = false; model.batchPhotos.value = emptyList() })
     if (batchPhotos.isNotEmpty()) BatchPhotoExportDialog(batchPhotos.size, photoExportSelection, s,
         onSelectionChange = { model.setExportSelection(false, it) }, onResetCustom = { model.resetCustomExport(false) },
         onDismiss = { model.batchPhotos.value = emptyList() }) {
         val request = BatchPhotoRequest(batchPhotos.toList(), photoExportSelection, s.chinese)
         model.batchPhotos.value = emptyList()
+        batchLibrary = false
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         Exports.start(context, request)
     }
