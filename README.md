@@ -44,6 +44,8 @@ Color correction requires re-encoding the video, so **Original does not mean bit
 
 Output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written to a temporary file first and then published with MediaStore's pending mechanism; failed or cancelled exports clean up their partial files, and the source is never overwritten.
 
+On Android, **Batch restore photos** on the home screen accepts up to 20 photos, with no videos. Choose Recommended, Original or Custom export settings once; each photo receives its own default intelligent restoration automatically, without opening the editor. Recommended adapts to each photo's dimensions and format. Batches show no estimated file size and process one photo at a time to limit memory use on midrange phones. Export continues in the background with progress and cancellation; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
+
 ## One-step build and release
 
 ```bash
@@ -94,6 +96,7 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pi
 
 Differences that come from the platform:
 
+- **Batch photo restoration:** currently available on Android only.
 - **Background export:** this iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
 - **No preview proxy.** Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
 - **Audio:** untouched AAC is passed through on iOS; speed, volume or music edits are encoded as AAC. Other source audio is also encoded as AAC for MP4 compatibility.

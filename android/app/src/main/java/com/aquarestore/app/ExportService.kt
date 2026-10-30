@@ -16,21 +16,24 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
+sealed interface ExportWork { val chinese: Boolean }
 // The request holds a frozen grade and the original URI, never the proxy URI.
-data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, val chinese: Boolean,
-    val audio: AudioMix = AudioMix())
+data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, override val chinese: Boolean,
+    val audio: AudioMix = AudioMix()) : ExportWork
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
-    val stage: String = "exporting", val uri: Uri? = null, val error: String? = null)
+    val stage: String = "exporting", val uri: Uri? = null, val error: String? = null,
+    val batch: BatchExportStatus? = null)
 
 object Exports {
     val status = MutableStateFlow(ExportStatus())
-    internal var request: ExportRequest? = null
-    fun start(context: Context, request: ExportRequest) {
+    internal var request: ExportWork? = null
+    fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return
         this.request = request
-        status.value = ExportStatus(busy = true)
+        val batch = (request as? BatchPhotoRequest)?.let { BatchExportStatus(it.photos.size) }
+        status.value = ExportStatus(busy = true, batch = batch)
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
-        catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
+        catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed", batch = batch) }
     }
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
@@ -44,13 +47,14 @@ class ExportService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotification = 0L
     private var chinese = false
+    private var batch: BatchExportStatus? = null
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "cancel") {
             job?.cancel()
             if (job == null) {
                 Exports.request = null
-                Exports.status.value = ExportStatus(stage = "cancelled")
+                Exports.status.value = ExportStatus(stage = "cancelled", batch = Exports.status.value.batch)
                 stopSelf(startId)
             }
             return START_NOT_STICKY
@@ -58,6 +62,7 @@ class ExportService : Service() {
         if (job != null) return START_NOT_STICKY
         val request = Exports.request ?: run { stopSelf(); return START_NOT_STICKY }
         chinese = request.chinese
+        batch = (request as? BatchPhotoRequest)?.let { BatchExportStatus(it.photos.size) }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
         try {
@@ -69,15 +74,20 @@ class ExportService : Service() {
         } catch (e: Exception) {
             android.util.Log.e("AquaRestore", "Could not start export service", e)
             Exports.request = null
-            Exports.status.value = ExportStatus(error = "exportFailed")
+            Exports.status.value = ExportStatus(error = "exportFailed", batch = batch)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         job = scope.launch {
             var terminal = ExportStatus(error = "exportFailed")
             try {
-                val uri = export(request)
-                terminal = ExportStatus(progress = 100, uri = uri, stage = "saved")
+                terminal = when (request) {
+                    is ExportRequest -> ExportStatus(progress = 100, uri = export(request), stage = "saved")
+                    is BatchPhotoRequest -> {
+                        exportBatch(request)
+                        ExportStatus(progress = 100, stage = if (batch!!.failures.isEmpty()) "saved" else "batchFinished")
+                    }
+                }
             } catch (e: CancellationException) {
                 terminal = ExportStatus(stage = "cancelled")
             } catch (e: Exception) {
@@ -89,7 +99,7 @@ class ExportService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 job = null
                 stopSelf(startId)
-                Exports.status.value = terminal
+                Exports.status.value = terminal.copy(batch = batch)
             }
         }
         return START_NOT_STICKY
@@ -100,18 +110,54 @@ class ExportService : Service() {
         val cancel = PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction("cancel"), PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, "exports").setSmallIcon(R.drawable.ic_notification).setColor(0xFF3EDBC0.toInt())
             .setContentTitle("AquaRestore")
-            .setContentText(if (chinese) "正在匯出修復作品…" else "Exporting your restored media…")
+            .setContentText(batch?.progressText(Strings(chinese)) ?: if (chinese) "正在匯出修復作品…" else "Exporting your restored media…")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setProgress(100, progress ?: 0, progress == null)
             .addAction(0, if (chinese) "取消" else "Cancel", cancel).build()
     }
 
     private fun update(value: Int?, stage: String = "exporting") {
-        Exports.status.value = ExportStatus(busy = true, progress = value, stage = stage)
+        val overall = batch?.let { ((it.completed * 100 + (value ?: 0)) / it.total).coerceAtMost(100) } ?: value
+        Exports.status.value = ExportStatus(busy = true, progress = overall, stage = stage, batch = batch)
         if (SystemClock.elapsedRealtime() - lastNotification > 800) {
-            getSystemService(NotificationManager::class.java).notify(7, notification(value))
+            getSystemService(NotificationManager::class.java).notify(7, notification(overall))
             lastNotification = SystemClock.elapsedRealtime()
         }
+    }
+
+    private suspend fun exportBatch(request: BatchPhotoRequest) {
+        for ((index, uri) in request.photos.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            batch = batch!!.copy(currentName = Strings(chinese).text("Photo ${index + 1}", "照片 ${index + 1}"))
+            update(0, "analyzing")
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    batch = batch!!.copy(currentName = MediaIO.displayName(this@ExportService, uri))
+                    // Reject videos before inspection or analysis, even if a caller bypasses the picker.
+                    val mime = contentResolver.getType(uri)
+                    if (mime != null && !mime.startsWith("image/")) throw MediaProblem("batchPhotosOnly")
+                    MediaIO.inspect(this@ExportService, uri).also {
+                        if (it.video) throw MediaProblem("batchPhotosOnly")
+                    }
+                }
+                batch = batch!!.copy(currentName = source.name)
+                val grade = MediaIO.analyze(this, source).grade
+                currentCoroutineContext().ensureActive()
+                val options = request.selection.photoOptions(source.width, source.height, source.mime)
+                val saved = export(ExportRequest(source, grade, options, chinese))
+                // Publication finishes even if cancelled at the last instant; count that saved photo.
+                batch = batch!!.copy(saved = batch!!.saved + saved)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                android.util.Log.w("AquaRestore", "Batch photo failed", e)
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
+                    (e as? MediaProblem)?.key ?: "exportFailed"))
+            } catch (_: OutOfMemoryError) {
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!, "memory"))
+            }
+            update(0)
+        }
+        batch = batch!!.copy(currentName = null)
     }
 
     private suspend fun export(request: ExportRequest): Uri {

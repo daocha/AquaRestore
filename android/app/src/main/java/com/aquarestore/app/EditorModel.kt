@@ -24,6 +24,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
     val theme = MutableStateFlow(prefs.getString("theme", "system")!!)
     val photoExportSelection = MutableStateFlow(readExportSelection(false))
     val videoExportSelection = MutableStateFlow(readExportSelection(true))
+    val batchPhotos = MutableStateFlow<List<Uri>>(emptyList())
     val source = MutableStateFlow<SourceMedia?>(null)
     val analysis = MutableStateFlow<Analysis?>(null)
     val grade = MutableStateFlow(Grade.Neutral)

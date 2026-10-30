@@ -162,6 +162,7 @@ private fun Editor(model: EditorModel, s: Strings) {
     val speed by model.speed.collectAsStateWithLifecycle()
     val photoExportSelection by model.photoExportSelection.collectAsStateWithLifecycle()
     val videoExportSelection by model.videoExportSelection.collectAsStateWithLifecycle()
+    val batchPhotos by model.batchPhotos.collectAsStateWithLifecycle()
     val trim by model.trim.collectAsStateWithLifecycle()
     val filmstrip by model.filmstrip.collectAsStateWithLifecycle()
     // Kept as State and read only while drawing, so playback ticks redraw the trim bar without recomposing.
@@ -182,6 +183,7 @@ private fun Editor(model: EditorModel, s: Strings) {
     var scaffoldOrigin by remember { mutableStateOf(Offset.Zero) }
     LaunchedEffect(source?.uri) { speedExpanded = false; trimPicked = null; overlayBounds = null; trimBarBounds = null }
     var mediaLibrary by rememberSaveable { mutableStateOf(false) }
+    var batchLibrary by rememberSaveable { mutableStateOf(false) }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
     val compare = remember { MutableInteractionSource() }
@@ -279,7 +281,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         Column(Modifier.padding(inset).fillMaxSize().then(if (source == null || phase != null) Modifier.verticalScroll(editorScroll) else Modifier).padding(horizontal = if (maximized) 0.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
-                Welcome(s, enabled = !busy, onImport = ::pickMedia)
+                Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true })
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -376,6 +378,7 @@ private fun Editor(model: EditorModel, s: Strings) {
             }
             if (export.busy) Panel {
                 Text(s[export.stage], fontWeight = FontWeight.SemiBold)
+                export.batch?.let { Text(it.progressText(s), maxLines = 2) }
                 Progress(export.progress)
                 Text(s.text("You can leave the app. Export continues in the background.", "可以離開 App，匯出會在背景繼續。"), fontSize = 12.sp)
                 TextButton(onClick = { Exports.cancel(context) }) { Text(s.text("Cancel export", "取消匯出")) }
@@ -387,8 +390,11 @@ private fun Editor(model: EditorModel, s: Strings) {
         onDismissRequest = { showProgress = false },
         title = { Text(s[export.stage]) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            export.batch?.let { Text(it.progressText(s), maxLines = 2) }
             Progress(export.progress)
-            Text(s.text("Processing the original file. You can continue in the background.", "正在處理原始檔案，可切換至背景繼續匯出。"))
+            Text(if (export.batch != null) s.text("Processing photos one at a time. You can continue in the background. Cancelling keeps photos already saved.",
+                "正在逐張處理照片，可切換至背景繼續。取消後會保留已儲存的照片。")
+                else s.text("Processing the original file. You can continue in the background.", "正在處理原始檔案，可切換至背景繼續匯出。"))
         } },
         confirmButton = { TextButton(onClick = { showProgress = false }) { Text(s.text("Continue in background", "在背景繼續")) } },
         dismissButton = { TextButton(onClick = { Exports.cancel(context) }) { Text(s.text("Cancel export", "取消匯出")) } },
@@ -396,13 +402,22 @@ private fun Editor(model: EditorModel, s: Strings) {
     if (error != null) AlertDialog(onDismissRequest = { model.error.value = null },
         title = { Text(s.text("Unable to continue", "無法完成操作")) }, text = { Text(s[error!!]) },
         confirmButton = { TextButton(onClick = { model.error.value = null }) { Text(s.text("OK", "知道了")) } })
-    if (!export.busy && (export.uri != null || export.error != null || export.stage == "cancelled")) {
+    if (!export.busy && (export.uri != null || export.error != null || export.stage == "cancelled" || export.batch != null)) {
         fun dismissResult() { Exports.status.value = ExportStatus() }
         AlertDialog(onDismissRequest = ::dismissResult,
             title = { Text(if (export.error != null) s.text("Export failed", "匯出失敗") else s[export.stage]) },
-            text = { Text(export.error?.let { s[it] } ?: if (export.uri != null)
-                s.text("Find your restored media in Gallery / AquaRestore.", "還原作品已儲存至相簿／AquaRestore。")
-                else s.text("No unfinished file was added to your gallery.", "相簿不會留下未完成的檔案。")) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    export.error?.let { Text(s[it]) }
+                    val batch = export.batch
+                    if (batch != null) {
+                        Text(batch.resultText(s))
+                        batch.failures.forEach { Text("${it.name}\n${s[it.error]}", fontSize = 12.sp) }
+                    } else if (export.error == null) Text(if (export.uri != null)
+                        s.text("Find your restored media in Gallery / AquaRestore.", "還原作品已儲存至相簿／AquaRestore。")
+                        else s.text("No unfinished file was added to your gallery.", "相簿不會留下未完成的檔案。"))
+                }
+            },
             confirmButton = { TextButton(onClick = ::dismissResult) { Text(s.text("Done", "完成")) } },
             dismissButton = { if (export.uri != null) TextButton(onClick = { openExport(); dismissResult() }) { Text(s.text("Open", "開啟")) } })
     }
@@ -425,6 +440,18 @@ private fun Editor(model: EditorModel, s: Strings) {
         mediaLibrary = false
         model.import(uri)
     }
+    if (batchLibrary) MediaLibrary(s, photosOnly = true, onChoosePhotos = {
+        model.batchPhotos.value = it
+        batchLibrary = false
+    }, onDismiss = { batchLibrary = false })
+    if (batchPhotos.isNotEmpty()) BatchPhotoExportDialog(batchPhotos.size, photoExportSelection, s,
+        onSelectionChange = { model.setExportSelection(false, it) }, onResetCustom = { model.resetCustomExport(false) },
+        onDismiss = { model.batchPhotos.value = emptyList() }) {
+        val request = BatchPhotoRequest(batchPhotos.toList(), photoExportSelection, s.chinese)
+        model.batchPhotos.value = emptyList()
+        if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        Exports.start(context, request)
+    }
     if (musicLibrary) MediaLibrary(s, audioOnly = true, onDismiss = { musicLibrary = false }) { uri ->
         musicLibrary = false
         model.addMusic(uri)
@@ -439,7 +466,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -449,6 +476,12 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit) {
     Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
     }
+    OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+        Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
+        Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
+    }
+    Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
+        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Panel {
         listOf(
             Icons.Rounded.AutoAwesome to s.text("Automatic color recommendations", "自動分析並推薦調色"),
@@ -1283,7 +1316,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -> Unit) {
+fun <T> Choices(items: List<Pair<T, String>>, selected: T, select: (T) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items.forEach { (value, label) -> FilterChip(selected == value, { select(value) }, label = { Text(label, fontSize = 12.sp) }) }
     }
@@ -1342,12 +1375,12 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
     }
     val sourceFps = source.fps * min(speed, 1f)
     val customFps = selection.fps.takeIf { it == 0 || it <= sourceFps } ?: 0
-    val options = when (selection.mode) {
+    val options = (if (!source.video) selection.photoOptions(source.width, source.height, source.mime) else when (selection.mode) {
         ExportMode.RECOMMENDED -> recommended
         ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = selection.png)
         ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = selection.longEdge, fps = customFps,
             quality = selection.quality, png = selection.png)
-    }.copy(speed = speed, startMs = startMs, endMs = endMs)
+    }).copy(speed = speed, startMs = startMs, endMs = endMs)
     val dimensions = if (options.original) source.width to source.height
         else ExportSizing.dimensions(source.width, source.height, options.longEdge, source.video)
     val photoSize = if (source.video) null else measurePhotoSize(source, grade, options, dimensions)

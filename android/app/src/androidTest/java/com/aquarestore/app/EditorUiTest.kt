@@ -39,8 +39,64 @@ class EditorUiTest {
     }
     @After fun cleanup() {
         Exports.status.value.uri?.let { uris += it }
+        Exports.status.value.batch?.saved?.let { uris += it }
         uris.forEach { ui.activity.contentResolver.delete(it, null, null) }
         ui.runOnUiThread { model.preference("language", "system"); model.preference("theme", "system") }
+    }
+    @Test fun batchPickerLimitsPhotosAndOpensQualityOptionsWithoutAnEstimate() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"
+        automation.executeShellCommand("pm grant ${ui.activity.packageName} $permission").use { fd ->
+            java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() }
+        }
+        val names = (0..MAX_BATCH_PHOTOS).map { "batch-ui-${System.nanoTime()}-$it.png" }
+        val bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff205f9f.toInt()) }
+        names.forEach { name ->
+            val uri = ui.activity.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/BatchUi")
+                put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis())
+            })!!
+            uris += uri
+            ui.activity.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        bitmap.recycle()
+        ui.runOnUiThread {
+            ui.activity.getSharedPreferences("preferences", 0).edit().putString("library_photos_section", "recent").apply()
+            model.setExportSelection(false, ExportSelection())
+        }
+        ui.onNodeWithText("Batch restore photos").performScrollTo().performClick()
+        ui.onNodeWithText("Choose photos").assertIsDisplayed()
+        ui.onNodeWithText("Continue (0)").assertIsNotEnabled()
+        fun pick(name: String) {
+            ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(name))
+            ui.onNodeWithText(name).performClick()
+        }
+        names.take(MAX_BATCH_PHOTOS).forEach(::pick)
+        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").assertIsEnabled()
+        ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names.last()))
+        ui.onNodeWithText(names.last()).assertIsNotEnabled()
+        pick(names.first())
+        pick(names.last())
+        ui.activityRule.scenario.recreate()
+        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
+        ui.onNodeWithText("Export $MAX_BATCH_PHOTOS photos").assertIsDisplayed()
+        ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
+        ui.onNodeWithText("Custom").performClick()
+        ui.onNodeWithText("Quality", substring = true).performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("PNG").performScrollTo().performClick()
+        ui.onNodeWithText("Quality", substring = true).assertDoesNotExist()
+        ui.onNodeWithText("Original").performScrollTo().performClick()
+        ui.onNodeWithText("JPEG").performClick()
+        ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
+        ui.onNodeWithText("Cancel").performClick()
+        ui.onNodeWithText("Batch restore photos").assertExists()
+        ui.runOnUiThread {
+            model = ViewModelProvider(ui.activity)[EditorModel::class.java]
+            assertTrue(model.batchPhotos.value.isEmpty())
+            assertNull(model.source.value)
+        }
     }
     @Test fun languageAndThemeChangeOnScreenAndSurviveRecreation() {
         ui.onNodeWithContentDescription("Settings").performClick()

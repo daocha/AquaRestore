@@ -79,6 +79,82 @@ class MediaWorkflowTest {
         return result.uri!!.also { created += it }
     }
 
+    private suspend fun batch(photos: List<Uri>, selection: ExportSelection = ExportSelection()): ExportStatus {
+        withContext(Dispatchers.Main) { Exports.start(app, BatchPhotoRequest(photos, selection, false)) }
+        return withTimeout(60_000) { Exports.status.first { !it.busy } }.also {
+            created += it.batch!!.saved
+            assertNull(it.error)
+        }
+    }
+
+    @Test fun batchUsesEachPhotosDefaultRestorationAndRecommendedSize() = runBlocking {
+        val photos = listOf(photo(640, 360), photo(3000, 1500))
+        val result = batch(photos)
+        assertEquals("saved", result.stage)
+        assertEquals(2, result.batch!!.saved.size)
+        assertTrue(result.batch.failures.isEmpty())
+        for ((index, saved) in result.batch.saved.withIndex()) {
+            val source = MediaIO.inspect(app, photos[index])
+            val options = ExportSelection().photoOptions(source.width, source.height, source.mime)
+            val expected = MediaIO.bitmap(app, source.uri, if (options.original) 0 else options.longEdge)
+            val actual = MediaIO.bitmap(app, saved, 0)
+            try {
+                MediaIO.gradeBitmap(expected, MediaIO.analyze(app, source).grade) {}
+                assertEquals(expected.width, actual.width)
+                assertEquals(expected.height, actual.height)
+                assertTrue("Batch must use the same automatic grade as importing each photo", expected.sameAs(actual))
+            } finally { expected.recycle(); actual.recycle() }
+        }
+    }
+
+    @Test fun batchRejectsVideoAndContinuesAfterAnUnreadablePhoto() = runBlocking {
+        val bad = app.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "audit-corrupt-${System.nanoTime()}.png")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+        })!!.also { created += it }
+        app.contentResolver.openOutputStream(bad)!!.use { it.write(byteArrayOf(1, 2, 3)) }
+        val result = batch(listOf(photo(), media("audit-video.mp4", "video/mp4"), bad, photo()),
+            ExportSelection(mode = ExportMode.CUSTOM, longEdge = 320, quality = 72))
+        assertEquals("batchFinished", result.stage)
+        assertEquals(2, result.batch!!.saved.size)
+        assertEquals(2, result.batch.failures.size)
+        assertEquals("batchPhotosOnly", result.batch.failures.first().error)
+        result.batch.saved.forEach {
+            val saved = MediaIO.inspect(app, it)
+            assertEquals(320, saved.width)
+            assertEquals("image/jpeg", saved.mime)
+        }
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+    }
+
+    @Test fun batchCancellationKeepsCompletedPhotosAndAllowsAnotherExport() = runBlocking {
+        val photos = listOf(photo(), photo(3072, 3072), photo())
+        withContext(Dispatchers.Main) {
+            Exports.start(app, BatchPhotoRequest(photos, ExportSelection(mode = ExportMode.ORIGINAL), false))
+        }
+        withTimeout(30_000) { Exports.status.first { it.batch?.saved?.isNotEmpty() == true } }
+        withContext(Dispatchers.Main) { Exports.cancel(app) }
+        val result = withTimeout(30_000) { Exports.status.first { !it.busy } }
+        created += result.batch!!.saved
+        assertEquals("cancelled", result.stage)
+        assertEquals(1, result.batch.saved.size)
+        assertEquals(1, result.batch.completed)
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+        assertEquals(640, MediaIO.inspect(app, result.batch.saved.single()).width)
+        export(MediaIO.inspect(app, photos.first()), ExportOptions(original = false, longEdge = 320))
+        Unit
+    }
+
+    @Test fun batchRequestEnforcesSelectionLimitAndNoDuplicates() {
+        fun rejected(photos: List<Uri>) {
+            assertThrows(IllegalArgumentException::class.java) { BatchPhotoRequest(photos, ExportSelection(), false) }
+        }
+        rejected(emptyList())
+        rejected(List(MAX_BATCH_PHOTOS + 1) { Uri.parse("content://photos/$it") })
+        rejected(List(2) { Uri.parse("content://photos/1") })
+        assertEquals(MAX_BATCH_PHOTOS, BatchPhotoRequest(List(MAX_BATCH_PHOTOS) { Uri.parse("content://photos/$it") }, ExportSelection(), false).photos.size)
+    }
+
     /** Durations in ms of the audio and video tracks of an exported file. */
     private fun tracks(uri: Uri): Map<String, Long> {
         val extractor = android.media.MediaExtractor()

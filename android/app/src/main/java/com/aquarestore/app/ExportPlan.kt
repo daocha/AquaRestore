@@ -35,6 +35,13 @@ data class ExportSelection(
     val png: Boolean = false,
 )
 
+/** Resolve separately for each photo: Recommended follows that photo's size and format. */
+fun ExportSelection.photoOptions(width: Int, height: Int, mime: String): ExportOptions = when (mode) {
+    ExportMode.RECOMMENDED -> ExportRecommendation.photo(width, height, mime)
+    ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = png)
+    ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = longEdge, quality = quality, png = png)
+}
+
 object ExportRecommendation {
     /** Small photos keep full dimensions; large photos are reduced. PNG sources stay PNG, others become JPEG. */
     fun photo(width: Int, height: Int, mime: String = "image/jpeg"): ExportOptions =

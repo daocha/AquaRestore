@@ -15,6 +15,8 @@ class Strings(val chinese: Boolean) {
             "saving" to ("Saving to your gallery…" to "正在儲存至相簿…"),
             "saved" to ("Saved to your gallery" to "已儲存至相簿"),
             "cancelled" to ("Export cancelled" to "已取消匯出"),
+            "batchFinished" to ("Batch export finished" to "批次匯出已完成"),
+            "batchPhotosOnly" to ("Batch restore supports photos only. Videos cannot be processed in a batch." to "批次還原僅支援照片，無法批次處理影片。"),
             "hdrDevice" to ("HDR preservation requires Android 13+ and a compatible 10-bit HDR encoder. This device cannot provide that export. No automatic SDR conversion was performed." to "保留 HDR 需要 Android 13 以上及相容的 10-bit HDR 編碼器。此裝置無法提供該匯出，沒有自動轉換成 SDR。"),
             "dolbyVision" to ("Dolby Vision needs dynamic metadata processing that is not implemented yet. Standard HDR10 / PQ and HLG are supported on compatible devices." to "Dolby Vision 需要尚未實作的動態中繼資料處理。標準 HDR10／PQ 與 HLG 可在相容裝置上處理。"),
             "dynamicHdr" to ("HDR10+ dynamic metadata cannot currently be preserved. Please use a standard HDR10 or HLG source." to "目前無法保留 HDR10+ 動態中繼資料，請使用標準 HDR10 或 HLG 素材。"),
