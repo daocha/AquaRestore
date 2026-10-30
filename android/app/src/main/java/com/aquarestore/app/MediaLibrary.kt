@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -156,6 +157,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     val shown = remember(items, sort, section, selectedAlbum) {
         librarySorted(items.orEmpty().filter { section == "recent" || it.albumId == selectedAlbum }, sort, { it.name }, { it.date })
     }
+    val photoGrid = key(section, selectedAlbum, sort) { rememberLazyGridState() }
+    val photoKeys = remember(shown) { shown.map { it.uri.toString() } }
     // A remembered folder or album that is gone falls back to Recent.
     LaunchedEffect(albums) {
         if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
@@ -175,6 +178,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                     Text(s.text("${chosen.size} / $MAX_BATCH_PHOTOS selected · Photos only", "已選 ${chosen.size}／$MAX_BATCH_PHOTOS 張 · 僅限照片"),
                         style = MaterialTheme.typography.labelLarge)
                     Text(s.text("Select up to $MAX_BATCH_PHOTOS photos per batch.", "每批最多選擇 $MAX_BATCH_PHOTOS 張照片。"),
+                        style = MaterialTheme.typography.bodySmall)
+                    Text(s.text("Hold a photo, then drag to select or deselect more.", "長按照片後滑動，即可選取或取消選取多張照片。"),
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { onChoosePhotos?.invoke(chosen.map(Uri::parse)) }, enabled = chosen.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()) { Text(s.text("Continue (${chosen.size})", "繼續（${chosen.size}）")) }
@@ -253,7 +258,9 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                             LibraryCell(album.cover, "${album.name} · ${album.count}") { selectedAlbum = album.id }
                         }
                     }
-                    else -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize().testTag("libraryPhotos"),
+                    else -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize().testTag("libraryPhotos")
+                        .then(if (multiple) Modifier.photoDragSelection(photoGrid, photoKeys, chosen) { chosen = it } else Modifier),
+                        state = photoGrid,
                         contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(shown, key = { it.uri.toString() }) { item ->

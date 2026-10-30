@@ -44,7 +44,7 @@ Color correction requires re-encoding the video, so **Original does not mean bit
 
 Output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written to a temporary file first and then published with MediaStore's pending mechanism; failed or cancelled exports clean up their partial files, and the source is never overwritten.
 
-On Android, **Batch restore photos** on the home screen accepts up to 20 photos, with no videos. Choose Recommended, Original or Custom export settings once; each photo receives its own default intelligent restoration automatically, without opening the editor. Recommended adapts to each photo's dimensions and format. Batches show no estimated file size and process one photo at a time to limit memory use on midrange phones. Export continues in the background with progress and cancellation; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
+On Android, **Batch restore photos** on the home screen accepts up to 100 photos, with no videos. Hold a photo and drag across others to select or deselect a range; holding near the top or bottom scrolls through more photos. Choose Recommended, Original or Custom export settings once; each photo receives its own default intelligent restoration automatically, without opening the editor. Recommended adapts to each photo's dimensions and format. Batches show no estimated file size and process one photo at a time to limit memory use on midrange phones. Export continues in the background with progress and cancellation; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
 
 ## One-step build and release
 

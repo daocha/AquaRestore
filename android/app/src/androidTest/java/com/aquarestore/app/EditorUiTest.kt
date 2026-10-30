@@ -43,13 +43,94 @@ class EditorUiTest {
         uris.forEach { ui.activity.contentResolver.delete(it, null, null) }
         ui.runOnUiThread { model.preference("language", "system"); model.preference("theme", "system") }
     }
-    @Test fun batchPickerLimitsPhotosAndOpensQualityOptionsWithoutAnEstimate() {
+    @Test fun batchLongPressDragSelectsDeselectsAndScrollsTo100PhotoLimit() {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"
         automation.executeShellCommand("pm grant ${ui.activity.packageName} $permission").use { fd ->
             java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() }
         }
-        val names = (0..MAX_BATCH_PHOTOS).map { "batch-ui-${System.nanoTime()}-$it.png" }
+        val album = "Pictures/BatchDrag-${System.nanoTime()}"
+        val names = List(MAX_BATCH_PHOTOS + 30) { "drag-${it.toString().padStart(3, '0')}.png" }
+        val bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff205f9f.toInt()) }
+        names.forEach { name ->
+            val uri = ui.activity.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, album)
+            })!!
+            uris += uri
+            ui.activity.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        bitmap.recycle()
+        ui.runOnUiThread {
+            ui.activity.getSharedPreferences("preferences", 0).edit()
+                .putString("library_photos_section", "albums").putString("library_photos_album", album)
+                .putString("library_photos_sort", LibrarySort.NAME_AZ.name).apply()
+        }
+        ui.onNodeWithText("Batch restore photos").performScrollTo().performClick()
+        ui.waitUntil(15_000) { ui.onAllNodesWithTag("libraryPhotos").fetchSemanticsNodes().isNotEmpty() }
+        fun center(index: Int): Offset = ui.onNodeWithText(names[index]).fetchSemanticsNode().boundsInRoot.center -
+            ui.onNodeWithTag("libraryPhotos").fetchSemanticsNode().boundsInRoot.topLeft
+        fun check(index: Int, selected: Boolean) {
+            ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names[index]))
+            if (selected) ui.onNodeWithText(names[index]).assertIsSelected() else ui.onNodeWithText(names[index]).assertIsNotSelected()
+        }
+        val hold = android.view.ViewConfiguration.getLongPressTimeout().toLong() + 150
+        // Keep an unrelated selection; reverse the drag before lifting to shrink its range.
+        ui.onNodeWithText(names[6]).performClick()
+        var start = center(0); val second = center(1); val fourth = center(3)
+        ui.onNodeWithTag("libraryPhotos").performTouchInput {
+            down(start); advanceEventTime(hold); moveTo(fourth, 250); moveTo(second, 250); up()
+        }
+        ui.onNodeWithText("Continue (3)").assertIsEnabled()
+        check(0, true); check(1, true); check(2, false); check(3, false); check(6, true)
+        start = center(0)
+        val end = center(1)
+        ui.onNodeWithTag("libraryPhotos").performTouchInput {
+            down(start); advanceEventTime(hold); moveTo(end, 250); up()
+        }
+        ui.onNodeWithText("Continue (1)").assertIsEnabled()
+        check(0, false); check(1, false); check(6, true)
+        // A swipe without a hold still scrolls without altering the selection.
+        ui.onNodeWithTag("libraryPhotos").performTouchInput { swipeUp() }
+        ui.onNodeWithText("Continue (1)").assertIsEnabled()
+        check(6, true)
+        ui.onNodeWithText(names[6]).performClick()
+        ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names[0]))
+        start = center(0)
+        ui.onNodeWithTag("libraryPhotos").performTouchInput {
+            down(start); advanceEventTime(hold)
+            moveTo(Offset(start.x, height - 2f), 350)
+            // Deliver frames while the finger stays near the edge, as on a real touchscreen.
+            repeat(400) { moveBy(Offset.Zero, 16) }
+            up()
+        }
+        ui.onNodeWithText("Continue (", substring = true).assertTextEquals("Continue (100)").assertIsEnabled()
+        check(99, true)
+        check(100, false)
+        ui.onNodeWithText(names[100]).assertIsNotEnabled()
+        ui.onNodeWithText("Continue (100)").performClick()
+        ui.onNodeWithText("Export 100 photos").assertIsDisplayed()
+        ui.onNodeWithText("Cancel").performClick()
+        ui.onNodeWithText("Continue (100)").assertIsEnabled()
+        check(99, true)
+        ui.onNodeWithText("Continue (100)").performClick()
+        ui.onNodeWithText("Start export").performClick()
+        ui.waitUntil(60_000) { !Exports.status.value.busy && Exports.status.value.batch?.completed == 100 }
+        ui.runOnIdle {
+            assertEquals(100, Exports.status.value.batch!!.saved.size)
+            assertTrue(Exports.status.value.batch!!.failures.isEmpty())
+        }
+        ui.onNodeWithText("Choose photos").assertDoesNotExist()
+    }
+    @Test fun batchExportOptionsDismissalKeepsSelectionAndQualitySettings() {
+        val selectionCount = 5
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"
+        automation.executeShellCommand("pm grant ${ui.activity.packageName} $permission").use { fd ->
+            java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() }
+        }
+        val names = (0..selectionCount).map { "batch-ui-${System.nanoTime()}-$it.png" }
         val bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff205f9f.toInt()) }
         names.forEach { name ->
             val uri = ui.activity.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
@@ -73,15 +154,15 @@ class EditorUiTest {
             ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(name))
             ui.onNodeWithText(name).performClick()
         }
-        names.take(MAX_BATCH_PHOTOS).forEach(::pick)
-        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").assertIsEnabled()
+        names.take(selectionCount).forEach(::pick)
+        ui.onNodeWithText("Continue ($selectionCount)").assertIsEnabled()
         ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(names.last()))
-        ui.onNodeWithText(names.last()).assertIsNotEnabled()
+        ui.onNodeWithText(names.last()).assertIsNotSelected()
         pick(names.first())
         pick(names.last())
         ui.activityRule.scenario.recreate()
-        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
-        ui.onNodeWithText("Export $MAX_BATCH_PHOTOS photos").assertIsDisplayed()
+        ui.onNodeWithText("Continue ($selectionCount)").performClick()
+        ui.onNodeWithText("Export $selectionCount photos").assertIsDisplayed()
         ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
         ui.onNodeWithText("Custom").performClick()
         ui.onNodeWithText("Quality", substring = true).performScrollTo().assertIsDisplayed()
@@ -93,7 +174,7 @@ class EditorUiTest {
         ui.onNodeWithText("Cancel").performClick()
         fun assertSelectionKept() {
             ui.onNodeWithText("Choose photos").assertIsDisplayed()
-            ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").assertIsEnabled()
+            ui.onNodeWithText("Continue ($selectionCount)").assertIsEnabled()
             names.drop(1).forEach { name ->
                 ui.onNodeWithTag("libraryPhotos").performScrollToNode(hasText(name))
                 ui.onNodeWithText(name).assertIsSelected()
@@ -102,7 +183,7 @@ class EditorUiTest {
             ui.onNodeWithText(names.first()).assertIsNotSelected()
         }
         assertSelectionKept()
-        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
+        ui.onNodeWithText("Continue ($selectionCount)").performClick()
         // The left edge is outside the centered export dialog and inside the photo picker behind it.
         val time = android.os.SystemClock.uptimeMillis()
         listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
@@ -115,9 +196,9 @@ class EditorUiTest {
         }
         ui.waitForIdle()
         assertSelectionKept()
-        ui.onNodeWithText("Continue ($MAX_BATCH_PHOTOS)").performClick()
+        ui.onNodeWithText("Continue ($selectionCount)").performClick()
         ui.activityRule.scenario.recreate()
-        ui.onNodeWithText("Export $MAX_BATCH_PHOTOS photos").assertIsDisplayed()
+        ui.onNodeWithText("Export $selectionCount photos").assertIsDisplayed()
         listOf(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.ACTION_UP).forEach { action ->
             automation.injectInputEvent(android.view.KeyEvent(action, android.view.KeyEvent.KEYCODE_BACK), true)
         }

@@ -12,8 +12,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
-// Keep sessions manageable on midrange phones. The service only decodes one photo at a time.
-const val MAX_BATCH_PHOTOS = 20
+// The service only decodes one photo at a time, so a larger batch does not multiply image memory use.
+const val MAX_BATCH_PHOTOS = 100
 
 data class BatchPhotoRequest(val photos: List<Uri>, val selection: ExportSelection,
     override val chinese: Boolean) : ExportWork {
