@@ -72,12 +72,15 @@ data class SourceMedia(
 }
 
 object MediaIO {
+    fun displayName(context: Context, uri: Uri): String =
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        } ?: "Underwater"
+
     fun inspect(context: Context, uri: Uri): SourceMedia {
         val resolver = context.contentResolver
         val mime = resolver.getType(uri) ?: ""
-        val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
-        } ?: "Underwater"
+        val name = displayName(context, uri)
         if (!mime.startsWith("video/")) {
             var width = 0; var height = 0
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->

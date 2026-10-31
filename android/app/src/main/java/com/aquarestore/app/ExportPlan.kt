@@ -35,6 +35,24 @@ data class ExportSelection(
     val png: Boolean = false,
 )
 
+/** Resolve separately for each photo: Recommended follows that photo's size and format. */
+fun ExportSelection.photoOptions(width: Int, height: Int, mime: String): ExportOptions = when (mode) {
+    ExportMode.RECOMMENDED -> ExportRecommendation.photo(width, height, mime)
+    ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = png)
+    ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = longEdge, quality = quality, png = png)
+}
+
+/**
+ * Resolve separately for each video, as single export does: Recommended follows that video's size and rate.
+ * [outputFps] is the rate left after a speed change; a custom frame rate above it keeps the source timing.
+ */
+fun ExportSelection.videoOptions(width: Int, height: Int, fps: Float, outputFps: Float = fps): ExportOptions = when (mode) {
+    ExportMode.RECOMMENDED -> ExportRecommendation.video(width, height, fps)
+    ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = png)
+    ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = longEdge,
+        fps = this.fps.takeIf { it == 0 || it <= outputFps } ?: 0, quality = quality, png = png)
+}
+
 object ExportRecommendation {
     /** Small photos keep full dimensions; large photos are reduced. PNG sources stay PNG, others become JPEG. */
     fun photo(width: Int, height: Int, mime: String = "image/jpeg"): ExportOptions =

@@ -19,6 +19,20 @@ struct ExportStatus: Equatable {
     var stage = "exporting"
     var saved = false
     var error: String?
+    var batch: BatchExportStatus?
+}
+
+/// Photos or videos already copied out of the Photos library, each graded automatically and exported whole.
+struct BatchRequest {
+    let sources: [SourceMedia]
+    /// Picked items that could not be copied or read; reported with the rest.
+    let failures: [BatchFailure]
+    let selection: ExportSelection
+    let videos: Bool
+    let chinese: Bool
+    /// The app's copies of the picked files, removed when the batch ends.
+    let folders: [URL]
+    var total: Int { sources.count + failures.count }
 }
 
 /// A flag that background queues can poll, set when the export task is cancelled.
@@ -55,6 +69,7 @@ final class Exports: ObservableObject {
 
     func start(_ request: ExportRequest) {
         if status.busy { return }
+        batch = nil
         status = ExportStatus(busy: true)
         Platform.keepScreenAwake(true)
         task = Task { [weak self] in
@@ -79,8 +94,113 @@ final class Exports: ObservableObject {
         }
     }
 
+    /// The running batch's progress; read by `publish` for every update.
+    private var batch: BatchExportStatus?
+    /// The item whose export is running, or -1 between items. Progress arrives queued on the main thread, so a
+    /// finished item's last updates can land after it was counted, and would push the bar past it.
+    private var batchItem = -1
+
+    private func publish(_ progress: Int?, _ stage: String) {
+        guard status.busy, let batch else { return }
+        let overall = progress.map { min((batch.completed * 100 + $0) / max(batch.total, 1), 100) }
+        status = ExportStatus(busy: true, progress: overall, stage: stage, batch: batch)
+    }
+
+    func startBatch(_ request: BatchRequest) {
+        if status.busy { request.folders.forEach { try? FileManager.default.removeItem(at: $0) }; return }
+        // The player starts watching for this too, but a batch starts from the home screen, without a player.
+        AppActivity.observe()
+        batch = BatchExportStatus(total: request.total, failures: request.failures, videos: request.videos)
+        status = ExportStatus(busy: true, stage: "analyzing", batch: batch)
+        Platform.keepScreenAwake(true)
+        task = Task { [weak self] in
+            guard let self else { return }
+            var terminal = ExportStatus(error: "exportFailed")
+            do {
+                for (index, source) in request.sources.enumerated() {
+                    try Task.checkCancellation()
+                    self.batch?.currentName = source.name
+                    // Export pauses in the background; wait here too, so nothing starts while the app is away.
+                    try await BatchRun.whileInactive { self.publish(nil, "paused") }
+                    if request.videos && index > 0 { try await BatchRun.coolDown { self.publish(nil, "cooling") } }
+                    self.publish(0, "analyzing")
+                    do {
+                        if source.video != request.videos { throw MediaProblem(request.videos ? "batchVideosOnly" : "batchPhotosOnly") }
+                        let grade = try await MediaIO.analyze(source).grade
+                        try Task.checkCancellation()
+                        let options = request.videos ? request.selection.videoOptions(width: source.width, height: source.height,
+                                                                                     fps: source.fps, codec: source.codec, hdr: source.isHdr)
+                            : request.selection.photoOptions(width: source.width, height: source.height, pngSource: source.url.pathExtension.lowercased() == "png")
+                        // Checked before each video, since the earlier ones have used some of the space.
+                        if request.videos, let size = BatchRun.estimatedBytes(source, options),
+                           let free = BatchRun.freeSpace, free < batchVideoSpace([size]) { throw MediaProblem("storageFull") }
+                        self.batchItem = index
+                        try await Exporter.run(ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)) { progress, stage in
+                            DispatchQueue.main.async { if self.batchItem == index { self.publish(progress, stage) } }
+                        }
+                        self.batchItem = -1
+                        self.batch?.saved += 1
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        self.batchItem = -1
+                        NSLog("AquaRestore: batch item failed: \(error)")
+                        self.batch?.failures.append(BatchFailure(name: source.name, error: (error as? MediaProblem)?.key ?? "exportFailed"))
+                    }
+                    // Free the copy straight away; a batch of videos would otherwise hold all of them.
+                    try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
+                    self.publish(0, "exporting")
+                }
+                let failed = !(self.batch?.failures.isEmpty ?? true)
+                terminal = ExportStatus(progress: 100, stage: failed ? "batchFinished" : "saved", saved: (self.batch?.saved ?? 0) > 0)
+            } catch {
+                terminal = ExportStatus(stage: "cancelled")
+            }
+            request.folders.forEach { try? FileManager.default.removeItem(at: $0) }
+            Platform.keepScreenAwake(false)
+            self.batchItem = -1
+            self.task = nil
+            self.batch?.currentName = nil
+            terminal.batch = self.batch
+            self.batch = nil
+            self.status = terminal
+        }
+    }
+
     func cancel() { task?.cancel() }
     func dismissResult() { status = ExportStatus() }
+}
+
+/// Runs on the main actor with the batch, so its `waiting` callbacks can update the export status directly.
+@MainActor
+enum BatchRun {
+    /// Waits while AquaRestore is not the active app.
+    static func whileInactive(_ waiting: () -> Void) async throws {
+        while !AppActivity.active {
+            waiting()
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    /// Encoding back to back heats the phone until it throttles; let it cool between videos, for up to ten minutes.
+    static func coolDown(_ waiting: () -> Void) async throws {
+        let until = Date().addingTimeInterval(10 * 60)
+        while ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue && Date() < until {
+            waiting()
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+        }
+    }
+
+    static func estimatedBytes(_ source: SourceMedia, _ options: ExportOptions) -> Int64? {
+        videoExportPlan(width: source.width, height: source.height, fps: source.fps, sourceBitrate: source.bitrate,
+                        audioBitrate: source.audioBitrate, durationMs: source.durationMs, options: options).estimatedBytes
+    }
+
+    /// Free space where exports are written first, as iOS counts it for work the user asked for.
+    static var freeSpace: Int64? {
+        let values = try? FileManager.default.temporaryDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
 }
 
 enum Exporter {
@@ -134,9 +254,7 @@ enum Exporter {
         let audioMix = request.audio
         try MediaIO.requireHdrEncoder(source)
         // MP4 export supports AVC and HEVC here. Original must not silently change another codec.
-        let avc = ["avc1", "avc3"].contains(source.codec)
-        let hevc = ["hvc1", "hev1"].contains(source.codec)
-        if o.original && !(hevc || (avc && !source.isHdr)) {
+        if o.original && !canPreserveVideoCodec(source.codec, hdr: source.isHdr) {
             throw MediaProblem("originalCodec")
         }
 

@@ -16,21 +16,50 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
+sealed interface ExportWork { val chinese: Boolean }
 // The request holds a frozen grade and the original URI, never the proxy URI.
-data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, val chinese: Boolean,
-    val audio: AudioMix = AudioMix())
+data class ExportRequest(val source: SourceMedia, val grade: Grade, val options: ExportOptions, override val chinese: Boolean,
+    val audio: AudioMix = AudioMix()) : ExportWork
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
-    val stage: String = "exporting", val uri: Uri? = null, val error: String? = null)
+    val stage: String = "exporting", val uri: Uri? = null, val error: String? = null,
+    val batch: BatchExportStatus? = null)
+
+const val EXPORT_RESULT_NOTIFICATION = 8
+
+/** A video batch waits between videos while the phone is this hot, up to [MAX_COOLING_MS]. */
+const val COOLING_THERMAL_STATUS = PowerManager.THERMAL_STATUS_SEVERE
+const val MAX_COOLING_MS = 10 * 60 * 1000L
+
+/** The progress a batch starts with, or null for a single export. */
+fun ExportWork.batchStatus(): BatchExportStatus? = when (this) {
+    is ExportRequest -> null
+    is BatchPhotoRequest -> BatchExportStatus(photos.size)
+    is BatchVideoRequest -> BatchExportStatus(videos.size, videos = true)
+}
+
+/** What the finished-export notification says; null when the user cancelled, since they already know. */
+fun ExportStatus.resultNotice(s: Strings): Pair<String, String>? {
+    if (error == null && stage == "cancelled") return null
+    val title = if (error != null) s.text("Export failed", "匯出失敗") else s[stage]
+    val lines = listOfNotNull(error?.let { s[it] }, batch?.resultText(s),
+        if (batch == null && error == null) s.text("Find your restored media in Gallery / AquaRestore.", "還原作品已儲存至相簿／AquaRestore。") else null) +
+        batch?.failures.orEmpty().map { "${it.name}: ${s[it.error]}" }
+    return title to lines.joinToString("\n")
+}
 
 object Exports {
     val status = MutableStateFlow(ExportStatus())
-    internal var request: ExportRequest? = null
-    fun start(context: Context, request: ExportRequest) {
+    internal val activities = StartedActivities()
+    /** A finished export is announced by notification only while every activity is out of sight. */
+    val appVisible: Boolean get() = activities.visible
+    internal var request: ExportWork? = null
+    fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return
         this.request = request
-        status.value = ExportStatus(busy = true)
+        val batch = request.batchStatus()
+        status.value = ExportStatus(busy = true, batch = batch)
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
-        catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed") }
+        catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed", batch = batch) }
     }
     fun cancel(context: Context) { context.startService(Intent(context, ExportService::class.java).setAction("cancel")) }
 }
@@ -44,13 +73,16 @@ class ExportService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotification = 0L
     private var chinese = false
+    private var batch: BatchExportStatus? = null
+    /** Android ended the export because the service used up its daily foreground time, not the user. */
+    private var timedOut = false
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "cancel") {
             job?.cancel()
             if (job == null) {
                 Exports.request = null
-                Exports.status.value = ExportStatus(stage = "cancelled")
+                Exports.status.value = ExportStatus(stage = "cancelled", batch = Exports.status.value.batch)
                 stopSelf(startId)
             }
             return START_NOT_STICKY
@@ -58,6 +90,8 @@ class ExportService : Service() {
         if (job != null) return START_NOT_STICKY
         val request = Exports.request ?: run { stopSelf(); return START_NOT_STICKY }
         chinese = request.chinese
+        batch = request.batchStatus()
+        timedOut = false
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
         try {
@@ -69,17 +103,21 @@ class ExportService : Service() {
         } catch (e: Exception) {
             android.util.Log.e("AquaRestore", "Could not start export service", e)
             Exports.request = null
-            Exports.status.value = ExportStatus(error = "exportFailed")
+            Exports.status.value = ExportStatus(error = "exportFailed", batch = batch)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         job = scope.launch {
             var terminal = ExportStatus(error = "exportFailed")
             try {
-                val uri = export(request)
-                terminal = ExportStatus(progress = 100, uri = uri, stage = "saved")
+                terminal = when (request) {
+                    is ExportRequest -> ExportStatus(progress = 100, uri = export(request), stage = "saved")
+                    is BatchPhotoRequest -> { exportBatch(request); batchFinished() }
+                    is BatchVideoRequest -> { exportVideoBatch(request); batchFinished() }
+                }
             } catch (e: CancellationException) {
-                terminal = ExportStatus(stage = "cancelled")
+                // A timeout is reported as a failure, so the user is told why it stopped, also by notification.
+                terminal = if (timedOut) ExportStatus(error = "timedOut") else ExportStatus(stage = "cancelled")
             } catch (e: Exception) {
                 android.util.Log.e("AquaRestore", "Export failed", e)
                 terminal = ExportStatus(error = (e as? MediaProblem)?.key ?: "exportFailed")
@@ -89,10 +127,25 @@ class ExportService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 job = null
                 stopSelf(startId)
-                Exports.status.value = terminal
+                // Sent before the status changes; the system still shows it a moment later, asynchronously.
+                if (!Exports.appVisible) try { notifyResult(terminal.copy(batch = batch)) }
+                    catch (e: Exception) { android.util.Log.w("AquaRestore", "Could not post the export result", e) }
+                Exports.status.value = terminal.copy(batch = batch)
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun notifyResult(status: ExportStatus) {
+        val (title, text) = status.resultNotice(Strings(chinese)) ?: return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel("exportResults",
+            if (chinese) "匯出結果" else "Export results", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        manager.notify(EXPORT_RESULT_NOTIFICATION, NotificationCompat.Builder(this, "exportResults")
+            .setSmallIcon(R.drawable.ic_notification).setColor(0xFF3EDBC0.toInt())
+            .setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(open).setAutoCancel(true).build())
     }
 
     private fun notification(progress: Int?): Notification {
@@ -100,17 +153,110 @@ class ExportService : Service() {
         val cancel = PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction("cancel"), PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, "exports").setSmallIcon(R.drawable.ic_notification).setColor(0xFF3EDBC0.toInt())
             .setContentTitle("AquaRestore")
-            .setContentText(if (chinese) "正在匯出修復作品…" else "Exporting your restored media…")
+            .setContentText(batch?.progressText(Strings(chinese)) ?: if (chinese) "正在匯出修復作品…" else "Exporting your restored media…")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setProgress(100, progress ?: 0, progress == null)
             .addAction(0, if (chinese) "取消" else "Cancel", cancel).build()
     }
 
     private fun update(value: Int?, stage: String = "exporting") {
-        Exports.status.value = ExportStatus(busy = true, progress = value, stage = stage)
+        val overall = batch?.let { ((it.completed * 100 + (value ?: 0)) / it.total).coerceAtMost(100) } ?: value
+        Exports.status.value = ExportStatus(busy = true, progress = overall, stage = stage, batch = batch)
         if (SystemClock.elapsedRealtime() - lastNotification > 800) {
-            getSystemService(NotificationManager::class.java).notify(7, notification(value))
+            getSystemService(NotificationManager::class.java).notify(7, notification(overall))
             lastNotification = SystemClock.elapsedRealtime()
+        }
+    }
+
+    private suspend fun exportBatch(request: BatchPhotoRequest) {
+        for ((index, uri) in request.photos.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            batch = batch!!.copy(currentName = Strings(chinese).text("Photo ${index + 1}", "照片 ${index + 1}"))
+            update(0, "analyzing")
+            // Failures before export mean the photo itself could not be read, not that saving failed.
+            var reading = true
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    batch = batch!!.copy(currentName = MediaIO.displayName(this@ExportService, uri))
+                    // Reject videos before inspection or analysis, even if a caller bypasses the picker.
+                    val mime = contentResolver.getType(uri)
+                    if (mime != null && !mime.startsWith("image/")) throw MediaProblem("batchPhotosOnly")
+                    MediaIO.inspect(this@ExportService, uri).also {
+                        if (it.video) throw MediaProblem("batchPhotosOnly")
+                    }
+                }
+                batch = batch!!.copy(currentName = source.name)
+                val grade = MediaIO.analyze(this, source).grade
+                currentCoroutineContext().ensureActive()
+                val options = request.selection.photoOptions(source.width, source.height, source.mime)
+                reading = false
+                val saved = export(ExportRequest(source, grade, options, chinese))
+                // Publication finishes even if cancelled at the last instant; count that saved photo.
+                batch = batch!!.copy(saved = batch!!.saved + saved)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                android.util.Log.w("AquaRestore", "Batch photo failed", e)
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
+                    (e as? MediaProblem)?.key ?: if (reading) "photoUnreadable" else "exportFailed"))
+            } catch (_: OutOfMemoryError) {
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!, "memory"))
+            }
+            update(0)
+        }
+        batch = batch!!.copy(currentName = null)
+    }
+
+    private fun batchFinished() = ExportStatus(progress = 100, stage = if (batch!!.failures.isEmpty()) "saved" else "batchFinished")
+
+    private suspend fun exportVideoBatch(request: BatchVideoRequest) {
+        for ((index, uri) in request.videos.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            batch = batch!!.copy(currentName = Strings(chinese).text("Video ${index + 1}", "影片 ${index + 1}"))
+            if (index > 0) coolDown()
+            update(0, "analyzing")
+            var reading = true
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    batch = batch!!.copy(currentName = MediaIO.displayName(this@ExportService, uri))
+                    val mime = contentResolver.getType(uri)
+                    if (mime != null && !mime.startsWith("video/")) throw MediaProblem("batchVideosOnly")
+                    MediaIO.withHdrSupport(MediaIO.inspect(this@ExportService, uri).also {
+                        if (!it.video) throw MediaProblem("batchVideosOnly")
+                    })
+                }
+                batch = batch!!.copy(currentName = source.name)
+                val grade = try { MediaIO.analyze(this, source).grade } catch (e: MediaProblem) {
+                    // The editor decodes such a video in software into a copy first; a batch leaves that to the editor.
+                    if (e.key != "analysisFailed") throw e
+                    throw MediaProblem(if (withContext(Dispatchers.IO) { MediaIO.softwareDecodes(source) }) "videoNeedsEditor" else "tooLarge")
+                }
+                currentCoroutineContext().ensureActive()
+                val options = request.options(source)
+                // Checked before each video, since the earlier ones have used some of the space.
+                estimatedVideoBytes(source, options)?.let { size ->
+                    if (cacheDir.usableSpace < batchVideoSpace(listOf(size))) throw MediaProblem("storageFull")
+                }
+                reading = false
+                val saved = export(ExportRequest(source, grade, options, chinese))
+                batch = batch!!.copy(saved = batch!!.saved + saved)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                android.util.Log.w("AquaRestore", "Batch video failed", e)
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
+                    (e as? MediaProblem)?.key ?: if (reading) "videoUnreadable" else "exportFailed"))
+            }
+            update(0)
+        }
+        batch = batch!!.copy(currentName = null)
+    }
+
+    /** Encoding back to back heats the phone until it throttles; let it cool between videos instead. */
+    private suspend fun coolDown() {
+        val power = getSystemService(PowerManager::class.java)
+        val until = SystemClock.elapsedRealtime() + MAX_COOLING_MS
+        while (power.currentThermalStatus >= COOLING_THERMAL_STATUS && SystemClock.elapsedRealtime() < until) {
+            update(null, "cooling")
+            delay(10_000)
         }
     }
 
@@ -198,7 +344,7 @@ class ExportService : Service() {
         }
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) { job?.cancel(); stopSelf() }
+    override fun onTimeout(startId: Int, fgsType: Int) { timedOut = true; job?.cancel(); stopSelf() }
     override fun onDestroy() {
         scope.cancel()
         if (wakeLock?.isHeld == true) wakeLock?.release()

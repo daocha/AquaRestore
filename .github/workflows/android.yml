@@ -39,3 +39,56 @@ jobs:
         with:
           name: AquaRestore-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+  # Shader, export and UI tests need a real Android system, so they run on an emulator.
+  device-tests:
+    name: Device tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Fetch the private grading core
+        if: env.HAS_CORE == 'true'
+        env:
+          CORE_DEPLOY_KEY: ${{ secrets.CORE_DEPLOY_KEY }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/core_key"
+          printf '%s\n' "$CORE_DEPLOY_KEY" > "$RUNNER_TEMP/core_key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/core_key -o IdentitiesOnly=yes" git submodule update --init --depth 1 core
+          rm "$RUNNER_TEMP/core_key"
+      - name: Use the basic stub core
+        if: env.HAS_CORE != 'true'
+        run: scripts/use-core-stub.sh
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      # Hardware acceleration; without it the emulator is too slow to boot within the timeout.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          # A common phone screen; without a profile the emulator gets a small default one.
+          profile: pixel_5
+          ram-size: 4096M
+          disk-size: 6G
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          working-directory: android
+          script: ./gradlew --console=plain :app:connectedDebugAndroidTest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: device-test-report
+          path: android/app/build/reports/androidTests/

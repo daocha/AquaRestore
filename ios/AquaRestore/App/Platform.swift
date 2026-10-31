@@ -134,6 +134,7 @@ enum Platform {
         UIApplication.shared.open(url)
     }
     @MainActor static func keepScreenAwake(_ on: Bool) { UIApplication.shared.isIdleTimerDisabled = on }
+    @MainActor static func copy(_ text: String) { UIPasteboard.general.string = text }
     static var physicalMemory: UInt64 { ProcessInfo.processInfo.physicalMemory }
 }
 
@@ -182,6 +183,10 @@ struct TouchArea: View {
 enum Platform {
     @MainActor static func openPhotos() {}
     @MainActor static func keepScreenAwake(_ on: Bool) {}
+    @MainActor static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
     static var physicalMemory: UInt64 { ProcessInfo.processInfo.physicalMemory }
 }
 

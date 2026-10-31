@@ -6,6 +6,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 20
     env:
       HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
     steps:
@@ -29,8 +30,21 @@ jobs:
       - name: Generate the Xcode project
         run: brew install xcodegen && xcodegen generate
         working-directory: ios
-      - name: Build for the simulator
+      - name: App and core tests on an iPhone simulator
         run: |
-          xcodebuild build -project AquaRestore.xcodeproj -scheme AquaRestore -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+          simulator_id="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(device["udid"] for runtime in devices.values() for device in runtime
+                     if device.get("isAvailable") and device["name"].startswith("iPhone")))
+          ')"
+          xcodebuild test -project AquaRestore.xcodeproj -scheme AquaRestore -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build \
+            -parallel-testing-enabled NO -resultBundlePath build/AppTests.xcresult CODE_SIGNING_ALLOWED=NO
         working-directory: ios
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: ios/build/AppTests.xcresult
+          if-no-files-found: ignore

@@ -9,7 +9,7 @@ struct Palette {
     let primary: Color, onPrimary: Color, background: Color, onBackground: Color, surface: Color, surfaceVariant: Color
     let onSurface: Color, onSurfaceVariant: Color
     let primaryContainer: Color, onPrimaryContainer: Color, secondaryContainer: Color, onSecondaryContainer: Color
-    let tertiary: Color, outline: Color, outlineVariant: Color, errorContainer: Color, dialog: Color
+    let tertiary: Color, outline: Color, outlineVariant: Color, error: Color, errorContainer: Color, dialog: Color
 
     static let aqua = Color(hex: 0x45DDC2)
     static let night = Color(hex: 0x09191F)
@@ -19,14 +19,14 @@ struct Palette {
         primaryContainer: Color(hex: 0x4F378B), onPrimaryContainer: Color(hex: 0xEADDFF),
         secondaryContainer: Color(hex: 0x4A4458), onSecondaryContainer: Color(hex: 0xE8DEF8),
         tertiary: Color(hex: 0xEFB8C8), outline: Color(hex: 0x938F99), outlineVariant: Color(hex: 0x49454F),
-        errorContainer: Color(hex: 0x8C1D18), dialog: Color(hex: 0x2B2930))
+        error: Color(hex: 0xF2B8B5), errorContainer: Color(hex: 0x8C1D18), dialog: Color(hex: 0x2B2930))
     static let lightScheme = Palette(dark: false, primary: Color(hex: 0x007D70), onPrimary: .white, background: Color(hex: 0xF2F7F6),
         onBackground: Color(hex: 0x1D1B20), surface: .white, surfaceVariant: Color(hex: 0xE2EEEB), onSurface: Color(hex: 0x102D35),
         onSurfaceVariant: Color(hex: 0x526E73),
         primaryContainer: Color(hex: 0xEADDFF), onPrimaryContainer: Color(hex: 0x21005D),
         secondaryContainer: Color(hex: 0xE8DEF8), onSecondaryContainer: Color(hex: 0x1D192B),
         tertiary: Color(hex: 0x7D5260), outline: Color(hex: 0x79747E), outlineVariant: Color(hex: 0xCAC4D0),
-        errorContainer: Color(hex: 0xF9DEDC), dialog: Color(hex: 0xECE6F0))
+        error: Color(hex: 0xB3261E), errorContainer: Color(hex: 0xF9DEDC), dialog: Color(hex: 0xECE6F0))
 
     /// Content of disabled components.
     var disabledContent: Color { onSurface.opacity(0.38) }

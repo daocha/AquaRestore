@@ -1,11 +1,17 @@
 package com.aquarestore.app
 
+import android.Manifest
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ActivityScenario
@@ -77,6 +83,164 @@ class MediaWorkflowTest {
         assertEquals("saved", result.stage)
         assertNotNull(result.uri)
         return result.uri!!.also { created += it }
+    }
+
+    private suspend fun batch(photos: List<Uri>, selection: ExportSelection = ExportSelection()): ExportStatus {
+        withContext(Dispatchers.Main) { Exports.start(app, BatchPhotoRequest(photos, selection, false)) }
+        return withTimeout(60_000) { Exports.status.first { !it.busy } }.also {
+            created += it.batch!!.saved
+            assertNull(it.error)
+        }
+    }
+
+    @Test fun batchUsesEachPhotosDefaultRestorationAndRecommendedSize() = runBlocking {
+        val photos = listOf(photo(640, 360), photo(3000, 1500))
+        val result = batch(photos)
+        assertEquals("saved", result.stage)
+        assertEquals(2, result.batch!!.saved.size)
+        assertTrue(result.batch.failures.isEmpty())
+        for ((index, saved) in result.batch.saved.withIndex()) {
+            val source = MediaIO.inspect(app, photos[index])
+            val options = ExportSelection().photoOptions(source.width, source.height, source.mime)
+            val expected = MediaIO.bitmap(app, source.uri, if (options.original) 0 else options.longEdge)
+            val actual = MediaIO.bitmap(app, saved, 0)
+            try {
+                MediaIO.gradeBitmap(expected, MediaIO.analyze(app, source).grade) {}
+                assertEquals(expected.width, actual.width)
+                assertEquals(expected.height, actual.height)
+                assertTrue("Batch must use the same automatic grade as importing each photo", expected.sameAs(actual))
+            } finally { expected.recycle(); actual.recycle() }
+        }
+    }
+
+    @Test fun batchRejectsVideoAndContinuesAfterAnUnreadablePhoto() = runBlocking {
+        val bad = app.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "audit-corrupt-${System.nanoTime()}.png")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+        })!!.also { created += it }
+        app.contentResolver.openOutputStream(bad)!!.use { it.write(byteArrayOf(1, 2, 3)) }
+        val result = batch(listOf(photo(), media("audit-video.mp4", "video/mp4"), bad, photo()),
+            ExportSelection(mode = ExportMode.CUSTOM, longEdge = 320, quality = 72))
+        assertEquals("batchFinished", result.stage)
+        assertEquals(2, result.batch!!.saved.size)
+        assertEquals(2, result.batch.failures.size)
+        assertEquals(listOf("batchPhotosOnly", "photoUnreadable"), result.batch.failures.map { it.error })
+        result.batch.saved.forEach {
+            val saved = MediaIO.inspect(app, it)
+            assertEquals(320, saved.width)
+            assertEquals("image/jpeg", saved.mime)
+        }
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+    }
+
+    @Test fun finishedExportNotifiesOnlyWhileTheAppIsInTheBackground() = runBlocking {
+        if (Build.VERSION.SDK_INT >= 33) InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        val notifications = app.getSystemService(NotificationManager::class.java)
+        fun result() = notifications.activeNotifications.firstOrNull { it.id == EXPORT_RESULT_NOTIFICATION }
+        // The system posts and removes notifications asynchronously, after notify() and cancel() return.
+        suspend fun awaitResult(shown: Boolean) = withTimeoutOrNull(5_000) {
+            while ((result() != null) != shown) delay(100)
+        } != null
+        batch(listOf(photo()))
+        assertFalse("The app shows the result itself while it is open", awaitResult(shown = true))
+        scenario.moveToState(Lifecycle.State.CREATED)
+        Exports.status.value = ExportStatus()
+        val result = batch(listOf(photo(), media("audit-video.mp4", "video/mp4")))
+        assertEquals("batchFinished", result.stage)
+        assertTrue("A finished export in the background posts its result", awaitResult(shown = true))
+        val text = result()!!.notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+        assertTrue(text, text.contains("1 of 2 photos saved") && text.contains("photos only"))
+        scenario.moveToState(Lifecycle.State.RESUMED)
+        assertTrue("Returning to the app clears the notification", awaitResult(shown = false))
+    }
+
+    @Test fun visibilitySurvivesMultipleActivitiesAndRecreation() {
+        // A notification can open a second MainActivity while the original is still in its task.
+        val intent = Intent(app, MainActivity::class.java).setAction("com.aquarestore.app.test.SECOND_ACTIVITY")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        val second = ActivityScenario.launch<MainActivity>(intent)
+        try {
+            scenario.moveToState(Lifecycle.State.CREATED)
+            assertTrue("The second activity is still visible", Exports.appVisible)
+        } finally { second.close() }
+        // Finishing the top task lets Android bring the original task forward again.
+        scenario.moveToState(Lifecycle.State.RESUMED)
+        assertTrue("Clearing the other activity's ViewModel must not hide the original", Exports.appVisible)
+        var before: ActivityVisibilityModel? = null
+        scenario.onActivity { before = ViewModelProvider(it)[ActivityVisibilityModel::class.java] }
+        scenario.recreate()
+        scenario.onActivity { assertSame(before, ViewModelProvider(it)[ActivityVisibilityModel::class.java]) }
+        assertTrue("Rotation must retain visibility", Exports.appVisible)
+        scenario.moveToState(Lifecycle.State.CREATED)
+        assertFalse("No started activities remain", Exports.appVisible)
+    }
+
+    @Test fun batchCancellationKeepsCompletedPhotosAndAllowsAnotherExport() = runBlocking {
+        val photos = listOf(photo(), photo(3072, 3072), photo())
+        withContext(Dispatchers.Main) {
+            Exports.start(app, BatchPhotoRequest(photos, ExportSelection(mode = ExportMode.ORIGINAL), false))
+        }
+        withTimeout(30_000) { Exports.status.first { it.batch?.saved?.isNotEmpty() == true } }
+        withContext(Dispatchers.Main) { Exports.cancel(app) }
+        val result = withTimeout(30_000) { Exports.status.first { !it.busy } }
+        created += result.batch!!.saved
+        assertEquals("cancelled", result.stage)
+        assertEquals(1, result.batch.saved.size)
+        assertEquals(1, result.batch.completed)
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+        assertEquals(640, MediaIO.inspect(app, result.batch.saved.single()).width)
+        export(MediaIO.inspect(app, photos.first()), ExportOptions(original = false, longEdge = 320))
+        Unit
+    }
+
+    @Test fun batchRequestEnforcesSelectionLimitAndNoDuplicates() {
+        fun rejected(photos: List<Uri>) {
+            assertThrows(IllegalArgumentException::class.java) { BatchPhotoRequest(photos, ExportSelection(), false) }
+        }
+        rejected(emptyList())
+        rejected(List(MAX_BATCH_PHOTOS + 1) { Uri.parse("content://photos/$it") })
+        rejected(List(2) { Uri.parse("content://photos/1") })
+        assertEquals(MAX_BATCH_PHOTOS, BatchPhotoRequest(List(MAX_BATCH_PHOTOS) { Uri.parse("content://photos/$it") }, ExportSelection(), false).photos.size)
+    }
+
+    @Test fun videoBatchRestoresEachVideoWholeAndSkipsPhotos() = runBlocking {
+        val videos = listOf(media("audit-video.mp4", "video/mp4"), photo(), media("audit-rotated.mp4", "video/mp4"))
+        withContext(Dispatchers.Main) { Exports.start(app, BatchVideoRequest(videos, ExportSelection(), false)) }
+        assertTrue(Exports.status.value.batch!!.videos)
+        val result = withTimeout(180_000) { Exports.status.first { !it.busy } }
+        created += result.batch!!.saved
+        assertNull(result.error)
+        assertEquals("batchFinished", result.stage)
+        assertEquals(listOf("batchVideosOnly"), result.batch.failures.map { it.error })
+        assertEquals(2, result.batch.saved.size)
+        for ((saved, original) in result.batch.saved.zip(listOf(videos[0], videos[2]))) {
+            val source = MediaIO.inspect(app, original)
+            val output = MediaIO.inspect(app, saved)
+            assertTrue(output.video)
+            val options = ExportSelection().videoOptions(source.width, source.height, source.fps)
+            val expected = if (options.original) source.width to source.height
+                else ExportSizing.dimensions(source.width, source.height, options.longEdge, true)
+            assertEquals(expected.first to expected.second, output.width to output.height)
+            // The whole clip, at normal speed.
+            assertEquals(source.durationMs.toDouble(), output.durationMs.toDouble(), 150.0)
+        }
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+    }
+
+    @Test fun videoBatchRequestEnforcesSelectionLimitAndNoDuplicates() {
+        fun rejected(videos: List<Uri>) {
+            assertThrows(IllegalArgumentException::class.java) { BatchVideoRequest(videos, ExportSelection(), false) }
+        }
+        rejected(emptyList())
+        rejected(List(MAX_BATCH_VIDEOS + 1) { Uri.parse("content://videos/$it") })
+        rejected(List(2) { Uri.parse("content://videos/1") })
+        val request = BatchVideoRequest(List(MAX_BATCH_VIDEOS) { Uri.parse("content://videos/$it") }, ExportSelection(), false)
+        assertEquals(MAX_BATCH_VIDEOS, request.batchStatus()!!.total)
+        val options = request.options(SourceMedia(Uri.EMPTY, "clip.mp4", true, 3840, 2160, 60_000, 60f, 40_000_000))
+        assertEquals(1f, options.speed)
+        assertEquals(0L, options.startMs)
+        assertEquals(0L, options.endMs)
     }
 
     /** Durations in ms of the audio and video tracks of an exported file. */

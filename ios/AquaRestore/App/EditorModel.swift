@@ -3,6 +3,17 @@ import Combine
 import PhotosUI
 import SwiftUI
 
+struct BatchDraft: Equatable {
+    let id = UUID()
+    let videos: Bool
+    let total: Int
+    var prepared = 0
+    var sources: [SourceMedia] = []
+    var failures: [BatchFailure] = []
+    var folders: [URL] = []
+    var ready = false
+}
+
 @MainActor
 final class EditorModel: ObservableObject {
     private let defaults = UserDefaults.standard
@@ -39,6 +50,8 @@ final class EditorModel: ObservableObject {
     @Published var musicLoading = false
     /// Emitted after the song window moves: replay the video from the trim start to hear it.
     let audition = PassthroughSubject<Void, Never>()
+    /// Photos or videos picked for a batch, being copied out of the Photos library for the export dialog.
+    @Published var batchDraft: BatchDraft?
 
     lazy var player = PlayerController(model: self)
     var playbackPositionMs: Int64 = 0
@@ -48,6 +61,7 @@ final class EditorModel: ObservableObject {
     private var importTask: Task<Void, Never>?
     private var gradeTask: Task<Void, Never>?
     private var musicTask: Task<Void, Never>?
+    private var batchTask: Task<Void, Never>?
     private var backgroundTasks: [Task<Void, Never>] = []
     private var sourceFolder: URL?
     private var musicFolder: URL?
@@ -182,6 +196,71 @@ final class EditorModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: Batch
+
+    /// Copies each picked item into this app's own folder, one at a time, and reads its size, so the dialog can
+    /// estimate the batch. Items that cannot be copied or read are reported as failed with the rest.
+    func prepareBatch(_ items: [PhotosPickerItem], videos: Bool, strings s: Strings) {
+        prepareBatch(items, videos: videos, strings: s,
+                     load: { try await $0.loadTransferable(type: PickedFile.self) }, inspect: MediaIO.inspect)
+    }
+
+    @discardableResult
+    func prepareBatch<Item>(_ items: [Item], videos: Bool, strings s: Strings,
+                            load: @escaping (Item) async throws -> PickedFile?,
+                            inspect: @escaping (URL) async throws -> SourceMedia) -> Task<Void, Never>? {
+        if Exports.shared.status.busy || items.isEmpty { return nil }
+        discardBatch()
+        let picked = Array(items.prefix(videos ? BatchLimits.videos : BatchLimits.photos))
+        let draft = BatchDraft(videos: videos, total: picked.count)
+        batchDraft = draft
+        batchTask = Task { [weak self] in
+            for (index, item) in picked.enumerated() {
+                let file = try? await load(item)
+                guard let self, !Task.isCancelled, self.batchDraft?.id == draft.id else {
+                    if let file { try? FileManager.default.removeItem(at: file.folder) }
+                    return
+                }
+                let fallback = videos ? s.text("Video \(index + 1)", "影片 \(index + 1)") : s.text("Photo \(index + 1)", "照片 \(index + 1)")
+                let unreadable = videos ? "videoUnreadable" : "photoUnreadable"
+                if let file {
+                    self.batchDraft?.folders.append(file.folder)
+                    do {
+                        let media = try await inspect(file.url)
+                        guard !Task.isCancelled, self.batchDraft?.id == draft.id else { return }
+                        if media.video != videos { throw MediaProblem(videos ? "batchVideosOnly" : "batchPhotosOnly") }
+                        self.batchDraft?.sources.append(media)
+                    } catch {
+                        guard !Task.isCancelled, self.batchDraft?.id == draft.id else { return }
+                        self.batchDraft?.failures.append(BatchFailure(name: file.url.lastPathComponent, error: (error as? MediaProblem)?.key ?? unreadable))
+                    }
+                } else {
+                    self.batchDraft?.failures.append(BatchFailure(name: fallback, error: unreadable))
+                }
+                self.batchDraft?.prepared = index + 1
+            }
+            guard !Task.isCancelled, self?.batchDraft?.id == draft.id else { return }
+            self?.batchDraft?.ready = true
+        }
+        return batchTask
+    }
+
+    /// Closes the batch dialog and removes the copies.
+    func discardBatch() {
+        batchTask?.cancel()
+        batchTask = nil
+        batchDraft?.folders.forEach { try? FileManager.default.removeItem(at: $0) }
+        batchDraft = nil
+    }
+
+    /// Hands the prepared batch to the export, which removes the copies when it ends.
+    func takeBatch() -> BatchDraft? {
+        guard let draft = batchDraft, draft.ready else { return nil }
+        batchTask = nil
+        batchDraft = nil
+        return draft
     }
 
     // MARK: Music

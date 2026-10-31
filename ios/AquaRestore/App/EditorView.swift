@@ -22,6 +22,7 @@ struct PickedFile: Transferable {
 struct EditorView: View {
     @ObservedObject var model: EditorModel
     @ObservedObject private var exports = Exports.shared
+    @ObservedObject private var devTools = DevTools.shared
     @Environment(\.palette) private var c
     @Environment(\.strings) private var s
     @Environment(\.compact) private var compact
@@ -38,6 +39,9 @@ struct EditorView: View {
     @State private var showPicker = false
     @State private var showMusicPicker = false
     @State private var pickedItem: PhotosPickerItem?
+    @State private var showBatchPicker = false
+    @State private var batchVideos = false
+    @State private var batchItems: [PhotosPickerItem] = []
     @State private var scrollToTop = 0
 
     private var export: ExportStatus { exports.status }
@@ -52,6 +56,10 @@ struct EditorView: View {
                 if !maximized { topBar }
                 content
             }
+            // Its own view, so it does not share a modifier slot with the single-item picker.
+            .photosPicker(isPresented: $showBatchPicker, selection: $batchItems,
+                          maxSelectionCount: batchVideos ? BatchLimits.videos : BatchLimits.photos, selectionBehavior: .ordered,
+                          matching: batchVideos ? .videos : .images, preferredItemEncoding: .current)
             dialogs
         }
         .animation(.easeOut(duration: 0.15), value: dialogKey)
@@ -81,10 +89,30 @@ struct EditorView: View {
             scrollToTop += 1
         }
         .onChange(of: export.busy) { value in if value { showProgress = true } }
+        .onChange(of: batchItems) { items in
+            guard !items.isEmpty else { return }
+            batchItems = []
+            model.prepareBatch(items, videos: batchVideos, strings: s)
+        }
+        // Back from another app mid-batch: show the progress again, with its reminder to stay.
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("UIApplicationDidBecomeActiveNotification"))) { _ in
+            if export.busy && export.batch != nil { showProgress = true }
+        }
+    }
+
+    private func pickBatch(videos: Bool) {
+        batchVideos = videos
+        showBatchPicker = true
+    }
+
+    /// The batch's own reminder: iOS pauses the export whenever AquaRestore is not on screen.
+    private var keepOpenText: String {
+        s.text("Keep AquaRestore open and the screen on until the batch finishes. Leaving the app pauses it; it continues when you return.",
+               "批次完成前請保持 AquaRestore 開啟並維持螢幕亮著。離開 App 會暫停批次，返回後才會繼續。")
     }
 
     private var dialogKey: String {
-        "\(export.busy && showProgress)\(model.error ?? "")\(export.saved)\(export.error ?? "")\(export.stage)\(settings)\(confirmClose)\(showExport)"
+        "\(export.busy && showProgress)\(model.error ?? "")\(export.saved)\(export.error ?? "")\(export.stage)\(settings)\(confirmClose)\(showExport)\(model.batchDraft != nil)"
     }
 
     // While exporting, closing just leaves the editor: the export keeps its own copy of the file.
@@ -162,9 +190,14 @@ struct EditorView: View {
         if export.busy {
             Panel {
                 MText(s[export.stage], weight: .semibold)
+                if let batch = export.batch { MText(batch.progressText(s), maxLines: 2) }
                 Progress(value: export.progress)
-                MText(s.text("Keep AquaRestore open until the export finishes. It pauses while the app is in the background.",
-                             "匯出完成前請保持 AquaRestore 開啟；App 在背景時匯出會暫停。"), size: 12)
+                if export.batch != nil {
+                    MText(keepOpenText, size: 12, weight: .semibold, color: c.error)
+                } else {
+                    MText(s.text("Keep AquaRestore open until the export finishes. It pauses while the app is in the background.",
+                                 "匯出完成前請保持 AquaRestore 開啟；App 在背景時匯出會暫停。"), size: 12)
+                }
                 M3TextButton(title: s.text("Cancel export", "取消匯出")) { exports.cancel() }
             }
         }
@@ -183,6 +216,19 @@ struct EditorView: View {
         M3Button(title: s.text("Import video or photo", "匯入影片或照片"), icon: .addPhotoAlternate, iconSize: 24, iconSpacing: 10,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
             .disabled(busy)
+        M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
+                 height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
+            .disabled(busy)
+        MText(s.text("Up to \(BatchLimits.photos) photos · automatic restoration · keep the app open", "最多 \(BatchLimits.photos) 張照片 · 自動智慧還原 · 請保持 App 開啟"),
+              size: 12, color: c.onSurfaceVariant)
+        // Batch videos is a developer tool for now, as on Android: ten taps on the version in Settings.
+        if devTools.enabled {
+            M3Button(title: s.text("Batch restore videos", "批次還原影片"), icon: .videoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
+                     height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: true) }
+                .disabled(busy)
+            MText(s.text("Developer tools · up to \(BatchLimits.videos) videos · keep the app open", "開發者工具 · 最多 \(BatchLimits.videos) 段影片 · 請保持 App 開啟"),
+                  size: 12, color: c.onSurfaceVariant)
+        }
         Panel {
             FeatureRow(icon: .autoAwesome, text: s.text("Automatic color recommendations", "自動分析並推薦調色"))
             FeatureRow(icon: .tune, text: s.text("One slider. Your perfect balance.", "一條強度滑桿，調出自然效果"))
@@ -227,8 +273,13 @@ struct EditorView: View {
         if export.busy && showProgress {
             M3Dialog(title: s[export.stage], dismiss: { showProgress = false }) {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let batch = export.batch { MText(batch.progressText(s), maxLines: 2) }
                     Progress(value: export.progress)
-                    MText(s.text("Processing the original file. Keep the app open until it finishes.", "正在處理原始檔案，請保持 App 開啟直到完成。"))
+                    if export.batch != nil {
+                        MText(keepOpenText, weight: .semibold, color: c.error)
+                    } else {
+                        MText(s.text("Processing the original file. Keep the app open until it finishes.", "正在處理原始檔案，請保持 App 開啟直到完成。"))
+                    }
                 }
             } buttons: {
                 M3TextButton(title: s.text("Cancel export", "取消匯出")) { exports.cancel() }
@@ -242,11 +293,23 @@ struct EditorView: View {
                 M3TextButton(title: s.text("OK", "知道了")) { model.error = nil }
             }
         }
-        if !export.busy && (export.saved || export.error != nil || export.stage == "cancelled") {
+        if !export.busy && (export.saved || export.error != nil || export.stage == "cancelled" || export.batch != nil) {
             M3Dialog(title: export.error != nil ? s.text("Export failed", "匯出失敗") : s[export.stage], dismiss: { exports.dismissResult() }) {
-                MText(export.error.map { s[$0] } ?? (export.saved
-                    ? s.text("Find your restored media in Photos.", "還原作品已儲存至相簿。")
-                    : s.text("No unfinished file was added to your Photos library.", "相簿不會留下未完成的檔案。")))
+                if let batch = export.batch {
+                    ScrollIfNeeded(maxHeight: 320) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            MText(batch.resultText(s))
+                            ForEach(batch.failures.indices, id: \.self) { i in
+                                MText("\(batch.failures[i].name)\n\(s[batch.failures[i].error])", size: 12)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    MText(export.error.map { s[$0] } ?? (export.saved
+                        ? s.text("Find your restored media in Photos.", "還原作品已儲存至相簿。")
+                        : s.text("No unfinished file was added to your Photos library.", "相簿不會留下未完成的檔案。")))
+                }
             } buttons: {
                 if export.saved {
                     M3TextButton(title: s.text("Open", "開啟")) { Platform.openPhotos(); exports.dismissResult() }
@@ -255,6 +318,13 @@ struct EditorView: View {
             }
         }
         if settings { SettingsDialog(model: model) { settings = false } }
+        if let draft = model.batchDraft {
+            BatchExportDialog(draft: draft, onDismiss: { model.discardBatch() }) { selection in
+                guard let prepared = model.takeBatch() else { return }
+                exports.startBatch(BatchRequest(sources: prepared.sources, failures: prepared.failures, selection: selection,
+                                                videos: prepared.videos, chinese: s.chinese, folders: prepared.folders))
+            }
+        }
         if confirmClose {
             M3Dialog(title: s.text("Discard this edit?", "放棄這次編輯？"), dismiss: { confirmClose = false }) {
                 MText(s.text("Your color, trim and music settings will be lost. The original file is not changed.",

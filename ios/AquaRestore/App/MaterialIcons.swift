@@ -3,7 +3,7 @@ import SwiftUI
 /// Material Icons (Rounded, 1.7.8), the set the Android app uses, drawn from their own 24 x 24 path data.
 /// Generated from the androidx.compose.material:material-icons-extended sources (Apache License 2.0).
 enum MaterialIcon {
-    case close, swapHoriz, fileDownload, settings, speed, expandLess, expandMore, contentCut, musicNote, libraryMusic, autoAwesome, addPhotoAlternate, tune, highQuality, fullscreenExit, fullscreen, compare, firstPage, lastPage, playArrow, pause
+    case close, swapHoriz, fileDownload, settings, speed, expandLess, expandMore, contentCut, musicNote, libraryMusic, autoAwesome, addPhotoAlternate, tune, highQuality, fullscreenExit, fullscreen, compare, firstPage, lastPage, playArrow, pause, photoLibrary, videoLibrary
 
     var data: String {
         switch self {
@@ -28,6 +28,8 @@ enum MaterialIcon {
         case .lastPage: return "M 6.29 8.11 L 10.18 12 L 6.29 15.89 C 5.9 16.28 5.9 16.91 6.29 17.3 C 6.68 17.69 7.31 17.69 7.7 17.3 L 12.29 12.71 C 12.68 12.32 12.68 11.69 12.29 11.3 L 7.7 6.7 C 7.31 6.31 6.68 6.31 6.29 6.7 C 5.91 7.09 5.91 7.73 6.29 8.11 Z M 17 6 C 17.55 6 18 6.45 18 7 L 18 17 C 18 17.55 17.55 18 17 18 C 16.45 18 16 17.55 16 17 L 16 7 C 16 6.45 16.45 6 17 6 Z"
         case .playArrow: return "M 8 6.82 L 8 17.18 C 8 17.97 8.87 18.45 9.54 18.02 L 17.68 12.84 C 18.3 12.45 18.3 11.55 17.68 11.15 L 9.54 5.98 C 8.87 5.55 8 6.03 8 6.82 Z"
         case .pause: return "M 8 19 C 9.1 19 10 18.1 10 17 L 10 7 C 10 5.9 9.1 5 8 5 C 6.9 5 6 5.9 6 7 L 6 17 C 6 18.1 6.9 19 8 19 Z M 14 7 L 14 17 C 14 18.1 14.9 19 16 19 C 17.1 19 18 18.1 18 17 L 18 7 C 18 5.9 17.1 5 16 5 C 14.9 5 14 5.9 14 7 Z"
+        case .photoLibrary: return "M 22 16 L 22 4 C 22 2.9 21.1 2 20 2 L 8 2 C 6.9 2 6 2.9 6 4 L 6 16 C 6 17.1 6.9 18 8 18 L 20 18 C 21.1 18 22 17.1 22 16 Z M 11.4 12.53 L 13.03 14.71 L 15.61 11.49 C 15.81 11.24 16.19 11.24 16.39 11.49 L 19.35 15.19 C 19.61 15.52 19.38 16 18.96 16 L 9 16 C 8.59 16 8.35 15.53 8.6 15.2 L 10.6 12.53 C 10.8 12.27 11.2 12.27 11.4 12.53 Z M 2 7 L 2 20 C 2 21.1 2.9 22 4 22 L 17 22 C 17.55 22 18 21.55 18 21 C 18 20.45 17.55 20 17 20 L 5 20 C 4.45 20 4 19.55 4 19 L 4 7 C 4 6.45 3.55 6 3 6 C 2.45 6 2 6.45 2 7 Z"
+        case .videoLibrary: return "M 3 6 C 2.45 6 2 6.45 2 7 L 2 20 C 2 21.1 2.9 22 4 22 L 17 22 C 17.55 22 18 21.55 18 21 C 18 20.45 17.55 20 17 20 L 5 20 C 4.45 20 4 19.55 4 19 L 4 7 C 4 6.45 3.55 6 3 6 Z M 20 2 L 8 2 C 6.9 2 6 2.9 6 4 L 6 16 C 6 17.1 6.9 18 8 18 L 20 18 C 21.1 18 22 17.1 22 16 L 22 4 C 22 2.9 21.1 2 20 2 Z M 12 14.5 L 12 5.5 L 17.47 9.6 C 17.74 9.8 17.74 10.2 17.47 10.4 L 12 14.5 Z"
         }
     }
 
