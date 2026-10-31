@@ -49,8 +49,9 @@ fun ExportStatus.resultNotice(s: Strings): Pair<String, String>? {
 
 object Exports {
     val status = MutableStateFlow(ExportStatus())
-    /** Set by the activity; a finished export is announced by notification only while the app is out of sight. */
-    @Volatile var appVisible = false
+    internal val activities = StartedActivities()
+    /** A finished export is announced by notification only while every activity is out of sight. */
+    val appVisible: Boolean get() = activities.visible
     internal var request: ExportWork? = null
     fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return

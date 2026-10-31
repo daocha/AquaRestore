@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -96,6 +97,7 @@ import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 class MainActivity : ComponentActivity() {
+    private val visibility by viewModels<ActivityVisibilityModel>()
     private val playUpdateLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         updates?.onPlayResult(result.resultCode)
     }
@@ -112,7 +114,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        Exports.appVisible = true
+        visibility.started()
         // The app shows the result itself, so the notification is no longer needed.
         getSystemService(NotificationManager::class.java).cancel(EXPORT_RESULT_NOTIFICATION)
     }
@@ -123,7 +125,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        if (!isChangingConfigurations) Exports.appVisible = false
+        visibility.stopped(isChangingConfigurations)
         super.onStop()
     }
 

@@ -14,6 +14,7 @@ class LibraryAccessTest {
             val mixed = libraryAccess(mediaPermissions(false, false, sdk = sdk), granted)
             assertTrue(mixed.allowed)
             assertFalse("Import must still request video access on API $sdk", mixed.full)
+            assertTrue(mixed.requestOnOpen)
             val videos = libraryAccess(mediaPermissions(false, false, videosOnly = true, sdk = sdk), granted)
             assertFalse(videos.allowed)
             assertFalse(videos.full)
@@ -33,19 +34,38 @@ class LibraryAccessTest {
             val access = libraryAccess(permissions, granted)
             assertTrue(access.allowed)
             assertFalse(access.full)
+            assertTrue(access.limited)
+            assertFalse("Opening a limited library must not start reselection", access.requestOnOpen)
         }
-        assertFalse(libraryAccess(mediaPermissions(true, false, sdk = 34), granted).allowed)
+        val audio = libraryAccess(mediaPermissions(true, false, sdk = 34), granted)
+        assertFalse(audio.allowed)
+        assertTrue(audio.requestOnOpen)
+    }
+
+    @Test fun fullPhotoAccessAndSelectedVideoAccessStillRespectTheLimitedChoice() {
+        val granted = setOf(READ_MEDIA_IMAGES, READ_MEDIA_VISUAL_USER_SELECTED)
+        val mixed = libraryAccess(mediaPermissions(false, false, sdk = 34), granted)
+        assertTrue(mixed.allowed)
+        assertFalse(mixed.full)
+        assertTrue(mixed.limited)
+        assertFalse(mixed.requestOnOpen)
+        val photos = libraryAccess(mediaPermissions(false, true, sdk = 34), granted)
+        assertTrue(photos.full)
+        assertFalse(photos.limited)
+        assertFalse(photos.requestOnOpen)
     }
 
     @Test fun fullAccessDoesNotRequireTheOptionalSelectedFilesPermission() {
         val access = libraryAccess(mediaPermissions(false, false, sdk = 34), setOf(READ_MEDIA_IMAGES, READ_MEDIA_VIDEO))
         assertTrue(access.allowed)
         assertTrue(access.full)
+        assertFalse(access.requestOnOpen)
     }
 
     @Test fun unrelatedOrMissingGrantsDoNotAllowBrowsing() {
         val permissions = mediaPermissions(false, false, sdk = 33)
         assertEquals(LibraryAccess(false, false), libraryAccess(permissions, emptySet()))
+        assertTrue(libraryAccess(permissions, emptySet()).requestOnOpen)
         assertEquals(LibraryAccess(false, false), libraryAccess(permissions, setOf(READ_MEDIA_AUDIO)))
         val legacy = mediaPermissions(false, true, sdk = 32)
         assertEquals(listOf(READ_EXTERNAL_STORAGE), legacy.toList())

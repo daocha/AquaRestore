@@ -5,6 +5,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -152,6 +153,28 @@ class MediaWorkflowTest {
         assertTrue(text, text.contains("1 of 2 photos saved") && text.contains("photos only"))
         scenario.moveToState(Lifecycle.State.RESUMED)
         assertTrue("Returning to the app clears the notification", awaitResult(shown = false))
+    }
+
+    @Test fun visibilitySurvivesMultipleActivitiesAndRecreation() {
+        // A notification can open a second MainActivity while the original is still in its task.
+        val intent = Intent(app, MainActivity::class.java).setAction("com.aquarestore.app.test.SECOND_ACTIVITY")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        val second = ActivityScenario.launch<MainActivity>(intent)
+        try {
+            scenario.moveToState(Lifecycle.State.CREATED)
+            assertTrue("The second activity is still visible", Exports.appVisible)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            second.moveToState(Lifecycle.State.CREATED)
+            assertTrue("Stopping the second must not hide the resumed original", Exports.appVisible)
+            var before: ActivityVisibilityModel? = null
+            scenario.onActivity { before = ViewModelProvider(it)[ActivityVisibilityModel::class.java] }
+            scenario.recreate()
+            scenario.onActivity { assertSame(before, ViewModelProvider(it)[ActivityVisibilityModel::class.java]) }
+            assertTrue("Rotation must retain visibility", Exports.appVisible)
+        } finally { second.close() }
+        assertTrue("Clearing the other activity's ViewModel must not hide the original", Exports.appVisible)
+        scenario.moveToState(Lifecycle.State.CREATED)
+        assertFalse("No started activities remain", Exports.appVisible)
     }
 
     @Test fun batchCancellationKeepsCompletedPhotosAndAllowsAnotherExport() = runBlocking {

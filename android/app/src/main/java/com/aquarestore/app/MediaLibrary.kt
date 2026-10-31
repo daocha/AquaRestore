@@ -83,13 +83,17 @@ internal fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean, videosOnl
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
-internal data class LibraryAccess(val allowed: Boolean, val full: Boolean)
+internal data class LibraryAccess(val allowed: Boolean, val full: Boolean, val limited: Boolean = false) {
+    val requestOnOpen: Boolean get() = !full && !limited
+}
 
 /** Selected files remain browsable, but access to one media type does not cover another. */
-internal fun libraryAccess(permissions: Array<String>, granted: Set<String>): LibraryAccess = LibraryAccess(
-    allowed = permissions.any { it in granted },
-    full = permissions.filter { it != Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED }.all { it in granted },
-)
+internal fun libraryAccess(permissions: Array<String>, granted: Set<String>): LibraryAccess {
+    val selected = Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+    val full = permissions.filter { it != selected }.all { it in granted }
+    return LibraryAccess(allowed = permissions.any { it in granted }, full = full,
+        limited = !full && selected in permissions && selected in granted)
+}
 
 private fun libraryAccess(context: Context, permissions: Array<String>): LibraryAccess = libraryAccess(permissions,
     permissions.filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }.toSet())
@@ -138,13 +142,20 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     var chosen by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val permissions = remember(audioOnly, photosOnly, videosOnly) { mediaPermissions(audioOnly, photosOnly, videosOnly) }
     var access by remember(audioOnly, photosOnly, videosOnly) { mutableStateOf(libraryAccess(context, permissions)) }
+    // Save the request attempt, not the permission grant: recreating the picker must not prompt again.
+    var requestedOnOpen by rememberSaveable(audioOnly, photosOnly, videosOnly) { mutableStateOf(false) }
     var libraryRevision by remember { mutableIntStateOf(0) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = libraryAccess(context, permissions)
         // Adding selected files may leave the permission flags unchanged, but the library must be queried again.
         libraryRevision++
     }
-    LaunchedEffect(audioOnly, photosOnly, videosOnly) { if (!access.full) permission.launch(permissions) }
+    LaunchedEffect(audioOnly, photosOnly, videosOnly) {
+        if (!requestedOnOpen) {
+            requestedOnOpen = true
+            if (access.requestOnOpen) permission.launch(permissions)
+        }
+    }
     val items by produceState<List<LibraryItem>?>(null, access.allowed, libraryRevision, permissions) {
         value = if (access.allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
             else emptyList()
