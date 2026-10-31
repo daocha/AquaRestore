@@ -11,14 +11,12 @@ final class DevTools: ObservableObject {
 
     @Published private(set) var enabled: Bool
 
-    private init() { enabled = UserDefaults.standard.object(forKey: Self.key) as? Double == Self.installed }
+    private init() { enabled = UserDefaults.standard.string(forKey: Self.key) == Self.installed }
 
-    /// Changes with every install or update, including debug builds, whose version numbers stay fixed.
-    private static var installed: Double {
-        let path = Bundle.main.executablePath ?? Bundle.main.bundlePath
-        let date = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-        return (date ?? .distantPast).timeIntervalSince1970
-    }
+    /// Changes with every install or update, including debug builds, whose version numbers stay fixed: iOS puts
+    /// each installation in a new container, so the app's path changes. A file's date would not change when the
+    /// same build is installed again.
+    private static var installed: String { Bundle.main.bundlePath }
 
     func enable() { UserDefaults.standard.set(Self.installed, forKey: Self.key); enabled = true }
     func disable() { UserDefaults.standard.removeObject(forKey: Self.key); enabled = false }

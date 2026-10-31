@@ -96,6 +96,9 @@ final class Exports: ObservableObject {
 
     /// The running batch's progress; read by `publish` for every update.
     private var batch: BatchExportStatus?
+    /// The item whose export is running, or -1 between items. Progress arrives queued on the main thread, so a
+    /// finished item's last updates can land after it was counted, and would push the bar past it.
+    private var batchItem = -1
 
     private func publish(_ progress: Int?, _ stage: String) {
         guard status.busy, let batch else { return }
@@ -130,13 +133,16 @@ final class Exports: ObservableObject {
                         // Checked before each video, since the earlier ones have used some of the space.
                         if request.videos, let size = BatchRun.estimatedBytes(source, options),
                            let free = BatchRun.freeSpace, free < batchVideoSpace([size]) { throw MediaProblem("storageFull") }
+                        self.batchItem = index
                         try await Exporter.run(ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)) { progress, stage in
-                            DispatchQueue.main.async { self.publish(progress, stage) }
+                            DispatchQueue.main.async { if self.batchItem == index { self.publish(progress, stage) } }
                         }
+                        self.batchItem = -1
                         self.batch?.saved += 1
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
+                        self.batchItem = -1
                         NSLog("AquaRestore: batch item failed: \(error)")
                         self.batch?.failures.append(BatchFailure(name: source.name, error: (error as? MediaProblem)?.key ?? "exportFailed"))
                     }
@@ -151,6 +157,7 @@ final class Exports: ObservableObject {
             }
             request.folders.forEach { try? FileManager.default.removeItem(at: $0) }
             Platform.keepScreenAwake(false)
+            self.batchItem = -1
             self.task = nil
             self.batch?.currentName = nil
             terminal.batch = self.batch

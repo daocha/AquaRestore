@@ -183,11 +183,13 @@ enum MediaIO {
         if stem.hasSuffix("-original") { stem = String(stem.dropLast("-original".count)) }
         let folder = try DevFiles.folder("frames")
         var index = 0, saved = 0
-        try await videoFrames(source) { _, image in
+        try await videoFrames(source) { _, decoded in
             index += 1
             let file = folder.appendingPathComponent("\(stem)-frame-\(index).png")
             try? FileManager.default.removeItem(at: file)
-            guard let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+            // The 8-bit sRGB pixels the analysis reads, not the decoder's image, which may be HDR or Display P3.
+            guard let image = PixelImage(decoded)?.cgImage,
+                  let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
             CGImageDestinationAddImage(destination, image, nil)
             if CGImageDestinationFinalize(destination) {
                 saved += 1
