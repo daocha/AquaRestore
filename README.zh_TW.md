@@ -4,24 +4,34 @@
 
 # AquaRestore
 
-原生 Android 水下影片／圖片色彩還原 App。Kotlin、Jetpack Compose、Media3、OpenGL ES；Android 10（API 29）以上。所有影像處理均在裝置上完成。正式版僅為檢查更新及使用者要求下載更新而使用網路。Debug 版只有在設定區域網路更新時才有網路權限。
+AquaRestore 提供原生 Android 與 iOS App，還原水下影片與圖片的色彩。所有影像處理均在裝置上完成。
 
-[`ios/`](#ios-版本) 另有畫面、操作與色彩流程相同的 iOS 版：SwiftUI、AVFoundation、Metal；iOS 16 以上。
+- **[Android](#android-版本)：** Kotlin、Jetpack Compose、Media3、OpenGL ES；Android 10（API 29）以上。
+- **[iOS](#ios-版本)：** SwiftUI、AVFoundation、Metal；iOS 16 以上。
+
+Android 正式版僅為檢查更新及使用者要求下載更新而使用網路。Android Debug 版只有在設定區域網路更新時才有網路權限。
 
 ## 使用流程
 
 1. 從 App 內的「最近」或「相簿」選擇影片或圖片。開啟媒體庫時，Android 會要求媒體存取權限；支援的系統版本可只授權選取的照片與影片。
 2. 自動分析色彩，推薦紅色補償、白平衡、曝光、去霧、清晰度及陰影設定。
-3. 拖動「還原強度」滑桿微調；它會同時調整所有進階參數，0% 為原色，100% 為完整推薦校正。按住「對比原片」顯示原色，鬆開恢復。預覽右上角的 ⛶ 可開啟全螢幕檢視（沿用同一個播放器，播放不中斷），全螢幕中仍可按住對比；再按一次或按返回鍵即可回到編輯畫面。
-4. 預覽固定在上方，調整區獨立捲動。影片可展開「影片速度」與「剪輯長度」：剪輯列以已調色的影格縮圖顯示整段影片，範圍外變暗並顯示播放位置；拖動起點／終點時預覽暫停在該影格；在框內點按或拖動可移動游標並停在該影格，游標上方會出現「設為起點／設為終點」，可精準從該影格開始或結束，放開後只在剪輯範圍內循環播放，匯出與檔案大小估算也只計算剪輯範圍。「音訊」可調整原聲音量（0% 為靜音）並加入背景音樂：音樂條顯示整首歌的音量波形，高亮窗口長度自動等於影片輸出長度，左右拖動選擇播放片段，放開後從剪輯起點試聽；原聲與音樂音量分開調整，可保留兩者或只播放音樂。音樂比影片短時會重複播放。可展開進階調整：自動色階、紅色補償、色溫、綠／洋紅偏色、曝光、去霧、清晰度、對比、飽和度、陰影。
-5. 上方工具列：左側 ✕ 關閉編輯並返回首頁（會先確認），右側為更換素材、匯出與設定圖示。可選擇「建議」、「原始」或「自訂」匯出，顯示準備／編碼／儲存進度，可取消，支援背景匯出與通知。
+3. 拖動「還原強度」滑桿微調；它會同時調整所有進階參數，0% 為原色，100% 為完整推薦校正。按住「對比原片」顯示原色，鬆開恢復。預覽右上角的 ⛶ 可開啟全螢幕檢視（沿用同一個播放器，播放不中斷），全螢幕中仍可按住對比；再按一次即可回到編輯畫面。Android 也可使用返回鍵；iOS 則以畫面上的按鈕離開全螢幕或編輯畫面。
+4. 預覽固定在上方，調整區獨立捲動。影片可展開：
+   - **影片速度：** 0.5×、1×、2×、4×。iOS 播放器的設定選單只提供速度。
+   - **剪輯長度：** 剪輯列以已調色的影格縮圖顯示整段影片，範圍外變暗並顯示播放位置；拖動起點／終點時預覽暫停在該影格；在框內點按或拖動可移動游標並停在該影格，游標上方會出現「設為起點／設為終點」，可精準從該影格開始或結束，放開後只在剪輯範圍內循環播放，匯出與檔案大小估算也只計算剪輯範圍。
+   - **音訊：** 可調整原聲音量（0% 為靜音）並加入背景音樂。音樂條顯示整首歌的音量波形，高亮窗口長度自動等於影片輸出長度，左右拖動選擇播放片段，放開後從剪輯起點試聽；原聲與音樂音量分開調整，可保留兩者或只播放音樂。音樂比影片短時會重複播放。iOS 會直接保留未編輯的 AAC 音訊；變速、調整音量、混入音樂或使用其他來源音訊格式時，會編碼為 AAC，以符合 MP4 相容性。
+   - **進階調整：** 自動色階、紅色補償、色溫、綠／洋紅偏色、曝光、去霧、清晰度、對比、飽和度、陰影。
+5. 上方工具列：左側 ✕ 關閉編輯並返回首頁（會先確認），右側為更換素材、匯出與設定圖示。可選擇「建議」、「原始」或「自訂」匯出，顯示準備／編碼／儲存進度，可取消。
 6. 在設定切換中文／English、Light／Dark；語言與主題預設均跟隨系統，選擇會持久儲存。
 
 ## 智慧推薦與流暢預覽
 
 推薦採用裝置端色彩統計，而非需要雲端的生成式模型。影片抽取 6 個分布於片長 5%–95% 的影格一併分析，整段影片共用一組參數，避免逐幀白平衡跳動。分析會區分深藍／深綠水域、泛白混濁水域與低光畫面，並分別給出建議設定。低信心畫面會顯示提示並降低預設強度；仍可手動微調。
 
-分析完成後，影片通常直接播放原始檔並以 GPU 即時調色。裝置能流暢解碼時，4K60 也可直接播放。需要將 HDR 轉為預覽格式、裝置無法流暢播放原片，或影片長邊超過 3840px 時，App 會製作 1080p、最多 30fps 的預覽副本。必須等待副本才能播放時，畫面會顯示可調色、可定位的靜態影格及製作進度。匯出**永遠使用原始 URI**，不使用預覽副本。
+分析完成後，影片通常直接播放原始檔並以 GPU 即時調色。匯出**永遠使用原始 URI**，不使用預覽副本。
+
+- **Android：** 裝置能流暢解碼時，4K60 也可直接播放。需要將 HDR 轉為預覽格式、裝置無法流暢播放原片，或影片長邊超過 3840px 時，App 會製作 1080p、最多 30fps 的預覽副本。必須等待副本才能播放時，畫面會顯示可調色、可定位的靜態影格及製作進度。
+- **iOS：** 不製作預覽副本，高負載素材（例如 4K60）直接播放；仍需在目標裝置驗證流暢度。
 
 圖片預覽長邊 720px，背景執行調色，每張預覽完成後立即取最新滑桿設定；不會因連續拖動而一直取消工作、直到放手才顯示結果。圖片與影片採用相同的調色公式。相容裝置會保留 HDR 影片輸出；其他裝置會將 HDR 色調映射後以 SDR 匯出。不同裝置、編碼器及色彩管理可能造成輕微顯示差異。
 
@@ -38,13 +48,53 @@
 
 色彩校正必須重新編碼影片，**Original 不代表位元級無損**，也不能保證還原海水已完全吸收的色彩。Original 保留幀時間戳；自訂 fps 是接近目標的平均幀率，不做運動插幀或保證固定幀間隔。來源 codec 或尺寸若不受裝置編碼器支援，會明確失敗，可改選自訂 H.264 與較小尺寸。
 
-輸出儲存於 `Movies/AquaRestore` 或 `Pictures/AquaRestore`。先寫入暫存，再以 MediaStore pending 機制發布；失敗與取消會清理本次未完成檔案，且永不覆蓋來源。
+Original 影片在 Android 保留來源 codec；iOS 僅保留 AVC 或 HEVC 編碼類別，其他編碼格式請選自訂 H.264／HEVC。兩個平台的 Original 影格時間均依來源軌道決定。
 
-Android 首頁的「批次還原照片」每批最多接受 100 張照片，不接受影片。長按照片後滑動可選取或取消選取一段範圍；停留在頂端或底端附近時會自動捲動，繼續選取更多照片。只需選擇一次「建議／原始／自訂」匯出設定，每張照片即會自動套用個別的預設智慧還原，不必逐張進入編輯器。「建議」會依每張照片的尺寸與格式決定輸出。批次會依每張照片的解析度、格式與畫質顯示預估總大小，並逐張處理，以控制中階手機的記憶體用量。支援背景匯出、進度與取消；取消時保留已完成的照片，無法讀取的照片會列出失敗原因，其他照片則繼續處理。
+### 儲存與背景匯出
 
-「批次還原影片」為實驗功能，僅在開啟 Android 隱藏的開發者工具後提供：在「設定」中連續點按版本號碼十次即可開啟，直到下次更新 App 或在「設定」中關閉為止。開啟後，首頁的批次照片按鈕下方會出現此按鈕。每批最多 20 段影片，每段會自動套用智慧還原，並以原聲完整匯出（不剪輯、不變速、不加音樂），逐段處理。「建議」的輸出上限為 1080p、30 幀。開始前，對話框會顯示總長度、預估大小與所需可用空間。每段影片匯出前會檢查剩餘空間，手機嚴重過熱時會在影片之間暫停。若此手機須先以軟體解碼才能分析某段影片，該影片會列為失敗，請改在編輯器中開啟。
+- **Android：** 輸出儲存於 `Movies/AquaRestore` 或 `Pictures/AquaRestore`。先寫入暫存，再以 MediaStore pending 機制發布；失敗與取消會清理本次未完成檔案，且永不覆蓋來源。支援背景匯出與通知，使用前景服務與 wake lock；系統強制終止或裝置重啟後不自動恢復工作，Android 對長時間背景服務的時限仍適用。
+- **iOS：** 輸出儲存於相簿，僅要求新增權限，App 不會讀取相簿。此 iOS 16+ 版本不在前景時會暫停匯出，匯出期間螢幕保持喚醒。iOS 26 以上在相容裝置上可藉由 Background GPU Access 權限持續使用 GPU，但此版本尚未設定該能力。
 
-## 一鍵建置與發布
+### 批次還原照片
+
+首頁的「批次還原照片」可直接還原照片，不必逐張進入編輯器，也不接受影片。只需選擇一次「建議／原始／自訂」匯出設定，每張照片即會自動套用個別的預設智慧還原。「建議」會依每張照片的尺寸與格式決定輸出。批次會依每張照片的解析度、格式與畫質顯示預估總大小，並逐張處理，以控制中階手機的記憶體用量。提供進度與取消；取消時保留已完成的照片，無法讀取的照片會列出失敗原因，其他照片則繼續處理。
+
+- **Android：** 每批最多 100 張照片。長按照片後滑動可選取或取消選取一段範圍；停留在頂端或底端附近時會自動捲動，繼續選取更多照片。支援背景匯出。
+- **iOS：** 每批最多 30 張照片，以系統選擇器挑選，不提供長按滑動選取。請保持 AquaRestore 開啟，不要切換 App 或鎖定螢幕；批次對話框與進度也會提醒。離開 App 會暫停批次，返回後繼續。
+
+### 批次還原影片
+
+「批次還原影片」為實驗功能，僅在開啟隱藏的[開發者工具](#開發者工具)後提供。開啟後，首頁的批次照片按鈕下方會出現此按鈕。每段影片會自動套用智慧還原，並以原聲完整匯出（不剪輯、不變速、不加音樂），逐段處理。「建議」的輸出上限為 1080p、30 幀。開始前，對話框會顯示總長度、預估大小與所需可用空間。每段影片匯出前會檢查剩餘空間，手機嚴重過熱時會在影片之間暫停。
+
+- **Android：** 每批最多 20 段影片，支援背景匯出。若此手機須先以軟體解碼才能分析某段影片，該影片會列為失敗，請改在編輯器中開啟。
+- **iOS：** 每批最多 5 段影片，以系統選擇器挑選。請保持 AquaRestore 開啟，不要切換 App 或鎖定螢幕；批次對話框與進度也會提醒。離開 App 會暫停批次，返回後繼續。
+
+## 開發者工具
+
+兩個平台均可在「設定」中連續點按版本號碼十次，開啟日誌檢視、儲存日誌、儲存分析畫面及批次還原影片等開發者工具。開啟後會維持到下次更新 App，或在「設定」中關閉為止。
+
+- **Android：** 檔案儲存於 `Download/AquaRestore-analysis`。
+- **iOS：** 檔案儲存於「檔案」App 的「我的 iPhone › AquaRestore」中的 `logs` 與 `frames`。
+
+## 建置
+
+經過調校的調色核心（場景分析、調色公式與 GPU shader）位於私人儲存庫，以 git submodule 掛載於 `core/`。有存取權時，請以 `git clone --recurse-submodules` 複製，或在既有副本執行 `git submodule update --init`。沒有存取權時，請執行一次 `scripts/use-core-stub.sh`：它會以 `core-stub/` 的基本調色填入 `core/`，讓 App 可以建置與執行，但效果明顯不及正式發布的版本。
+
+| | Android | iOS |
+| --- | --- | --- |
+| 介面 | Jetpack Compose、Material3 1.4、Material Icons、Media3 播放控制列 | SwiftUI，依相同規格重建：相同的 Material 圖示（由原始碼產生）、Material3 1.4 的按鈕、標籤、滑桿、進度條、對話框與字級，以及 Media3 的播放控制列 |
+| 字型 | Roboto | SF Pro；字級、字重與行高依 Material 字級規範 |
+| 即時預覽 | ExoPlayer＋GLSL shader | AVPlayer＋自訂 `AVVideoCompositing` 內的 Metal compute shader（與圖片路徑的調色結果相差不超過 1 階） |
+| 匯出 | Media3 Transformer | `AVAssetReader` → 同一個 Metal 合成器 → `AVAssetWriter`（H.264／HEVC，位元率與預估大小使用同一份計畫） |
+| 圖片 | `ImageDecoder` 解碼，CPU 調色 | ImageIO 解碼，CPU 調色 |
+| 匯入 | App 內「最近」／「相簿」媒體庫，需媒體存取權限 | 媒體使用照片選擇器，音樂使用「檔案」 |
+| 輸出 | `Movies/AquaRestore`、`Pictures/AquaRestore` | 相簿（僅新增權限，App 不會讀取相簿） |
+
+### Android 版本
+
+原生 Android App 位於 `android/`。
+
+#### 一鍵建置與發布
 
 ```bash
 ./scripts/build-android-debug.sh
@@ -66,9 +116,7 @@ Android 首頁的「批次還原照片」每批最多接受 100 張照片，不�
 
 若要移除這些腳本在 macOS 上安裝的工具，執行 `./scripts/uninstall-build-env.sh`；每一項移除前都會先詢問。
 
-## 建置
-
-經過調校的調色核心（場景分析、調色公式與 GPU shader）位於私人儲存庫，以 git submodule 掛載於 `core/`。有存取權時，請以 `git clone --recurse-submodules` 複製，或在既有副本執行 `git submodule update --init`。沒有存取權時，請執行一次 `scripts/use-core-stub.sh`：它會以 `core-stub/` 的基本調色填入 `core/`，讓 App 可以建置與執行，但效果明顯不及正式發布的版本。
+#### 手動建置
 
 使用 Android Studio 開啟 `android/`，安裝 Android SDK 36、JDK 17。命令列設定 `ANDROID_HOME` 或 `android/local.properties` 的 `sdk.dir` 後：
 
@@ -79,67 +127,7 @@ cd android
 
 APK：`android/app/build/outputs/apk/debug/app-debug.apk`。Gradle Wrapper、依賴版本及 GitHub Actions 建置流程已隨專案提供。
 
-## iOS 版本
-
-`ios/` 是依照 Android 版逐畫面實作的原生 iOS 版：相同的首頁、含按住對比與全螢幕檢視的預覽、速度、剪輯影格列、音訊與音樂片段列、還原強度與進階滑桿、匯出對話框、設定、字串（中文／English）以及淺色／深色配色。調色公式、自動推薦、匯出尺寸與位元率策略、音樂片段規則均為同一份邏輯逐行移植，並由同一組單元測試（`ios/Tests`）涵蓋。
-
-| | Android | iOS |
-| --- | --- | --- |
-| 介面 | Jetpack Compose、Material3 1.4、Material Icons、Media3 播放控制列 | SwiftUI，依相同規格重建：相同的 Material 圖示（由原始碼產生）、Material3 1.4 的按鈕、標籤、滑桿、進度條、對話框與字級，以及 Media3 的播放控制列 |
-| 即時預覽 | ExoPlayer＋GLSL shader | AVPlayer＋自訂 `AVVideoCompositing` 內的 Metal compute shader（與圖片路徑的調色結果相差不超過 1 階） |
-| 匯出 | Media3 Transformer | `AVAssetReader` → 同一個 Metal 合成器 → `AVAssetWriter`（H.264／HEVC，位元率與預估大小使用同一份計畫） |
-| 圖片 | `ImageDecoder` 解碼，CPU 調色 | ImageIO 解碼，CPU 調色 |
-| 匯入 | App 內「最近」／「相簿」媒體庫，需媒體存取權限 | 媒體使用照片選擇器，音樂使用「檔案」 |
-| 輸出 | `Movies/AquaRestore`、`Pictures/AquaRestore` | 相簿（僅新增權限，App 不會讀取相簿） |
-
-平台造成的差異：
-
-- **批次照片與影片還原：** iOS 上批次只會在 AquaRestore 保持開啟時進行，因此每批最多 30 張照片或 5 段影片（Android 為 100 張與 20 段）；批次對話框與進度會提醒不要切換 App 或鎖定螢幕。離開 App 會暫停批次，返回後繼續。照片以系統選擇器挑選，不提供長按滑動選取。批次影片需開啟開發者工具，方式與 Android 相同：在「設定」中連續點按版本號碼十次。
-- **開發者工具：** iOS 與 Android 相同（日誌檢視、儲存日誌、儲存分析畫面）。儲存的檔案位於「檔案」App 的「我的 iPhone › AquaRestore」中的 `logs` 與 `frames`，而非 `Download/AquaRestore-analysis`。
-- **背景匯出：** 此 iOS 16+ 版本不在前景時會暫停匯出，匯出期間螢幕保持喚醒。iOS 26 以上在相容裝置上可藉由 Background GPU Access 權限持續使用 GPU，但此版本尚未設定該能力。
-- **沒有預覽代理檔。** 高負載素材（例如 4K60）直接播放；仍需在目標裝置驗證流暢度。
-- **音訊：** 未編輯的 AAC 音訊在 iOS 直接保留；變速、調整音量或混入音樂時會編碼為 AAC。其他來源音訊也會編碼為 AAC，以符合 MP4 相容性。
-- **Original 影片編碼：** iOS Original 僅保留 AVC 或 HEVC 編碼類別，其他編碼格式請選自訂 H.264／HEVC。兩個平台的 Original 影格時間均依來源軌道決定。
-- **HDR10+ 中繼資料：** Android 會拒絕可識別的 HDR10+ 格式，因為無法保留動態中繼資料。iOS 匯入目前不會偵測 HDR10+ 中繼資料，因此匯出後可能遺失。
-- **Dolby Vision：** iPhone 錄製的相容規格會以 HLG 基礎層調色，並匯出為一般 HLG；Profile 5 會被拒絕。HDR10／PQ 與 HLG 與 Android 相同，皆在 HLG 曲線上調色。
-- 系統字型為 SF Pro 而非 Roboto；字級、字重與行高依 Material 字級規範。iOS 沒有返回鍵，全螢幕與編輯畫面使用畫面上的按鈕離開。
-- 播放器的設定選單只提供速度。
-
-建置（需要 Xcode 與 [XcodeGen](https://github.com/yonaskolb/XcodeGen)；Xcode 專案由 `ios/project.yml` 產生）：
-
-```bash
-./scripts/build-ios-debug.sh              # 測試＋模擬器建置 -> dist/AquaRestore-debug.app
-./scripts/build-ios-debug.sh --run        # 另外在模擬器安裝並啟動
-DEVELOPMENT_TEAM=<team id> ./scripts/build-ios-debug.sh --device
-```
-
-與 Android 相同，debug 版有獨立的 Bundle ID（`com.aquarestore.app.debug`），名稱為 **AquaRestore Dev**。要在 Xcode 中開發，請執行 `cd ios && xcodegen generate` 後開啟 `AquaRestore.xcodeproj`。與平台無關的邏輯可單獨以 `cd ios && swift test` 建置與測試。
-
-iOS 程式結構（`ios/AquaRestore`）：
-
-- `Core/`：`ExportPlan.swift`（匯出尺寸與位元率）、`FrameCadence.swift`、`MusicMath.swift`、`Strings.swift`，以及 `Tuning/`（連結至 `core/ios/Core`：含調色公式與強度的 `Grade.swift`，以及 `AutoGrade.swift`）。不含介面或 AVFoundation，可在任何環境單元測試。
-- `App/GradeRenderer.swift`：`AVVideoCompositing` 類別，以及預覽與匯出共用的影片合成；Metal shader 本身位於 `core/ios/App/GradeShader.swift`。
-- `App/MediaIO.swift`、`Soundtrack.swift`、`PlayerController.swift`、`EditorModel.swift`、`Exporter.swift`：對應 Android 同名檔案。
-- `App/EditorView.swift`、`PreviewView.swift`、`Panels.swift`、`Timeline.swift`、`Dialogs.swift`：畫面，對應 `MainActivity.kt`。
-- `App/Theme.swift`、`MaterialIcons.swift`、`PlayerControls.swift`、`Logo.swift`：Material3 元件、Material 圖示（以 `ios/scripts/make-material-icons.py` 重新產生）、Media3 風格的播放器與標誌圖形。
-
-iOS 已驗證與仍需真機驗收的項目見[驗證紀錄](docs/VALIDATION.md#ios)。
-
-## 目前範圍與限制
-
-- 支援 SDR，以及相容裝置上的 HDR10／PQ、HLG。保留 HDR 需要 Android 13+ 與 Media3 認可的 10-bit HDR 編碼器。缺乏合適 HDR 編碼器的裝置會將 HDR 影片色調映射後以 SDR 匯出；支援 HDR 匯出的裝置在「原始」與「自訂」模式均會保留 HDR。
-- 以 `onFallbackApplied` 攔截 Media3 自動 tone-map，並禁止靜默 codec／尺寸降級。HDR 預覽亮度取決於實體螢幕支援；模擬器不能取代 HDR 真機驗收。
-- Dolby Vision 與可辨識的 HDR10+ 動態 metadata 格式尚未實作完整保留，會拒絕匯入。HDR10+ 若容器未標識動態 profile，僅靠 track 格式不一定能辨識；本版本不承諾動態 metadata 保留。調色後的 HDR 靜態 mastering／content light metadata 亦未重新測量。
-- 去霧使用有上限的黑位／對比校正，清晰度為小範圍亮度銳化；不是深度估計、空間去散射或機器學習去噪。
-- 推薦依全片樣本產生；對多場景拼接片段、非常暗的畫面與強烈彩色燈光，建議用強度滑桿確認效果。採關鍵影格抽樣，極短素材可能重複抽到同一影格。
-- 暫存需要額外儲存空間。高解析度圖片受記憶體限制；匯出時若記憶體不足，會顯示錯誤，不會偷偷縮圖。
-- 不保留圖片 EXIF／GPS／原始容器中繼資料；PNG Original 可能比來源 JPEG 大很多。來源音訊受 MP4 容器相容性限制。
-- 背景匯出使用前景服務與 wake lock；系統強制終止或裝置重啟後不自動恢復工作。Android 對長時間背景服務的時限仍適用。
-- 流暢度取決於裝置；無法保證所有舊裝置無掉幀。請依 `docs/DEVICE_TESTS.md` 做目標手機實測。
-
-實際已完成與待真機驗收項目見 [驗證紀錄](docs/VALIDATION.md)。
-
-## 程式結構
+#### 程式結構
 
 - `core/android/main`：`AutoGrade.kt`（影格色彩統計與自動推薦）、`Grade.kt`（調色公式與強度縮放）與 `GradeShader.kt`（GPU shader）。
 - `ExportPlan.kt`：解析度與位元率策略。
@@ -151,9 +139,51 @@ iOS 已驗證與仍需真機驗收的項目見[驗證紀錄](docs/VALIDATION.md#
 - `ExportService.kt`：背景匯出、進度、取消、MediaStore 儲存。
 - `MainActivity.kt` / `Strings.kt`：Compose 介面、繁中／英文與主題。
 
+### iOS 版本
+
+`ios/` 是依照 Android 版逐畫面實作的原生 iOS 版：相同的首頁、含按住對比與全螢幕檢視的預覽、速度、剪輯影格列、音訊與音樂片段列、還原強度與進階滑桿、匯出對話框、設定、字串（中文／English）以及淺色／深色配色。調色公式、自動推薦、匯出尺寸與位元率策略、音樂片段規則均為同一份邏輯逐行移植，並由同一組單元測試（`ios/Tests`）涵蓋。
+
+#### 建置
+
+建置（需要 Xcode 與 [XcodeGen](https://github.com/yonaskolb/XcodeGen)；Xcode 專案由 `ios/project.yml` 產生）：
+
+```bash
+./scripts/build-ios-debug.sh              # 測試＋模擬器建置 -> dist/AquaRestore-debug.app
+./scripts/build-ios-debug.sh --run        # 另外在模擬器安裝並啟動
+DEVELOPMENT_TEAM=<team id> ./scripts/build-ios-debug.sh --device
+```
+
+與 Android 相同，debug 版有獨立的 Bundle ID（`com.aquarestore.app.debug`），名稱為 **AquaRestore Dev**。要在 Xcode 中開發，請執行 `cd ios && xcodegen generate` 後開啟 `AquaRestore.xcodeproj`。與平台無關的邏輯可單獨以 `cd ios && swift test` 建置與測試。
+
+#### 程式結構
+
+App 程式位於 `ios/AquaRestore`。
+
+- `Core/`：`ExportPlan.swift`（匯出尺寸與位元率）、`FrameCadence.swift`、`MusicMath.swift`、`Strings.swift`，以及 `Tuning/`（連結至 `core/ios/Core`：含調色公式與強度的 `Grade.swift`，以及 `AutoGrade.swift`）。不含介面或 AVFoundation，可在任何環境單元測試。
+- `App/GradeRenderer.swift`：`AVVideoCompositing` 類別，以及預覽與匯出共用的影片合成；Metal shader 本身位於 `core/ios/App/GradeShader.swift`。
+- `App/MediaIO.swift`、`Soundtrack.swift`、`PlayerController.swift`、`EditorModel.swift`、`Exporter.swift`：對應 Android 同名檔案。
+- `App/EditorView.swift`、`PreviewView.swift`、`Panels.swift`、`Timeline.swift`、`Dialogs.swift`：畫面，對應 `MainActivity.kt`。
+- `App/Theme.swift`、`MaterialIcons.swift`、`PlayerControls.swift`、`Logo.swift`：Material3 元件、Material 圖示（以 `ios/scripts/make-material-icons.py` 重新產生）、Media3 風格的播放器與標誌圖形。
+
+iOS 已驗證與仍需真機驗收的項目見[驗證紀錄](docs/VALIDATION.md#ios)。
+
+## 目前範圍與限制
+
+- 支援 SDR，以及相容裝置上的 HDR10／PQ、HLG。Android 保留 HDR 需要 Android 13+ 與 Media3 認可的 10-bit HDR 編碼器。缺乏合適 HDR 編碼器的裝置會將 HDR 影片色調映射後以 SDR 匯出；支援 HDR 匯出的裝置在「原始」與「自訂」模式均會保留 HDR。
+- 以 `onFallbackApplied` 攔截 Media3 自動 tone-map，並禁止靜默 codec／尺寸降級。HDR 預覽亮度取決於實體螢幕支援；模擬器不能取代 HDR 真機驗收。
+- **HDR10+ 中繼資料：** Android 會拒絕可識別的 HDR10+ 格式，因為無法保留動態中繼資料；若容器未標識動態 profile，僅靠 track 格式不一定能辨識。iOS 匯入目前不會偵測 HDR10+ 中繼資料，因此匯出後可能遺失。本版本不承諾動態中繼資料保留，調色後的 HDR 靜態 mastering／content light metadata 亦未重新測量。
+- **Dolby Vision：** Android 會拒絕匯入。iOS 會將 iPhone 錄製的相容規格以 HLG 基礎層調色，並匯出為一般 HLG；Profile 5 會被拒絕。HDR10／PQ 與 HLG 與 Android 相同，皆在 HLG 曲線上調色。
+- 去霧使用有上限的黑位／對比校正，清晰度為小範圍亮度銳化；不是深度估計、空間去散射或機器學習去噪。
+- 推薦依全片樣本產生；對多場景拼接片段、非常暗的畫面與強烈彩色燈光，建議用強度滑桿確認效果。採關鍵影格抽樣，極短素材可能重複抽到同一影格。
+- 暫存需要額外儲存空間。高解析度圖片受記憶體限制；匯出時若記憶體不足，會顯示錯誤，不會偷偷縮圖。
+- 不保留圖片 EXIF／GPS／原始容器中繼資料；PNG Original 可能比來源 JPEG 大很多。來源音訊受 MP4 容器相容性限制。
+- 流暢度取決於裝置；無法保證所有舊裝置無掉幀。請依 `docs/DEVICE_TESTS.md` 做目標手機實測。
+
+實際已完成與待真機驗收項目見 [驗證紀錄](docs/VALIDATION.md)。
+
 HDR 能力依據：[Media3 支援格式](https://developer.android.com/media/media3/transformer/supported-formats)。精確行為以專案鎖定的 Media3 1.9.3 原始碼與目標裝置驗證為準。
 
-### 強度與影片速度
+## 強度與影片速度
 
 進階滑桿顯示目前強度下實際套用的數值，會隨總強度移動；手動調整時以目前強度換算回基礎值。「還原強度」滑桿範圍為 0%（原色）至 100%（完整推薦校正），圖片與影片使用相同的強度設定。
 
