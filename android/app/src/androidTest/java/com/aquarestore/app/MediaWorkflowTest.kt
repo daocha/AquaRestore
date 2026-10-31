@@ -136,18 +136,22 @@ class MediaWorkflowTest {
         if (Build.VERSION.SDK_INT >= 33) InstrumentationRegistry.getInstrumentation().uiAutomation
             .grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
         val notifications = app.getSystemService(NotificationManager::class.java)
-        fun resultShown() = notifications.activeNotifications.any { it.id == EXPORT_RESULT_NOTIFICATION }
+        fun result() = notifications.activeNotifications.firstOrNull { it.id == EXPORT_RESULT_NOTIFICATION }
+        // The system posts and removes notifications asynchronously, after notify() and cancel() return.
+        suspend fun awaitResult(shown: Boolean) = withTimeoutOrNull(5_000) {
+            while ((result() != null) != shown) delay(100)
+        } != null
         batch(listOf(photo()))
-        assertFalse("The app shows the result itself while it is open", resultShown())
+        assertFalse("The app shows the result itself while it is open", awaitResult(shown = true))
         scenario.moveToState(Lifecycle.State.CREATED)
         Exports.status.value = ExportStatus()
         val result = batch(listOf(photo(), media("audit-video.mp4", "video/mp4")))
         assertEquals("batchFinished", result.stage)
-        val shown = notifications.activeNotifications.first { it.id == EXPORT_RESULT_NOTIFICATION }
-        val text = shown.notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+        assertTrue("A finished export in the background posts its result", awaitResult(shown = true))
+        val text = result()!!.notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
         assertTrue(text, text.contains("1 of 2 photos saved") && text.contains("photos only"))
         scenario.moveToState(Lifecycle.State.RESUMED)
-        assertFalse("Returning to the app clears the notification", resultShown())
+        assertTrue("Returning to the app clears the notification", awaitResult(shown = false))
     }
 
     @Test fun batchCancellationKeepsCompletedPhotosAndAllowsAnotherExport() = runBlocking {

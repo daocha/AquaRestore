@@ -126,7 +126,7 @@ class ExportService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 job = null
                 stopSelf(startId)
-                // Posted before the status, so whoever sees the result can already find the notification.
+                // Sent before the status changes; the system still shows it a moment later, asynchronously.
                 if (!Exports.appVisible) try { notifyResult(terminal.copy(batch = batch)) }
                     catch (e: Exception) { android.util.Log.w("AquaRestore", "Could not post the export result", e) }
                 Exports.status.value = terminal.copy(batch = batch)
