@@ -814,7 +814,9 @@ private fun TrimBar(frames: List<Bitmap>, duration: Long, range: LongRange, play
                 onDragEnd = ::finish, onDragCancel = ::finish,
             ) { change, delta ->
                 change.consume()
-                position += delta / track * duration
+                // onDragStart already reports the position past the touch slop, and the first delta is that
+                // same slop again: the playhead follows the finger itself rather than adding the deltas up.
+                position = if (target == 0) time(change.position.x).toFloat() else position + delta / track * duration
                 val r = latest
                 val t = position.roundToLong()
                 when (target) {
