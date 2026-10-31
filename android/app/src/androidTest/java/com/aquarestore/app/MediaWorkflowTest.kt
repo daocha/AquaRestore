@@ -163,16 +163,15 @@ class MediaWorkflowTest {
         try {
             scenario.moveToState(Lifecycle.State.CREATED)
             assertTrue("The second activity is still visible", Exports.appVisible)
-            scenario.moveToState(Lifecycle.State.RESUMED)
-            second.moveToState(Lifecycle.State.CREATED)
-            assertTrue("Stopping the second must not hide the resumed original", Exports.appVisible)
-            var before: ActivityVisibilityModel? = null
-            scenario.onActivity { before = ViewModelProvider(it)[ActivityVisibilityModel::class.java] }
-            scenario.recreate()
-            scenario.onActivity { assertSame(before, ViewModelProvider(it)[ActivityVisibilityModel::class.java]) }
-            assertTrue("Rotation must retain visibility", Exports.appVisible)
         } finally { second.close() }
+        // Finishing the top task lets Android bring the original task forward again.
+        scenario.moveToState(Lifecycle.State.RESUMED)
         assertTrue("Clearing the other activity's ViewModel must not hide the original", Exports.appVisible)
+        var before: ActivityVisibilityModel? = null
+        scenario.onActivity { before = ViewModelProvider(it)[ActivityVisibilityModel::class.java] }
+        scenario.recreate()
+        scenario.onActivity { assertSame(before, ViewModelProvider(it)[ActivityVisibilityModel::class.java]) }
+        assertTrue("Rotation must retain visibility", Exports.appVisible)
         scenario.moveToState(Lifecycle.State.CREATED)
         assertFalse("No started activities remain", Exports.appVisible)
     }
