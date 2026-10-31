@@ -30,7 +30,10 @@ struct BatchExportDialog: View {
                     Choices(items: [(ExportMode.recommended, s.text("Recommended", "建議")), (.original, s.text("Original", "原始")), (.custom, s.text("Custom", "自訂"))],
                             selected: selection.mode) { selection.mode = $0 }
                     modeOptions
-                    if draft.ready { estimate } else { preparing }
+                    if draft.ready {
+                        if !draft.sources.isEmpty { estimate }
+                    } else { preparing }
+                    preparationFailures
                     MText(s.text("Saved to your Photos library. The original files are never overwritten.", "儲存至相簿，不覆蓋原始檔案。"),
                           size: 11, color: c.onSurfaceVariant)
                 }
@@ -107,7 +110,8 @@ struct BatchExportDialog: View {
     @ViewBuilder private var estimate: some View {
         if videos {
             let sizes = draft.sources.map { source in
-                BatchRun.estimatedBytes(source, selection.videoOptions(width: source.width, height: source.height, fps: source.fps)) ?? 0
+                BatchRun.estimatedBytes(source, selection.videoOptions(width: source.width, height: source.height,
+                                                                       fps: source.fps, codec: source.codec, hdr: source.isHdr)) ?? 0
             }
             let needed = batchVideoSpace(sizes)
             let free = BatchRun.freeSpace
@@ -136,10 +140,16 @@ struct BatchExportDialog: View {
             MText(s.text("Based on each photo's resolution, format and quality. Actual size varies with image detail.",
                          "依每張照片的解析度、格式與畫質估算；實際大小會隨影像細節而變。"), size: 11)
         }
+    }
+
+    @ViewBuilder private var preparationFailures: some View {
         if !draft.failures.isEmpty {
-            MText(videos ? s.text("\(draft.failures.count) could not be read and will be reported as failed.", "\(draft.failures.count) 段無法讀取，將列為失敗。")
-                  : s.text("\(draft.failures.count) could not be read and will be reported as failed.", "\(draft.failures.count) 張無法讀取，將列為失敗。"),
-                  size: 12, color: c.error)
+            MText(videos ? s.text("Could not prepare \(draft.failures.count) videos.", "無法準備 \(draft.failures.count) 段影片。")
+                  : s.text("Could not prepare \(draft.failures.count) photos.", "無法準備 \(draft.failures.count) 張照片。"), size: 12, color: c.error)
+            ForEach(draft.failures.indices, id: \.self) { i in
+                MText("\(draft.failures[i].name)\n\(s[draft.failures[i].error])", size: 12, color: c.error)
+                    .accessibilityIdentifier("batchPreparationFailure-\(i)")
+            }
         }
     }
 }

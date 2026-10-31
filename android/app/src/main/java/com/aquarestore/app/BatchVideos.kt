@@ -13,6 +13,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -52,6 +54,17 @@ private fun durationText(ms: Long): String {
         else "%d:%02d".format(seconds / 60, seconds % 60)
 }
 
+/** A closed dialog stops inspecting the remaining clips, including when the current read finishes late. */
+internal suspend fun <Item, Metadata : Any> readBatchVideoMetadata(videos: List<Item>, inspect: (Item) -> Metadata?): List<Metadata> =
+    withContext(Dispatchers.IO) {
+        videos.mapNotNull { video ->
+            ensureActive()
+            try { inspect(video) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { null }
+        }
+    }
+
 @Composable
 fun BatchVideoExportDialog(videos: List<Uri>, selection: ExportSelection, s: Strings,
     onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
@@ -59,7 +72,7 @@ fun BatchVideoExportDialog(videos: List<Uri>, selection: ExportSelection, s: Str
     val context = LocalContext.current
     // Only the metadata is read here; frames are decoded later, one video at a time, by the export service.
     val sources by produceState<List<SourceMedia>?>(null, videos) {
-        value = withContext(Dispatchers.IO) { videos.mapNotNull { runCatching { MediaIO.inspect(context, it) }.getOrNull()?.takeIf { it.video } } }
+        value = readBatchVideoMetadata(videos) { MediaIO.inspect(context, it).takeIf { source -> source.video } }
     }
     val free = remember { context.cacheDir.usableSpace }
     AlertDialog(onDismissRequest = onDismiss,

@@ -38,22 +38,48 @@ final class BatchTests: XCTestCase {
     }
 
     func testRecommendedVideoCapsAt1080pAnd30Fps() {
-        let phone = ExportSelection().videoOptions(width: 3840, height: 2160, fps: 60)
+        let phone = ExportSelection().videoOptions(width: 3840, height: 2160, fps: 60, codec: "hvc1")
         XCTAssertFalse(phone.original)
         XCTAssertEqual(1920, phone.longEdge)
         XCTAssertEqual(30, phone.fps)
         XCTAssertEqual(85, phone.quality)
-        XCTAssertTrue(ExportSelection().videoOptions(width: 1280, height: 720, fps: 30).original)
+        XCTAssertTrue(ExportSelection().videoOptions(width: 1280, height: 720, fps: 30, codec: "avc1").original)
         // Portrait: the short side is bounded by 1080 as well.
-        XCTAssertEqual(1920, ExportSelection().videoOptions(width: 2160, height: 3840, fps: 30).longEdge)
+        XCTAssertEqual(1920, ExportSelection().videoOptions(width: 2160, height: 3840, fps: 30, codec: "avc1").longEdge)
+    }
+
+    func testRecommendedConvertsProResAndOtherCodecsWithoutChangingSmallClipsSizeOrTiming() {
+        for codec in ["apcn", "apch", "jpeg", ""] {
+            let options = ExportSelection().videoOptions(width: 1920, height: 1080, fps: 30, codec: codec)
+            XCTAssertFalse(options.original)
+            XCTAssertEqual(0, options.longEdge)
+            XCTAssertEqual(0, options.fps)
+            XCTAssertEqual(85, options.quality)
+            let (width, height) = ExportSizing.dimensions(1920, 1080, options.longEdge)
+            XCTAssertEqual(1920, width)
+            XCTAssertEqual(1080, height)
+        }
+        // Choosing Original explicitly still requires a codec the MP4 exporter can preserve.
+        XCTAssertTrue(ExportSelection(mode: .original).videoOptions(width: 1920, height: 1080, fps: 30, codec: "apcn").original)
+        XCTAssertFalse(canPreserveVideoCodec("apcn", hdr: false))
+    }
+
+    func testRecommendedKeepsCompatibleCodecsAndChoosesHevcForHdrAvc() {
+        for codec in ["avc1", "avc3", "hvc1", "hev1"] {
+            XCTAssertTrue(ExportSelection().videoOptions(width: 1280, height: 720, fps: 30, codec: codec).original)
+        }
+        for codec in ["hvc1", "hev1"] {
+            XCTAssertTrue(ExportSelection().videoOptions(width: 1280, height: 720, fps: 30, codec: codec, hdr: true).original)
+        }
+        XCTAssertFalse(ExportSelection().videoOptions(width: 1280, height: 720, fps: 30, codec: "avc1", hdr: true).original)
     }
 
     func testCustomVideoNeverRaisesTheFrameRate() {
         let custom = ExportSelection(mode: .custom, longEdge: 1280, fps: 60, quality: 70)
-        XCTAssertEqual(0, custom.videoOptions(width: 1920, height: 1080, fps: 30).fps)
-        XCTAssertEqual(60, custom.videoOptions(width: 1920, height: 1080, fps: 120).fps)
-        XCTAssertEqual(70, custom.videoOptions(width: 1920, height: 1080, fps: 30).quality)
-        XCTAssertTrue(ExportSelection(mode: .original).videoOptions(width: 3840, height: 2160, fps: 60).original)
+        XCTAssertEqual(0, custom.videoOptions(width: 1920, height: 1080, fps: 30, codec: "avc1").fps)
+        XCTAssertEqual(60, custom.videoOptions(width: 1920, height: 1080, fps: 120, codec: "avc1").fps)
+        XCTAssertEqual(70, custom.videoOptions(width: 1920, height: 1080, fps: 30, codec: "avc1").quality)
+        XCTAssertTrue(ExportSelection(mode: .original).videoOptions(width: 3840, height: 2160, fps: 60, codec: "hvc1").original)
     }
 
     func testSpaceCountsTheVideoBeingCopiedTwice() {

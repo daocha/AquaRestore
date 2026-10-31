@@ -107,14 +107,19 @@ struct ExportSelection: Equatable {
     }
 
     /// Recommended follows each video's size and rate; a custom frame rate above the source keeps the source timing.
-    func videoOptions(width: Int, height: Int, fps sourceFps: Float) -> ExportOptions {
+    func videoOptions(width: Int, height: Int, fps sourceFps: Float, codec: String, hdr: Bool = false) -> ExportOptions {
         switch mode {
-        case .recommended: return ExportRecommendation.video(width: width, height: height, fps: sourceFps)
+        case .recommended: return ExportRecommendation.video(width: width, height: height, fps: sourceFps, codec: codec, hdr: hdr)
         case .original: return ExportOptions(original: true, quality: ExportOptions.originalJpegQuality, png: png)
         case .custom: return ExportOptions(original: false, longEdge: longEdge, fps: fps == 0 || Float(fps) <= sourceFps ? fps : 0,
                                            quality: quality, png: png)
         }
     }
+}
+
+/// The codec families the MP4 exporter can keep in Original mode.
+func canPreserveVideoCodec(_ codec: String, hdr: Bool) -> Bool {
+    ["hvc1", "hev1"].contains(codec) || (!hdr && ["avc1", "avc3"].contains(codec))
 }
 
 enum ExportRecommendation {
@@ -125,12 +130,12 @@ enum ExportRecommendation {
     }
 
     /// Bound both axes to a 1080p frame, preserve lower source rates, and never enlarge the source.
-    static func video(width: Int, height: Int, fps: Float) -> ExportOptions {
+    static func video(width: Int, height: Int, fps: Float, codec: String, hdr: Bool) -> ExportOptions {
         let long = Double(max(width, height)), short = Double(min(width, height))
         let scale = min(1, min(1920 / long, 1080 / short))
         let edge = scale == 1 ? 0 : max(2, Int(long * scale))
         let frameCap = fps > 30 ? 30 : 0
-        if edge == 0 && frameCap == 0 { return ExportOptions() }
+        if edge == 0 && frameCap == 0 && canPreserveVideoCodec(codec, hdr: hdr) { return ExportOptions() }
         return ExportOptions(original: false, longEdge: edge, fps: frameCap, quality: 85)
     }
 }

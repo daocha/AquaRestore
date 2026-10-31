@@ -128,7 +128,8 @@ final class Exports: ObservableObject {
                         if source.video != request.videos { throw MediaProblem(request.videos ? "batchVideosOnly" : "batchPhotosOnly") }
                         let grade = try await MediaIO.analyze(source).grade
                         try Task.checkCancellation()
-                        let options = request.videos ? request.selection.videoOptions(width: source.width, height: source.height, fps: source.fps)
+                        let options = request.videos ? request.selection.videoOptions(width: source.width, height: source.height,
+                                                                                     fps: source.fps, codec: source.codec, hdr: source.isHdr)
                             : request.selection.photoOptions(width: source.width, height: source.height, pngSource: source.url.pathExtension.lowercased() == "png")
                         // Checked before each video, since the earlier ones have used some of the space.
                         if request.videos, let size = BatchRun.estimatedBytes(source, options),
@@ -253,9 +254,7 @@ enum Exporter {
         let audioMix = request.audio
         try MediaIO.requireHdrEncoder(source)
         // MP4 export supports AVC and HEVC here. Original must not silently change another codec.
-        let avc = ["avc1", "avc3"].contains(source.codec)
-        let hevc = ["hvc1", "hev1"].contains(source.codec)
-        if o.original && !(hevc || (avc && !source.isHdr)) {
+        if o.original && !canPreserveVideoCodec(source.codec, hdr: source.isHdr) {
             throw MediaProblem("originalCodec")
         }
 
