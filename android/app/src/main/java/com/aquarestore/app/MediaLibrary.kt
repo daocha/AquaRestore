@@ -70,22 +70,29 @@ internal fun <T> librarySorted(entries: List<T>, sort: LibrarySort, name: (T) ->
     })
 }
 
-private fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean = false): Array<String> = when {
-    audioOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
-    videosOnly && Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-    videosOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-    photosOnly && Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-    photosOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-    Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
+internal fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean = false,
+    sdk: Int = Build.VERSION.SDK_INT): Array<String> = when {
+    audioOnly && sdk >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+    videosOnly && sdk >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    videosOnly && sdk >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+    photosOnly && sdk >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    photosOnly && sdk >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+    sdk >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
         Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-    Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+    sdk >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
-private fun hasMediaAccess(context: Context, audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean) =
-    mediaPermissions(audioOnly, photosOnly, videosOnly).any {
-    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-}
+internal data class LibraryAccess(val allowed: Boolean, val full: Boolean)
+
+/** Selected files remain browsable, but access to one media type does not cover another. */
+internal fun libraryAccess(permissions: Array<String>, granted: Set<String>): LibraryAccess = LibraryAccess(
+    allowed = permissions.any { it in granted },
+    full = permissions.filter { it != Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED }.all { it in granted },
+)
+
+private fun libraryAccess(context: Context, permissions: Array<String>): LibraryAccess = libraryAccess(permissions,
+    permissions.filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }.toSet())
 
 private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean): List<LibraryItem> {
     val collection = MediaStore.Files.getContentUri("external")
@@ -129,13 +136,17 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     val multiple = onChoosePhotos != null
     val limit = if (videosOnly) MAX_BATCH_VIDEOS else MAX_BATCH_PHOTOS
     var chosen by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
-    var allowed by remember(audioOnly, photosOnly, videosOnly) { mutableStateOf(hasMediaAccess(context, audioOnly, photosOnly, videosOnly)) }
+    val permissions = remember(audioOnly, photosOnly, videosOnly) { mediaPermissions(audioOnly, photosOnly, videosOnly) }
+    var access by remember(audioOnly, photosOnly, videosOnly) { mutableStateOf(libraryAccess(context, permissions)) }
+    var libraryRevision by remember { mutableIntStateOf(0) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        allowed = hasMediaAccess(context, audioOnly, photosOnly, videosOnly)
+        access = libraryAccess(context, permissions)
+        // Adding selected files may leave the permission flags unchanged, but the library must be queried again.
+        libraryRevision++
     }
-    LaunchedEffect(audioOnly, photosOnly, videosOnly) { if (!allowed) permission.launch(mediaPermissions(audioOnly, photosOnly, videosOnly)) }
-    val items by produceState<List<LibraryItem>?>(null, allowed, audioOnly, photosOnly, videosOnly) {
-        value = if (allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
+    LaunchedEffect(audioOnly, photosOnly, videosOnly) { if (!access.full) permission.launch(permissions) }
+    val items by produceState<List<LibraryItem>?>(null, access.allowed, libraryRevision, permissions) {
+        value = if (access.allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
             else emptyList()
     }
     // Opens where it was last left, separately for media and music.
@@ -180,6 +191,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, s.text("Close", "關閉")) }
                 }
+                if (access.allowed && !access.full) TextButton(onClick = { permission.launch(permissions) },
+                    modifier = Modifier.padding(horizontal = 12.dp)) { Text(s.text("Manage access", "管理存取權限")) }
                 if (multiple) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Text(if (videosOnly) s.text("${chosen.size} / $limit selected · Videos only", "已選 ${chosen.size}／$limit 段 · 僅限影片")
                         else s.text("${chosen.size} / $limit selected · Photos only", "已選 ${chosen.size}／$limit 張 · 僅限照片"),
@@ -229,14 +242,14 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                     Text(albums.firstOrNull { it.id == selectedAlbum }?.name.orEmpty(), style = MaterialTheme.typography.titleMedium)
                 }
                 when {
-                    !allowed -> Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    !access.allowed -> Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center) {
                         Text(if (audioOnly) s.text("Allow access to your audio files to browse them here.", "允許存取音訊檔案，才能在此瀏覽。")
                             else if (photosOnly) s.text("Allow access to your photos to browse them here.", "允許存取照片，才能在此瀏覽。")
                             else if (videosOnly) s.text("Allow access to your videos to browse them here.", "允許存取影片，才能在此瀏覽。")
                             else s.text("Allow access to your videos and photos to browse them here.", "允許存取影片和照片，才能在此瀏覽。"))
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { permission.launch(mediaPermissions(audioOnly, photosOnly, videosOnly)) }) { Text(s.text("Allow access", "允許存取")) }
+                        Button(onClick = { permission.launch(permissions) }) { Text(s.text("Allow access", "允許存取")) }
                     }
                     items == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     items!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

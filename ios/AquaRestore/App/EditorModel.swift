@@ -4,6 +4,7 @@ import PhotosUI
 import SwiftUI
 
 struct BatchDraft: Equatable {
+    let id = UUID()
     let videos: Bool
     let total: Int
     var prepared = 0
@@ -202,14 +203,23 @@ final class EditorModel: ObservableObject {
     /// Copies each picked item into this app's own folder, one at a time, and reads its size, so the dialog can
     /// estimate the batch. Items that cannot be copied or read are reported as failed with the rest.
     func prepareBatch(_ items: [PhotosPickerItem], videos: Bool, strings s: Strings) {
-        if Exports.shared.status.busy || items.isEmpty { return }
+        prepareBatch(items, videos: videos, strings: s,
+                     load: { try await $0.loadTransferable(type: PickedFile.self) }, inspect: MediaIO.inspect)
+    }
+
+    @discardableResult
+    func prepareBatch<Item>(_ items: [Item], videos: Bool, strings s: Strings,
+                            load: @escaping (Item) async throws -> PickedFile?,
+                            inspect: @escaping (URL) async throws -> SourceMedia) -> Task<Void, Never>? {
+        if Exports.shared.status.busy || items.isEmpty { return nil }
         discardBatch()
         let picked = Array(items.prefix(videos ? BatchLimits.videos : BatchLimits.photos))
-        batchDraft = BatchDraft(videos: videos, total: picked.count)
+        let draft = BatchDraft(videos: videos, total: picked.count)
+        batchDraft = draft
         batchTask = Task { [weak self] in
             for (index, item) in picked.enumerated() {
-                let file = try? await item.loadTransferable(type: PickedFile.self)
-                guard let self, !Task.isCancelled, self.batchDraft != nil else {
+                let file = try? await load(item)
+                guard let self, !Task.isCancelled, self.batchDraft?.id == draft.id else {
                     if let file { try? FileManager.default.removeItem(at: file.folder) }
                     return
                 }
@@ -218,10 +228,12 @@ final class EditorModel: ObservableObject {
                 if let file {
                     self.batchDraft?.folders.append(file.folder)
                     do {
-                        let media = try await MediaIO.inspect(file.url)
+                        let media = try await inspect(file.url)
+                        guard !Task.isCancelled, self.batchDraft?.id == draft.id else { return }
                         if media.video != videos { throw MediaProblem(videos ? "batchVideosOnly" : "batchPhotosOnly") }
                         self.batchDraft?.sources.append(media)
                     } catch {
+                        guard !Task.isCancelled, self.batchDraft?.id == draft.id else { return }
                         self.batchDraft?.failures.append(BatchFailure(name: file.url.lastPathComponent, error: (error as? MediaProblem)?.key ?? unreadable))
                     }
                 } else {
@@ -229,8 +241,10 @@ final class EditorModel: ObservableObject {
                 }
                 self.batchDraft?.prepared = index + 1
             }
+            guard !Task.isCancelled, self?.batchDraft?.id == draft.id else { return }
             self?.batchDraft?.ready = true
         }
+        return batchTask
     }
 
     /// Closes the batch dialog and removes the copies.

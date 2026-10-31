@@ -64,6 +64,7 @@ targets:
     sources:
       - path: Tests/AquaCoreTests
         excludes: ["Tuning"]
+      - path: Tests/AquaAppTests
       - path: ../core/ios/Tests
     dependencies:
       - target: AquaRestore
