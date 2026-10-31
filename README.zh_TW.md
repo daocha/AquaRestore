@@ -4,9 +4,12 @@
 
 # AquaRestore
 
-原生 Android 水下影片／圖片色彩還原 App。Kotlin、Jetpack Compose、Media3、OpenGL ES；Android 10（API 29）以上。所有影像處理均在裝置上完成。正式版僅為檢查更新及使用者要求下載更新而使用網路。Debug 版只有在設定區域網路更新時才有網路權限。
+AquaRestore 提供原生 Android 與 iOS App，還原水下影片與圖片的色彩。所有影像處理均在裝置上完成。
 
-[`ios/`](#ios-版本) 另有畫面、操作與色彩流程相同的 iOS 版：SwiftUI、AVFoundation、Metal；iOS 16 以上。
+- **[Android](#android-版本)：** Kotlin、Jetpack Compose、Media3、OpenGL ES；Android 10（API 29）以上。
+- **[iOS](#ios-版本)：** SwiftUI、AVFoundation、Metal；iOS 16 以上。
+
+Android 正式版僅為檢查更新及使用者要求下載更新而使用網路。Android Debug 版只有在設定區域網路更新時才有網路權限。
 
 ## 使用流程
 
@@ -73,7 +76,25 @@ Original 影片在 Android 保留來源 codec；iOS 僅保留 AVC 或 HEVC 編�
 - **Android：** 檔案儲存於 `Download/AquaRestore-analysis`。
 - **iOS：** 檔案儲存於「檔案」App 的「我的 iPhone › AquaRestore」中的 `logs` 與 `frames`。
 
-## 一鍵建置與發布
+## 建置
+
+經過調校的調色核心（場景分析、調色公式與 GPU shader）位於私人儲存庫，以 git submodule 掛載於 `core/`。有存取權時，請以 `git clone --recurse-submodules` 複製，或在既有副本執行 `git submodule update --init`。沒有存取權時，請執行一次 `scripts/use-core-stub.sh`：它會以 `core-stub/` 的基本調色填入 `core/`，讓 App 可以建置與執行，但效果明顯不及正式發布的版本。
+
+| | Android | iOS |
+| --- | --- | --- |
+| 介面 | Jetpack Compose、Material3 1.4、Material Icons、Media3 播放控制列 | SwiftUI，依相同規格重建：相同的 Material 圖示（由原始碼產生）、Material3 1.4 的按鈕、標籤、滑桿、進度條、對話框與字級，以及 Media3 的播放控制列 |
+| 字型 | Roboto | SF Pro；字級、字重與行高依 Material 字級規範 |
+| 即時預覽 | ExoPlayer＋GLSL shader | AVPlayer＋自訂 `AVVideoCompositing` 內的 Metal compute shader（與圖片路徑的調色結果相差不超過 1 階） |
+| 匯出 | Media3 Transformer | `AVAssetReader` → 同一個 Metal 合成器 → `AVAssetWriter`（H.264／HEVC，位元率與預估大小使用同一份計畫） |
+| 圖片 | `ImageDecoder` 解碼，CPU 調色 | ImageIO 解碼，CPU 調色 |
+| 匯入 | App 內「最近」／「相簿」媒體庫，需媒體存取權限 | 媒體使用照片選擇器，音樂使用「檔案」 |
+| 輸出 | `Movies/AquaRestore`、`Pictures/AquaRestore` | 相簿（僅新增權限，App 不會讀取相簿） |
+
+### Android 版本
+
+原生 Android App 位於 `android/`。
+
+#### 一鍵建置與發布
 
 ```bash
 ./scripts/build-android-debug.sh
@@ -95,9 +116,7 @@ Original 影片在 Android 保留來源 codec；iOS 僅保留 AVC 或 HEVC 編�
 
 若要移除這些腳本在 macOS 上安裝的工具，執行 `./scripts/uninstall-build-env.sh`；每一項移除前都會先詢問。
 
-## 建置
-
-經過調校的調色核心（場景分析、調色公式與 GPU shader）位於私人儲存庫，以 git submodule 掛載於 `core/`。有存取權時，請以 `git clone --recurse-submodules` 複製，或在既有副本執行 `git submodule update --init`。沒有存取權時，請執行一次 `scripts/use-core-stub.sh`：它會以 `core-stub/` 的基本調色填入 `core/`，讓 App 可以建置與執行，但效果明顯不及正式發布的版本。
+#### 手動建置
 
 使用 Android Studio 開啟 `android/`，安裝 Android SDK 36、JDK 17。命令列設定 `ANDROID_HOME` 或 `android/local.properties` 的 `sdk.dir` 後：
 
@@ -108,19 +127,23 @@ cd android
 
 APK：`android/app/build/outputs/apk/debug/app-debug.apk`。Gradle Wrapper、依賴版本及 GitHub Actions 建置流程已隨專案提供。
 
-## iOS 版本
+#### 程式結構
+
+- `core/android/main`：`AutoGrade.kt`（影格色彩統計與自動推薦）、`Grade.kt`（調色公式與強度縮放）與 `GradeShader.kt`（GPU shader）。
+- `ExportPlan.kt`：解析度與位元率策略。
+- `UnderwaterEffect.kt`：單通道 GPU 效果、跨執行緒參數快照。
+- `FrameCadence.kt` / `FrameRateCap.kt`：時間軸抽幀，維持目標平均 fps 與來源時間戳。
+- `MediaIO.kt`：素材資訊、抽樣、圖片解碼與 Media3 Transformer 封裝。
+- `EditorModel.kt`：匯入、按需製作預覽副本、預覽與偏好狀態。
+- `Soundtrack.kt`：背景音樂片段、音量處理（最高 200%，削波而非溢位）與波形。
+- `ExportService.kt`：背景匯出、進度、取消、MediaStore 儲存。
+- `MainActivity.kt` / `Strings.kt`：Compose 介面、繁中／英文與主題。
+
+### iOS 版本
 
 `ios/` 是依照 Android 版逐畫面實作的原生 iOS 版：相同的首頁、含按住對比與全螢幕檢視的預覽、速度、剪輯影格列、音訊與音樂片段列、還原強度與進階滑桿、匯出對話框、設定、字串（中文／English）以及淺色／深色配色。調色公式、自動推薦、匯出尺寸與位元率策略、音樂片段規則均為同一份邏輯逐行移植，並由同一組單元測試（`ios/Tests`）涵蓋。
 
-| | Android | iOS |
-| --- | --- | --- |
-| 介面 | Jetpack Compose、Material3 1.4、Material Icons、Media3 播放控制列 | SwiftUI，依相同規格重建：相同的 Material 圖示（由原始碼產生）、Material3 1.4 的按鈕、標籤、滑桿、進度條、對話框與字級，以及 Media3 的播放控制列 |
-| 字型 | Roboto | SF Pro；字級、字重與行高依 Material 字級規範 |
-| 即時預覽 | ExoPlayer＋GLSL shader | AVPlayer＋自訂 `AVVideoCompositing` 內的 Metal compute shader（與圖片路徑的調色結果相差不超過 1 階） |
-| 匯出 | Media3 Transformer | `AVAssetReader` → 同一個 Metal 合成器 → `AVAssetWriter`（H.264／HEVC，位元率與預估大小使用同一份計畫） |
-| 圖片 | `ImageDecoder` 解碼，CPU 調色 | ImageIO 解碼，CPU 調色 |
-| 匯入 | App 內「最近」／「相簿」媒體庫，需媒體存取權限 | 媒體使用照片選擇器，音樂使用「檔案」 |
-| 輸出 | `Movies/AquaRestore`、`Pictures/AquaRestore` | 相簿（僅新增權限，App 不會讀取相簿） |
+#### 建置
 
 建置（需要 Xcode 與 [XcodeGen](https://github.com/yonaskolb/XcodeGen)；Xcode 專案由 `ios/project.yml` 產生）：
 
@@ -132,7 +155,9 @@ DEVELOPMENT_TEAM=<team id> ./scripts/build-ios-debug.sh --device
 
 與 Android 相同，debug 版有獨立的 Bundle ID（`com.aquarestore.app.debug`），名稱為 **AquaRestore Dev**。要在 Xcode 中開發，請執行 `cd ios && xcodegen generate` 後開啟 `AquaRestore.xcodeproj`。與平台無關的邏輯可單獨以 `cd ios && swift test` 建置與測試。
 
-iOS 程式結構（`ios/AquaRestore`）：
+#### 程式結構
+
+App 程式位於 `ios/AquaRestore`。
 
 - `Core/`：`ExportPlan.swift`（匯出尺寸與位元率）、`FrameCadence.swift`、`MusicMath.swift`、`Strings.swift`，以及 `Tuning/`（連結至 `core/ios/Core`：含調色公式與強度的 `Grade.swift`，以及 `AutoGrade.swift`）。不含介面或 AVFoundation，可在任何環境單元測試。
 - `App/GradeRenderer.swift`：`AVVideoCompositing` 類別，以及預覽與匯出共用的影片合成；Metal shader 本身位於 `core/ios/App/GradeShader.swift`。
@@ -156,21 +181,9 @@ iOS 已驗證與仍需真機驗收的項目見[驗證紀錄](docs/VALIDATION.md#
 
 實際已完成與待真機驗收項目見 [驗證紀錄](docs/VALIDATION.md)。
 
-## 程式結構
-
-- `core/android/main`：`AutoGrade.kt`（影格色彩統計與自動推薦）、`Grade.kt`（調色公式與強度縮放）與 `GradeShader.kt`（GPU shader）。
-- `ExportPlan.kt`：解析度與位元率策略。
-- `UnderwaterEffect.kt`：單通道 GPU 效果、跨執行緒參數快照。
-- `FrameCadence.kt` / `FrameRateCap.kt`：時間軸抽幀，維持目標平均 fps 與來源時間戳。
-- `MediaIO.kt`：素材資訊、抽樣、圖片解碼與 Media3 Transformer 封裝。
-- `EditorModel.kt`：匯入、按需製作預覽副本、預覽與偏好狀態。
-- `Soundtrack.kt`：背景音樂片段、音量處理（最高 200%，削波而非溢位）與波形。
-- `ExportService.kt`：背景匯出、進度、取消、MediaStore 儲存。
-- `MainActivity.kt` / `Strings.kt`：Compose 介面、繁中／英文與主題。
-
 HDR 能力依據：[Media3 支援格式](https://developer.android.com/media/media3/transformer/supported-formats)。精確行為以專案鎖定的 Media3 1.9.3 原始碼與目標裝置驗證為準。
 
-### 強度與影片速度
+## 強度與影片速度
 
 進階滑桿顯示目前強度下實際套用的數值，會隨總強度移動；手動調整時以目前強度換算回基礎值。「還原強度」滑桿範圍為 0%（原色）至 100%（完整推薦校正），圖片與影片使用相同的強度設定。
 

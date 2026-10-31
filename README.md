@@ -4,9 +4,12 @@
 
 # AquaRestore
 
-A native Android app that restores the colors of underwater videos and photos. Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later. All image processing happens on the device. Release builds use the network only to check for app updates and download an update when requested. Debug builds have no network permission unless LAN updates are configured.
+AquaRestore restores the colors of underwater videos and photos with native Android and iOS apps. All image processing happens on the device.
 
-An iOS version with the same screens, controls and color pipeline lives in [`ios/`](#ios-version): SwiftUI, AVFoundation and Metal; iOS 16 or later.
+- **[Android](#android-version):** Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later.
+- **[iOS](#ios-version):** SwiftUI, AVFoundation and Metal; iOS 16 or later.
+
+Android release builds use the network only to check for app updates and download an update when requested. Android debug builds have no network permission unless LAN updates are configured.
 
 ## How it works
 
@@ -73,7 +76,25 @@ On both platforms, tap the version number in Settings ten times to unlock the de
 - **Android:** saved files go to `Download/AquaRestore-analysis`.
 - **iOS:** saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`.
 
-## One-step build and release
+## Building
+
+The tuned color grading (scene analysis, grading formula and GPU shaders) lives in a private repository, mounted at `core/` as a git submodule. With access, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone. Without access, run `scripts/use-core-stub.sh` once: it fills `core/` with the basic grading in `core-stub/`, so the app builds and runs, though its results are noticeably weaker than the released app.
+
+| | Android | iOS |
+| --- | --- | --- |
+| UI | Jetpack Compose, Material3 1.4, Material Icons, Media3 player controls | SwiftUI, rebuilt to the same specs: the same Material icons (generated from their sources), Material3 1.4 buttons, chips, slider, progress bars, dialogs and type scale, and Media3's styled player controller |
+| Font | Roboto | SF Pro; sizes, weights and line heights follow the Material type scale |
+| Live preview | ExoPlayer + a GLSL shader | AVPlayer + a Metal compute shader in a custom `AVVideoCompositing` (the same grade as the photo path, to within one level) |
+| Export | Media3 Transformer | `AVAssetReader` → the same Metal compositor → `AVAssetWriter` (H.264 / HEVC, bitrate from the same plan as the size estimate) |
+| Photos | Decoded with `ImageDecoder`, graded on the CPU | Decoded with ImageIO, graded on the CPU |
+| Import | In-app Recent / Albums library with media permission | Photos picker for media, Files for music |
+| Output | `Movies/AquaRestore`, `Pictures/AquaRestore` | Photos library (add-only access; the app never reads your library) |
+
+### Android version
+
+The native Android app lives in `android/`.
+
+#### One-step build and release
 
 ```bash
 ./scripts/build-android-debug.sh
@@ -95,9 +116,7 @@ Passwords are prompted without echo. The script verifies the signature, commits 
 
 To remove the tools these scripts install on macOS, run `./scripts/uninstall-build-env.sh`; it asks before removing each item.
 
-## Building
-
-The tuned color grading (scene analysis, grading formula and GPU shaders) lives in a private repository, mounted at `core/` as a git submodule. With access, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone. Without access, run `scripts/use-core-stub.sh` once: it fills `core/` with the basic grading in `core-stub/`, so the app builds and runs, though its results are noticeably weaker than the released app.
+#### Manual build
 
 Open `android/` in Android Studio with Android SDK 36 and JDK 17. From the command line, set `ANDROID_HOME` or `sdk.dir` in `android/local.properties`, then:
 
@@ -108,19 +127,23 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pinned dependency versions and a GitHub Actions build are included.
 
-## iOS version
+#### Code layout
+
+- `core/android/main`: `AutoGrade.kt` (frame color statistics, scene detection and automatic recommendations), `Grade.kt` (grading formula and intensity scaling) and `GradeShader.kt` (the GPU shader).
+- `ExportPlan.kt`: resolution and bitrate policy.
+- `UnderwaterEffect.kt`: the single-pass GPU effect and thread-safe parameter snapshots.
+- `FrameCadence.kt` / `FrameRateCap.kt`: timeline frame dropping that keeps the target average fps and source timestamps.
+- `MediaIO.kt`: media info, sampling, photo decoding, filmstrip and the Media3 Transformer wrapper.
+- `Soundtrack.kt`: background music sections, volume processing (up to 200%, clipping rather than wrapping) and the loudness envelope.
+- `EditorModel.kt`: import, preview copies when needed, preview and preference state.
+- `ExportService.kt`: background export, progress, cancel and MediaStore saving.
+- `MainActivity.kt` / `Strings.kt`: Compose UI, Traditional Chinese / English and themes.
+
+### iOS version
 
 `ios/` is a native iOS port that follows the Android app screen for screen: the same home screen, preview with hold-to-compare and full-screen viewer, speed, trim filmstrip, audio and music bar, Restore intensity and advanced sliders, export dialog, settings, strings (中文 / English) and light / dark colors. The grading formula, the automatic recommendations, the export size and bitrate policy and the music window rules are the same code, ported line by line and covered by the same unit tests (`ios/Tests`).
 
-| | Android | iOS |
-| --- | --- | --- |
-| UI | Jetpack Compose, Material3 1.4, Material Icons, Media3 player controls | SwiftUI, rebuilt to the same specs: the same Material icons (generated from their sources), Material3 1.4 buttons, chips, slider, progress bars, dialogs and type scale, and Media3's styled player controller |
-| Font | Roboto | SF Pro; sizes, weights and line heights follow the Material type scale |
-| Live preview | ExoPlayer + a GLSL shader | AVPlayer + a Metal compute shader in a custom `AVVideoCompositing` (the same grade as the photo path, to within one level) |
-| Export | Media3 Transformer | `AVAssetReader` → the same Metal compositor → `AVAssetWriter` (H.264 / HEVC, bitrate from the same plan as the size estimate) |
-| Photos | Decoded with `ImageDecoder`, graded on the CPU | Decoded with ImageIO, graded on the CPU |
-| Import | In-app Recent / Albums library with media permission | Photos picker for media, Files for music |
-| Output | `Movies/AquaRestore`, `Pictures/AquaRestore` | Photos library (add-only access; the app never reads your library) |
+#### Build
 
 Build (needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen); the Xcode project is generated from `ios/project.yml`):
 
@@ -132,7 +155,9 @@ DEVELOPMENT_TEAM=<team id> ./scripts/build-ios-debug.sh --device
 
 As on Android, the debug build has its own bundle id (`com.aquarestore.app.debug`) and is called **AquaRestore Dev**. To work in Xcode, run `cd ios && xcodegen generate` and open `AquaRestore.xcodeproj`. The platform-independent logic builds and tests on its own with `cd ios && swift test`.
 
-iOS code layout (`ios/AquaRestore`):
+#### Code layout
+
+App code lives in `ios/AquaRestore`.
 
 - `Core/`: `ExportPlan.swift` (export sizing and bitrate), `FrameCadence.swift`, `MusicMath.swift`, `Strings.swift`, and `Tuning/` (a link to `core/ios/Core`: `Grade.swift` with the grading formula and intensity, and `AutoGrade.swift`). No UI or AVFoundation, so these are unit-testable anywhere.
 - `App/GradeRenderer.swift`: the `AVVideoCompositing` classes and the video composition shared by preview and export; the Metal shader itself is `core/ios/App/GradeShader.swift`.
@@ -156,21 +181,9 @@ See the [validation log](docs/VALIDATION.md#ios) for what has been verified on i
 
 What has been verified so far, and what still needs testing on real devices, is in the [validation log](docs/VALIDATION.md).
 
-## Code layout
-
-- `core/android/main`: `AutoGrade.kt` (frame color statistics, scene detection and automatic recommendations), `Grade.kt` (grading formula and intensity scaling) and `GradeShader.kt` (the GPU shader).
-- `ExportPlan.kt`: resolution and bitrate policy.
-- `UnderwaterEffect.kt`: the single-pass GPU effect and thread-safe parameter snapshots.
-- `FrameCadence.kt` / `FrameRateCap.kt`: timeline frame dropping that keeps the target average fps and source timestamps.
-- `MediaIO.kt`: media info, sampling, photo decoding, filmstrip and the Media3 Transformer wrapper.
-- `Soundtrack.kt`: background music sections, volume processing (up to 200%, clipping rather than wrapping) and the loudness envelope.
-- `EditorModel.kt`: import, preview copies when needed, preview and preference state.
-- `ExportService.kt`: background export, progress, cancel and MediaStore saving.
-- `MainActivity.kt` / `Strings.kt`: Compose UI, Traditional Chinese / English and themes.
-
 HDR capabilities follow [Media3 supported formats](https://developer.android.com/media/media3/transformer/supported-formats). Exact behavior follows the Media3 1.9.3 sources this project pins, and validation on target devices.
 
-### Intensity and video speed
+## Intensity and video speed
 
 The advanced sliders show the values applied at the current intensity and move with it; manual edits are converted back to base values at the current intensity. The Restore intensity slider ranges from 0% (original colors) to 100% (full recommended correction). Photos and videos follow the same intensity setting.
 
