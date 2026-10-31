@@ -70,8 +70,6 @@ private struct Params {
     var m1 = SIMD4<Float>(0, 1, 0, 0)
     var displaySize = SIMD2<Float>(1, 1)
     var naturalSize = SIMD2<Float>(1, 1)
-    var taps: Int32 = 1
-    var pad2 = SIMD3<Int32>(0, 0, 0)
     var clarity: Float = 0
     var radius: Float = 1                  // clarity radius in output pixels
     var pad3 = SIMD2<Float>(0, 0)
@@ -86,6 +84,13 @@ final class MetalGrader {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLComputePipelineState
+    private let linearize: MTLComputePipelineState
+    private let textureLock = NSLock()
+    private let linearTextures: NSCache<NSString, AnyObject> = {
+        let cache = NSCache<NSString, AnyObject>()
+        cache.countLimit = 1
+        return cache
+    }()
     private var cache: CVMetalTextureCache?
 
     private init() throws {
@@ -95,6 +100,8 @@ final class MetalGrader {
         let library = try device.makeLibrary(source: GradeShader.source, options: nil)
         guard let function = library.makeFunction(name: "grade") else { throw GradeError.metalUnavailable }
         pipeline = try device.makeComputePipelineState(function: function)
+        guard let conversion = library.makeFunction(name: "linearize") else { throw GradeError.metalUnavailable }
+        linearize = try device.makeComputePipelineState(function: conversion)
         let usage = MTLTextureUsage([.shaderRead, .shaderWrite]).rawValue
         CVMetalTextureCacheCreate(nil, nil, device, [kCVMetalTextureUsage as String: usage] as CFDictionary, &cache)
     }
@@ -109,11 +116,22 @@ final class MetalGrader {
         return (texture, cvTexture)
     }
 
+    private func workingTexture(width: Int, height: Int) throws -> MTLTexture {
+        textureLock.lock(); defer { textureLock.unlock() }
+        let key = "\(width)x\(height)" as NSString
+        if let texture = linearTextures.object(forKey: key) as? MTLTexture { return texture }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor) else { throw GradeError.textureFailed }
+        linearTextures.setObject(texture, forKey: key, cost: width * height * 8)
+        return texture
+    }
+
     func render(_ instruction: GradeInstruction, source: CVPixelBuffer, output: CVPixelBuffer, completion: @escaping (Bool) -> Void) {
         do {
             let (input, inputKeep) = try texture(source)
             let (target, targetKeep) = try texture(output)
-            let hdr = instruction.hdr != .sdr
             let p = instruction.state.grade.effective()
             let t = instruction.inverse
             var params = Params()
@@ -130,15 +148,22 @@ final class MetalGrader {
             params.m1 = SIMD4(Float(t.b), Float(t.d), Float(t.ty), 0)
             params.displaySize = SIMD2(Float(instruction.displaySize.width), Float(instruction.displaySize.height))
             params.naturalSize = SIMD2(Float(instruction.naturalSize.width), Float(instruction.naturalSize.height))
-            // Downscaling averages a few taps per output pixel instead of aliasing.
-            let ratio = max(instruction.displaySize.width / CGFloat(target.width), instruction.displaySize.height / CGFloat(target.height))
-            params.taps = Int32(min(max(Int(ratio.rounded(.up)), 1), 4))
             params.clarity = p.clarity
             params.radius = Float(Clarity.radius(target.width, target.height))
 
+            let working = instruction.hdr == .sdr ? input : try workingTexture(width: input.width, height: input.height)
             guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else { completion(false); return }
+            if instruction.hdr != .sdr {
+                encoder.setComputePipelineState(linearize)
+                encoder.setTexture(input, index: 0)
+                encoder.setTexture(working, index: 1)
+                encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
+                encoder.dispatchThreadgroups(MTLSize(width: (input.width + 15) / 16, height: (input.height + 15) / 16, depth: 1),
+                    threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+                encoder.memoryBarrier(scope: .textures)
+            }
             encoder.setComputePipelineState(pipeline)
-            encoder.setTexture(input, index: 0)
+            encoder.setTexture(working, index: 0)
             encoder.setTexture(target, index: 1)
             encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
             let group = MTLSize(width: 16, height: 16, depth: 1)
