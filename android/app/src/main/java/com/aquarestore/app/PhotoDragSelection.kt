@@ -55,7 +55,7 @@ private fun LazyGridState.photoAt(touch: Offset, padding: Float, nearest: Boolea
 /** A normal swipe scrolls; a swipe after holding a photo selects or deselects a range. */
 @Composable
 internal fun Modifier.photoDragSelection(state: LazyGridState, photos: List<String>, selected: List<String>,
-    contentPadding: Dp, onSelectionChange: (ArrayList<String>) -> Unit): Modifier {
+    contentPadding: Dp, limit: Int = MAX_BATCH_PHOTOS, onSelectionChange: (ArrayList<String>) -> Unit): Modifier {
     val latestSelected by rememberUpdatedState(selected)
     val changeSelection by rememberUpdatedState(onSelectionChange)
     val haptic = LocalHapticFeedback.current
@@ -93,14 +93,14 @@ internal fun Modifier.photoDragSelection(state: LazyGridState, photos: List<Stri
             if (state.scrollBy(scrollDirection * scrollSpeed * seconds) != 0f) updateRange()
         }
     }
-    return pointerInput(photos, state, padding) {
+    return pointerInput(photos, state, padding, limit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val held = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
             val index = state.photoAt(held.position, padding) ?: return@awaitEachGesture
-            if (latestSelected.size >= MAX_BATCH_PHOTOS && photos[index] !in latestSelected) return@awaitEachGesture
+            if (latestSelected.size >= limit && photos[index] !in latestSelected) return@awaitEachGesture
             position = held.position
-            gesture = PhotoRangeSelection(photos, latestSelected, index)
+            gesture = PhotoRangeSelection(photos, latestSelected, index, limit)
             updateRange()
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             try {

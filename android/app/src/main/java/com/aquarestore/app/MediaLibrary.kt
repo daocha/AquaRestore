@@ -70,8 +70,10 @@ internal fun <T> librarySorted(entries: List<T>, sort: LibrarySort, name: (T) ->
     })
 }
 
-private fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean): Array<String> = when {
+private fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean = false): Array<String> = when {
     audioOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+    videosOnly && Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    videosOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
     photosOnly && Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
     photosOnly && Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
     Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
@@ -80,11 +82,12 @@ private fun mediaPermissions(audioOnly: Boolean, photosOnly: Boolean): Array<Str
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
-private fun hasMediaAccess(context: Context, audioOnly: Boolean, photosOnly: Boolean) = mediaPermissions(audioOnly, photosOnly).any {
+private fun hasMediaAccess(context: Context, audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean) =
+    mediaPermissions(audioOnly, photosOnly, videosOnly).any {
     ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
 }
 
-private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolean): List<LibraryItem> {
+private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean): List<LibraryItem> {
     val collection = MediaStore.Files.getContentUri("external")
     val id = MediaStore.Files.FileColumns._ID
     val type = MediaStore.Files.FileColumns.MEDIA_TYPE
@@ -92,9 +95,10 @@ private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolea
     val path = MediaStore.MediaColumns.RELATIVE_PATH
     val taken = MediaStore.MediaColumns.DATE_TAKEN
     val added = MediaStore.MediaColumns.DATE_ADDED
-    val selection = if (audioOnly || photosOnly) "$type=?" else "($type=? OR $type=?)"
+    val selection = if (audioOnly || photosOnly || videosOnly) "$type=?" else "($type=? OR $type=?)"
     val args = if (audioOnly) arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO.toString())
         else if (photosOnly) arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
+        else if (videosOnly) arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
         else arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(), MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
     val result = mutableListOf<LibraryItem>()
     context.contentResolver.query(collection, arrayOf(id, type, name, path, taken, added), selection, args,
@@ -119,23 +123,24 @@ private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolea
 }
 
 @Composable
-fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = false,
+fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = false, videosOnly: Boolean = false,
     onChoosePhotos: ((List<Uri>) -> Unit)? = null, onDismiss: () -> Unit, onChoose: (Uri) -> Unit = {}) {
     val context = LocalContext.current
     val multiple = onChoosePhotos != null
+    val limit = if (videosOnly) MAX_BATCH_VIDEOS else MAX_BATCH_PHOTOS
     var chosen by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
-    var allowed by remember(audioOnly, photosOnly) { mutableStateOf(hasMediaAccess(context, audioOnly, photosOnly)) }
+    var allowed by remember(audioOnly, photosOnly, videosOnly) { mutableStateOf(hasMediaAccess(context, audioOnly, photosOnly, videosOnly)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        allowed = hasMediaAccess(context, audioOnly, photosOnly)
+        allowed = hasMediaAccess(context, audioOnly, photosOnly, videosOnly)
     }
-    LaunchedEffect(audioOnly, photosOnly) { if (!allowed) permission.launch(mediaPermissions(audioOnly, photosOnly)) }
-    val items by produceState<List<LibraryItem>?>(null, allowed, audioOnly, photosOnly) {
-        value = if (allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly) }.getOrDefault(emptyList()) }
+    LaunchedEffect(audioOnly, photosOnly, videosOnly) { if (!allowed) permission.launch(mediaPermissions(audioOnly, photosOnly, videosOnly)) }
+    val items by produceState<List<LibraryItem>?>(null, allowed, audioOnly, photosOnly, videosOnly) {
+        value = if (allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
             else emptyList()
     }
     // Opens where it was last left, separately for media and music.
     val prefs = remember { context.getSharedPreferences("preferences", 0) }
-    val key = if (audioOnly) "library_music_" else if (photosOnly) "library_photos_" else "library_media_"
+    val key = if (audioOnly) "library_music_" else if (photosOnly) "library_photos_" else if (videosOnly) "library_videos_" else "library_media_"
     var section by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "section", null) ?: "recent") }
     var selectedAlbum by rememberSaveable(audioOnly) { mutableStateOf(prefs.getString(key + "album", null)) }
     var sort by rememberSaveable(audioOnly) {
@@ -170,16 +175,20 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (audioOnly) s.text("Choose music", "選擇音樂") else if (photosOnly) s.text("Choose photos", "選擇照片") else s.text("Choose video or photo", "選擇影片或照片"),
+                    Text(if (audioOnly) s.text("Choose music", "選擇音樂") else if (photosOnly) s.text("Choose photos", "選擇照片")
+                        else if (videosOnly) s.text("Choose videos", "選擇影片") else s.text("Choose video or photo", "選擇影片或照片"),
                         Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, s.text("Close", "關閉")) }
                 }
                 if (multiple) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Text(s.text("${chosen.size} / $MAX_BATCH_PHOTOS selected · Photos only", "已選 ${chosen.size}／$MAX_BATCH_PHOTOS 張 · 僅限照片"),
+                    Text(if (videosOnly) s.text("${chosen.size} / $limit selected · Videos only", "已選 ${chosen.size}／$limit 段 · 僅限影片")
+                        else s.text("${chosen.size} / $limit selected · Photos only", "已選 ${chosen.size}／$limit 張 · 僅限照片"),
                         style = MaterialTheme.typography.labelLarge)
-                    Text(s.text("Select up to $MAX_BATCH_PHOTOS photos per batch.", "每批最多選擇 $MAX_BATCH_PHOTOS 張照片。"),
+                    Text(if (videosOnly) s.text("Select up to $limit videos per batch.", "每批最多選擇 $limit 段影片。")
+                        else s.text("Select up to $limit photos per batch.", "每批最多選擇 $limit 張照片。"),
                         style = MaterialTheme.typography.bodySmall)
-                    Text(s.text("Hold a photo, then drag to select or deselect more.", "長按照片後滑動，即可選取或取消選取多張照片。"),
+                    Text(if (videosOnly) s.text("Hold a video, then drag to select or deselect more.", "長按影片後滑動，即可選取或取消選取多段影片。")
+                        else s.text("Hold a photo, then drag to select or deselect more.", "長按照片後滑動，即可選取或取消選取多張照片。"),
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { onChoosePhotos?.invoke(chosen.map(Uri::parse)) }, enabled = chosen.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()) { Text(s.text("Continue (${chosen.size})", "繼續（${chosen.size}）")) }
@@ -224,14 +233,16 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         verticalArrangement = Arrangement.Center) {
                         Text(if (audioOnly) s.text("Allow access to your audio files to browse them here.", "允許存取音訊檔案，才能在此瀏覽。")
                             else if (photosOnly) s.text("Allow access to your photos to browse them here.", "允許存取照片，才能在此瀏覽。")
+                            else if (videosOnly) s.text("Allow access to your videos to browse them here.", "允許存取影片，才能在此瀏覽。")
                             else s.text("Allow access to your videos and photos to browse them here.", "允許存取影片和照片，才能在此瀏覽。"))
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { permission.launch(mediaPermissions(audioOnly, photosOnly)) }) { Text(s.text("Allow access", "允許存取")) }
+                        Button(onClick = { permission.launch(mediaPermissions(audioOnly, photosOnly, videosOnly)) }) { Text(s.text("Allow access", "允許存取")) }
                     }
                     items == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     items!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
                             else if (photosOnly) s.text("No photos found", "找不到照片")
+                            else if (videosOnly) s.text("No videos found", "找不到影片")
                             else s.text("No videos or photos found", "找不到影片或照片"))
                     }
                     audioOnly -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
@@ -259,19 +270,19 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         }
                     }
                     else -> LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize().testTag("libraryPhotos")
-                        .then(if (multiple) Modifier.photoDragSelection(photoGrid, photoKeys, chosen, PHOTO_GRID_PADDING) { chosen = it } else Modifier),
+                        .then(if (multiple) Modifier.photoDragSelection(photoGrid, photoKeys, chosen, PHOTO_GRID_PADDING, limit) { chosen = it } else Modifier),
                         state = photoGrid,
                         contentPadding = PaddingValues(PHOTO_GRID_PADDING), horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(shown, key = { it.uri.toString() }) { item ->
                             val picked = item.uri.toString() in chosen
                             LibraryCell(item, selection = if (multiple) picked else null,
-                                enabled = !multiple || picked || chosen.size < MAX_BATCH_PHOTOS) {
+                                enabled = !multiple || picked || chosen.size < limit) {
                                 if (!multiple) onChoose(item.uri)
                                 else {
                                     val uri = item.uri.toString()
                                     if (uri in chosen) chosen = ArrayList(chosen - uri)
-                                    else if (chosen.size < MAX_BATCH_PHOTOS) chosen = ArrayList(chosen + uri)
+                                    else if (chosen.size < limit) chosen = ArrayList(chosen + uri)
                                 }
                             }
                         }

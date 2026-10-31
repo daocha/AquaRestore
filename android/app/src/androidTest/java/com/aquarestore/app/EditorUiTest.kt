@@ -168,14 +168,22 @@ class EditorUiTest {
         ui.activityRule.scenario.recreate()
         ui.onNodeWithText("Continue ($selectionCount)").performClick()
         ui.onNodeWithText("Export $selectionCount photos").assertIsDisplayed()
-        ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
+        fun estimate(): String {
+            fun text() = ui.onNodeWithTag("estimatedSize").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].toString()
+            ui.waitUntil(10_000) { "≈" in text() }
+            ui.onNodeWithTag("estimatedSize").performScrollTo()
+            return text()
+        }
+        val recommended = estimate()
         ui.onNodeWithText("Custom").performClick()
         ui.onNodeWithText("Quality", substring = true).performScrollTo().assertIsDisplayed()
         ui.onNodeWithText("PNG").performScrollTo().performClick()
         ui.onNodeWithText("Quality", substring = true).assertDoesNotExist()
+        // The total follows the settings: lossless PNG is larger than the recommended JPEG.
+        assertNotEquals(recommended, estimate())
         ui.onNodeWithText("Original").performScrollTo().performClick()
         ui.onNodeWithText("JPEG").performClick()
-        ui.onNodeWithTag("estimatedSize").assertDoesNotExist()
+        estimate()
         ui.onNodeWithText("Cancel").performClick()
         fun assertSelectionKept() {
             ui.onNodeWithText("Choose photos").assertIsDisplayed()
@@ -216,6 +224,27 @@ class EditorUiTest {
             assertTrue(model.batchPhotos.value.isEmpty())
             assertNull(model.source.value)
         }
+    }
+    @Test fun batchVideosShowsOnlyWithDeveloperTools() {
+        val context = ui.activity
+        // Settings turns the tools on and off; the home screen looks again when it closes.
+        fun visitSettings(devTools: Boolean) {
+            ui.onNodeWithContentDescription("Settings").performClick()
+            if (devTools) ui.onNodeWithText("Developer tools").performScrollTo().assertIsDisplayed()
+            else ui.onNodeWithText("Developer tools").assertDoesNotExist()
+            ui.onNodeWithText("Done").performClick()
+        }
+        DevTools.disable(context)
+        visitSettings(false)
+        ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
+        try {
+            DevTools.enable(context)
+            visitSettings(true)
+            ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Batch restore videos").performClick()
+            ui.onNodeWithText("Choose videos").assertIsDisplayed()
+        } finally { DevTools.disable(context) }
     }
     @Test fun languageAndThemeChangeOnScreenAndSurviveRecreation() {
         ui.onNodeWithContentDescription("Settings").performClick()

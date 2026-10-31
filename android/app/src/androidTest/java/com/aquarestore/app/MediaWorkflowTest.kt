@@ -178,6 +178,45 @@ class MediaWorkflowTest {
         assertEquals(MAX_BATCH_PHOTOS, BatchPhotoRequest(List(MAX_BATCH_PHOTOS) { Uri.parse("content://photos/$it") }, ExportSelection(), false).photos.size)
     }
 
+    @Test fun videoBatchRestoresEachVideoWholeAndSkipsPhotos() = runBlocking {
+        val videos = listOf(media("audit-video.mp4", "video/mp4"), photo(), media("audit-rotated.mp4", "video/mp4"))
+        withContext(Dispatchers.Main) { Exports.start(app, BatchVideoRequest(videos, ExportSelection(), false)) }
+        assertTrue(Exports.status.value.batch!!.videos)
+        val result = withTimeout(180_000) { Exports.status.first { !it.busy } }
+        created += result.batch!!.saved
+        assertNull(result.error)
+        assertEquals("batchFinished", result.stage)
+        assertEquals(listOf("batchVideosOnly"), result.batch.failures.map { it.error })
+        assertEquals(2, result.batch.saved.size)
+        for ((saved, original) in result.batch.saved.zip(listOf(videos[0], videos[2]))) {
+            val source = MediaIO.inspect(app, original)
+            val output = MediaIO.inspect(app, saved)
+            assertTrue(output.video)
+            val options = ExportSelection().videoOptions(source.width, source.height, source.fps)
+            val expected = if (options.original) source.width to source.height
+                else ExportSizing.dimensions(source.width, source.height, options.longEdge, true)
+            assertEquals(expected.first to expected.second, output.width to output.height)
+            // The whole clip, at normal speed.
+            assertEquals(source.durationMs.toDouble(), output.durationMs.toDouble(), 150.0)
+        }
+        assertTrue(app.cacheDir.listFiles()!!.none { it.name.startsWith("export-") })
+    }
+
+    @Test fun videoBatchRequestEnforcesSelectionLimitAndNoDuplicates() {
+        fun rejected(videos: List<Uri>) {
+            assertThrows(IllegalArgumentException::class.java) { BatchVideoRequest(videos, ExportSelection(), false) }
+        }
+        rejected(emptyList())
+        rejected(List(MAX_BATCH_VIDEOS + 1) { Uri.parse("content://videos/$it") })
+        rejected(List(2) { Uri.parse("content://videos/1") })
+        val request = BatchVideoRequest(List(MAX_BATCH_VIDEOS) { Uri.parse("content://videos/$it") }, ExportSelection(), false)
+        assertEquals(MAX_BATCH_VIDEOS, request.batchStatus()!!.total)
+        val options = request.options(SourceMedia(Uri.EMPTY, "clip.mp4", true, 3840, 2160, 60_000, 60f, 40_000_000))
+        assertEquals(1f, options.speed)
+        assertEquals(0L, options.startMs)
+        assertEquals(0L, options.endMs)
+    }
+
     /** Durations in ms of the audio and video tracks of an exported file. */
     private fun tracks(uri: Uri): Map<String, Long> {
         val extractor = android.media.MediaExtractor()

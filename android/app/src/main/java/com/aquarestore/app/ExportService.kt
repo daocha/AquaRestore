@@ -26,6 +26,17 @@ data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
 
 const val EXPORT_RESULT_NOTIFICATION = 8
 
+/** A video batch waits between videos while the phone is this hot, up to [MAX_COOLING_MS]. */
+const val COOLING_THERMAL_STATUS = PowerManager.THERMAL_STATUS_SEVERE
+const val MAX_COOLING_MS = 10 * 60 * 1000L
+
+/** The progress a batch starts with, or null for a single export. */
+fun ExportWork.batchStatus(): BatchExportStatus? = when (this) {
+    is ExportRequest -> null
+    is BatchPhotoRequest -> BatchExportStatus(photos.size)
+    is BatchVideoRequest -> BatchExportStatus(videos.size, videos = true)
+}
+
 /** What the finished-export notification says; null when the user cancelled, since they already know. */
 fun ExportStatus.resultNotice(s: Strings): Pair<String, String>? {
     if (error == null && stage == "cancelled") return null
@@ -44,7 +55,7 @@ object Exports {
     fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return
         this.request = request
-        val batch = (request as? BatchPhotoRequest)?.let { BatchExportStatus(it.photos.size) }
+        val batch = request.batchStatus()
         status.value = ExportStatus(busy = true, batch = batch)
         try { ContextCompat.startForegroundService(context, Intent(context, ExportService::class.java)) }
         catch (e: Exception) { this.request = null; status.value = ExportStatus(error = "exportFailed", batch = batch) }
@@ -76,7 +87,7 @@ class ExportService : Service() {
         if (job != null) return START_NOT_STICKY
         val request = Exports.request ?: run { stopSelf(); return START_NOT_STICKY }
         chinese = request.chinese
-        batch = (request as? BatchPhotoRequest)?.let { BatchExportStatus(it.photos.size) }
+        batch = request.batchStatus()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
         try {
@@ -97,10 +108,8 @@ class ExportService : Service() {
             try {
                 terminal = when (request) {
                     is ExportRequest -> ExportStatus(progress = 100, uri = export(request), stage = "saved")
-                    is BatchPhotoRequest -> {
-                        exportBatch(request)
-                        ExportStatus(progress = 100, stage = if (batch!!.failures.isEmpty()) "saved" else "batchFinished")
-                    }
+                    is BatchPhotoRequest -> { exportBatch(request); batchFinished() }
+                    is BatchVideoRequest -> { exportVideoBatch(request); batchFinished() }
                 }
             } catch (e: CancellationException) {
                 terminal = ExportStatus(stage = "cancelled")
@@ -190,6 +199,60 @@ class ExportService : Service() {
             update(0)
         }
         batch = batch!!.copy(currentName = null)
+    }
+
+    private fun batchFinished() = ExportStatus(progress = 100, stage = if (batch!!.failures.isEmpty()) "saved" else "batchFinished")
+
+    private suspend fun exportVideoBatch(request: BatchVideoRequest) {
+        for ((index, uri) in request.videos.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            batch = batch!!.copy(currentName = Strings(chinese).text("Video ${index + 1}", "影片 ${index + 1}"))
+            if (index > 0) coolDown()
+            update(0, "analyzing")
+            var reading = true
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    batch = batch!!.copy(currentName = MediaIO.displayName(this@ExportService, uri))
+                    val mime = contentResolver.getType(uri)
+                    if (mime != null && !mime.startsWith("video/")) throw MediaProblem("batchVideosOnly")
+                    MediaIO.withHdrSupport(MediaIO.inspect(this@ExportService, uri).also {
+                        if (!it.video) throw MediaProblem("batchVideosOnly")
+                    })
+                }
+                batch = batch!!.copy(currentName = source.name)
+                val grade = try { MediaIO.analyze(this, source).grade } catch (e: MediaProblem) {
+                    // The editor decodes such a video in software into a copy first; a batch leaves that to the editor.
+                    if (e.key != "analysisFailed") throw e
+                    throw MediaProblem(if (withContext(Dispatchers.IO) { MediaIO.softwareDecodes(source) }) "videoNeedsEditor" else "tooLarge")
+                }
+                currentCoroutineContext().ensureActive()
+                val options = request.options(source)
+                // Checked before each video, since the earlier ones have used some of the space.
+                estimatedVideoBytes(source, options)?.let { size ->
+                    if (cacheDir.usableSpace < batchVideoSpace(listOf(size))) throw MediaProblem("storageFull")
+                }
+                reading = false
+                val saved = export(ExportRequest(source, grade, options, chinese))
+                batch = batch!!.copy(saved = batch!!.saved + saved)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                android.util.Log.w("AquaRestore", "Batch video failed", e)
+                batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
+                    (e as? MediaProblem)?.key ?: if (reading) "videoUnreadable" else "exportFailed"))
+            }
+            update(0)
+        }
+        batch = batch!!.copy(currentName = null)
+    }
+
+    /** Encoding back to back heats the phone until it throttles; let it cool between videos instead. */
+    private suspend fun coolDown() {
+        val power = getSystemService(PowerManager::class.java)
+        val until = SystemClock.elapsedRealtime() + MAX_COOLING_MS
+        while (power.currentThermalStatus >= COOLING_THERMAL_STATUS && SystemClock.elapsedRealtime() < until) {
+            update(null, "cooling")
+            delay(10_000)
+        }
     }
 
     private suspend fun export(request: ExportRequest): Uri {

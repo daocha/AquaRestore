@@ -31,4 +31,19 @@ class BatchPhotoOptionsTest {
         assertEquals(0L, custom.startMs)
         assertEquals(0L, custom.endMs)
     }
+
+    @Test fun batchTotalAddsEachPhotosOwnEstimate() {
+        val photos = listOf(PhotoHeader(1200, 800, "image/jpeg"), PhotoHeader(6000, 4000, "image/png"))
+        val selection = ExportSelection()
+        val each = photos.map { photoEstimatedBytes(it.width, it.height, selection.photoOptions(it.width, it.height, it.mime)) }
+        assertEquals(each.sum(), batchPhotoBytes(photos, selection))
+        assertEquals(0L, batchPhotoBytes(emptyList(), selection))
+        assertTrue(batchPhotoBytes(photos, ExportSelection(mode = ExportMode.ORIGINAL, png = true)) > batchPhotoBytes(photos, selection))
+    }
+
+    @Test fun batchSizeTextPicksTheUnit() {
+        assertEquals("512 KB", batchSizeText(512_000))
+        assertEquals("3.5 MB", batchSizeText(3_500_000))
+        assertEquals("1.25 GB", batchSizeText(1_250_000_000))
+    }
 }

@@ -176,6 +176,7 @@ private fun Editor(model: EditorModel, s: Strings) {
     val photoExportSelection by model.photoExportSelection.collectAsStateWithLifecycle()
     val videoExportSelection by model.videoExportSelection.collectAsStateWithLifecycle()
     val batchPhotos by model.batchPhotos.collectAsStateWithLifecycle()
+    val batchVideos by model.batchVideos.collectAsStateWithLifecycle()
     val trim by model.trim.collectAsStateWithLifecycle()
     val filmstrip by model.filmstrip.collectAsStateWithLifecycle()
     // Kept as State and read only while drawing, so playback ticks redraw the trim bar without recomposing.
@@ -197,6 +198,10 @@ private fun Editor(model: EditorModel, s: Strings) {
     LaunchedEffect(source?.uri) { speedExpanded = false; trimPicked = null; overlayBounds = null; trimBarBounds = null }
     var mediaLibrary by rememberSaveable { mutableStateOf(false) }
     var batchLibrary by rememberSaveable { mutableStateOf(false) }
+    var batchVideoLibrary by rememberSaveable { mutableStateOf(false) }
+    // Batch videos is a developer tool for now. Settings turns the tools on and off, so look again when it closes.
+    var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
+    LaunchedEffect(settings) { if (!settings) devTools = DevTools.enabled(context) }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
     val compare = remember { MutableInteractionSource() }
@@ -294,7 +299,8 @@ private fun Editor(model: EditorModel, s: Strings) {
         Column(Modifier.padding(inset).fillMaxSize().then(if (source == null || phase != null) Modifier.verticalScroll(editorScroll) else Modifier).padding(horizontal = if (maximized) 0.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
-                Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true })
+                Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true },
+                    onBatchVideos = if (devTools) { { batchVideoLibrary = true } } else null)
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -405,7 +411,9 @@ private fun Editor(model: EditorModel, s: Strings) {
         text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             export.batch?.let { Text(it.progressText(s), maxLines = 2) }
             Progress(export.progress)
-            Text(if (export.batch != null) s.text("Processing photos one at a time. You can continue in the background. Cancelling keeps photos already saved.",
+            Text(if (export.batch?.videos == true) s.text("Processing videos one at a time. You can continue in the background. Cancelling keeps videos already saved.",
+                "正在逐段處理影片，可切換至背景繼續。取消後會保留已儲存的影片。")
+                else if (export.batch != null) s.text("Processing photos one at a time. You can continue in the background. Cancelling keeps photos already saved.",
                 "正在逐張處理照片，可切換至背景繼續。取消後會保留已儲存的照片。")
                 else s.text("Processing the original file. You can continue in the background.", "正在處理原始檔案，可切換至背景繼續匯出。"))
         } },
@@ -456,12 +464,24 @@ private fun Editor(model: EditorModel, s: Strings) {
     if (batchLibrary) MediaLibrary(s, photosOnly = true, onChoosePhotos = {
         model.batchPhotos.value = it
     }, onDismiss = { batchLibrary = false; model.batchPhotos.value = emptyList() })
-    if (batchPhotos.isNotEmpty()) BatchPhotoExportDialog(batchPhotos.size, photoExportSelection, s,
+    if (batchPhotos.isNotEmpty()) BatchPhotoExportDialog(batchPhotos, photoExportSelection, s,
         onSelectionChange = { model.setExportSelection(false, it) }, onResetCustom = { model.resetCustomExport(false) },
         onDismiss = { model.batchPhotos.value = emptyList() }) {
         val request = BatchPhotoRequest(batchPhotos.toList(), photoExportSelection, s.chinese)
         model.batchPhotos.value = emptyList()
         batchLibrary = false
+        if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        Exports.start(context, request)
+    }
+    if (batchVideoLibrary) MediaLibrary(s, videosOnly = true, onChoosePhotos = {
+        model.batchVideos.value = it
+    }, onDismiss = { batchVideoLibrary = false; model.batchVideos.value = emptyList() })
+    if (batchVideos.isNotEmpty()) BatchVideoExportDialog(batchVideos, videoExportSelection, s,
+        onSelectionChange = { model.setExportSelection(true, it) }, onResetCustom = { model.resetCustomExport(true) },
+        onDismiss = { model.batchVideos.value = emptyList() }) {
+        val request = BatchVideoRequest(batchVideos.toList(), videoExportSelection, s.chinese)
+        model.batchVideos.value = emptyList()
+        batchVideoLibrary = false
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         Exports.start(context, request)
     }
@@ -479,7 +499,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit, onBatchVideos: (() -> Unit)? = null) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -495,6 +515,14 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, o
     }
     Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (onBatchVideos != null) {
+        OutlinedButton(onClick = onBatchVideos, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(Icons.Rounded.VideoLibrary, null); Spacer(Modifier.width(10.dp))
+            Text(s.text("Batch restore videos", "批次還原影片"), fontSize = 16.sp)
+        }
+        Text(s.text("Developer tools · up to $MAX_BATCH_VIDEOS videos", "開發者工具 · 最多 $MAX_BATCH_VIDEOS 段影片"),
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
     Panel {
         listOf(
             Icons.Rounded.AutoAwesome to s.text("Automatic color recommendations", "自動分析並推薦調色"),
@@ -1384,18 +1412,10 @@ private fun ExportDialog(source: SourceMedia, grade: Grade, s: Strings, speed: F
     val startMs = trim.first
     val endMs = if (trim.last in 1 until source.durationMs) trim.last else 0L
     val lengthMs = ExportOptions(startMs = startMs, endMs = endMs).trimmedMs(source.durationMs)
-    val recommended = remember(source.width, source.height, source.fps, source.video, source.mime) {
-        if (source.video) ExportRecommendation.video(source.width, source.height, source.fps)
-        else ExportRecommendation.photo(source.width, source.height, source.mime)
-    }
     val sourceFps = source.fps * min(speed, 1f)
     val customFps = selection.fps.takeIf { it == 0 || it <= sourceFps } ?: 0
-    val options = (if (!source.video) selection.photoOptions(source.width, source.height, source.mime) else when (selection.mode) {
-        ExportMode.RECOMMENDED -> recommended
-        ExportMode.ORIGINAL -> ExportOptions(quality = ORIGINAL_JPEG_QUALITY, png = selection.png)
-        ExportMode.CUSTOM -> ExportOptions(original = false, longEdge = selection.longEdge, fps = customFps,
-            quality = selection.quality, png = selection.png)
-    }).copy(speed = speed, startMs = startMs, endMs = endMs)
+    val options = (if (!source.video) selection.photoOptions(source.width, source.height, source.mime)
+        else selection.videoOptions(source.width, source.height, source.fps, sourceFps)).copy(speed = speed, startMs = startMs, endMs = endMs)
     val dimensions = if (options.original) source.width to source.height
         else ExportSizing.dimensions(source.width, source.height, options.longEdge, source.video)
     val photoSize = if (source.video) null else measurePhotoSize(source, grade, options, dimensions)

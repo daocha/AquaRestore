@@ -1,15 +1,22 @@
 package com.aquarestore.app
 
+import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 // The service only decodes one photo at a time, so a larger batch does not multiply image memory use.
@@ -25,14 +32,20 @@ data class BatchPhotoRequest(val photos: List<Uri>, val selection: ExportSelecti
 
 data class PhotoExportFailure(val name: String, val error: String)
 data class BatchExportStatus(val total: Int, val saved: List<Uri> = emptyList(),
-    val failures: List<PhotoExportFailure> = emptyList(), val currentName: String? = null) {
+    val failures: List<PhotoExportFailure> = emptyList(), val currentName: String? = null, val videos: Boolean = false) {
     val completed: Int get() = saved.size + failures.size
 }
 
 @Composable
-fun BatchPhotoExportDialog(count: Int, selection: ExportSelection, s: Strings,
+fun BatchPhotoExportDialog(photos: List<Uri>, selection: ExportSelection, s: Strings,
     onSelectionChange: (ExportSelection) -> Unit, onResetCustom: () -> Unit,
     onDismiss: () -> Unit, onExport: () -> Unit) {
+    val count = photos.size
+    val context = LocalContext.current
+    // Only the file headers are read, so even a full batch is quick; the photos themselves are not decoded.
+    val headers by produceState<List<PhotoHeader>?>(null, photos) {
+        value = withContext(Dispatchers.IO) { photos.mapNotNull { ensureActive(); photoHeader(context, it) } }
+    }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(s.text("Export $count photos", "匯出 $count 張照片")) },
         text = {
@@ -72,6 +85,14 @@ fun BatchPhotoExportDialog(count: Int, selection: ExportSelection, s: Strings,
                         }
                     }
                 }
+                val found = headers
+                Text(s.text("Estimated total size", "預估總大小") + " · " + (found?.let { "≈ " + batchSizeText(batchPhotoBytes(it, selection)) }
+                    ?: s.text("measuring…", "測量中…")), Modifier.testTag("estimatedSize"),
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                Text(s.text("Based on each photo's resolution, format and quality. Actual size varies with image detail.",
+                    "依每張照片的解析度、格式與畫質估算；實際大小會隨影像細節而變。"), fontSize = 11.sp)
+                if (found != null && found.size < count) Text(s.text("${count - found.size} could not be read and are not counted.",
+                    "${count - found.size} 張無法讀取，未計入。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                 Text(s.text("Saved to Gallery / AquaRestore. The original files are never overwritten.",
                     "儲存至相簿／AquaRestore，不覆蓋原始檔案。"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -80,13 +101,38 @@ fun BatchPhotoExportDialog(count: Int, selection: ExportSelection, s: Strings,
         dismissButton = { TextButton(onClick = onDismiss) { Text(s.text("Cancel", "取消")) } })
 }
 
-fun BatchExportStatus.progressText(s: Strings): String =
-    s.text("Photo ${(completed + 1).coerceAtMost(total)} of $total", "第 ${(completed + 1).coerceAtMost(total)}／$total 張") +
-        (currentName?.let { " · $it" } ?: "")
+data class PhotoHeader(val width: Int, val height: Int, val mime: String)
+
+/** A photo's dimensions from its header alone, or null if it cannot be read. */
+private fun photoHeader(context: Context, uri: Uri): PhotoHeader? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    PhotoHeader(bounds.outWidth, bounds.outHeight, context.contentResolver.getType(uri) ?: bounds.outMimeType ?: "image/jpeg")
+        .takeIf { it.width > 0 && it.height > 0 }
+}.getOrNull()
+
+/** The batch's total from each photo's own export options, as the service will resolve them. */
+fun batchPhotoBytes(photos: List<PhotoHeader>, selection: ExportSelection): Long =
+    photos.sumOf { photoEstimatedBytes(it.width, it.height, selection.photoOptions(it.width, it.height, it.mime)) }
+
+fun batchSizeText(bytes: Long): String = when {
+    bytes >= 1_000_000_000L -> "%.2f GB".format(bytes / 1_000_000_000.0)
+    bytes >= 1_000_000L -> "%.1f MB".format(bytes / 1_000_000.0)
+    else -> "%.0f KB".format(bytes / 1_000.0)
+}
+
+fun BatchExportStatus.progressText(s: Strings): String {
+    val current = (completed + 1).coerceAtMost(total)
+    return (if (videos) s.text("Video $current of $total", "第 $current／$total 段影片")
+        else s.text("Photo $current of $total", "第 $current／$total 張")) + (currentName?.let { " · $it" } ?: "")
+}
 
 fun BatchExportStatus.resultText(s: Strings): String {
     val remaining = total - completed
-    return s.text("${saved.size} of $total photos saved to Gallery / AquaRestore.", "已將 ${saved.size}／$total 張照片儲存至相簿／AquaRestore。") +
-        (if (failures.isEmpty()) "" else s.text("\n${failures.size} failed.", "\n${failures.size} 張失敗。")) +
-        (if (remaining == 0) "" else s.text("\n$remaining not processed. Completed photos are kept.", "\n$remaining 張未處理。已完成的照片會保留。"))
+    return (if (videos) s.text("${saved.size} of $total videos saved to Gallery / AquaRestore.", "已將 ${saved.size}／$total 段影片儲存至相簿／AquaRestore。")
+        else s.text("${saved.size} of $total photos saved to Gallery / AquaRestore.", "已將 ${saved.size}／$total 張照片儲存至相簿／AquaRestore。")) +
+        (if (failures.isEmpty()) "" else if (videos) s.text("\n${failures.size} failed.", "\n${failures.size} 段失敗。")
+            else s.text("\n${failures.size} failed.", "\n${failures.size} 張失敗。")) +
+        (if (remaining == 0) "" else if (videos) s.text("\n$remaining not processed. Completed videos are kept.", "\n$remaining 段未處理。已完成的影片會保留。")
+            else s.text("\n$remaining not processed. Completed photos are kept.", "\n$remaining 張未處理。已完成的照片會保留。"))
 }
