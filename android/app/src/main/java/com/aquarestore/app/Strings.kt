@@ -22,6 +22,7 @@ class Strings(val chinese: Boolean) {
             "batchVideosOnly" to ("This batch takes videos only." to "此批次僅處理影片。"),
             "videoUnreadable" to ("Could not read this video. It may have been deleted, moved, or saved in an unsupported format." to "無法讀取此影片，可能已被刪除、移動，或為不支援的格式。"),
             "videoNeedsEditor" to ("This video needs software decoding on this device. Open it in the editor to restore it." to "此影片在此裝置上需要以軟體解碼，請在編輯器中開啟以進行還原。"),
+            "timedOut" to ("Android stopped the export after its time limit for background work. Items already saved are kept; export the rest later." to "Android 已因背景工作時間上限停止匯出。已儲存的項目會保留，其餘請稍後再匯出。"),
             "storageFull" to ("Not enough free storage for this video. Free up space, or export with a lower resolution." to "剩餘空間不足以匯出此影片。請釋放空間，或以較低解析度匯出。"),
             "hdrDevice" to ("HDR preservation requires Android 13+ and a compatible 10-bit HDR encoder. This device cannot provide that export. No automatic SDR conversion was performed." to "保留 HDR 需要 Android 13 以上及相容的 10-bit HDR 編碼器。此裝置無法提供該匯出，沒有自動轉換成 SDR。"),
             "dolbyVision" to ("Dolby Vision needs dynamic metadata processing that is not implemented yet. Standard HDR10 / PQ and HLG are supported on compatible devices." to "Dolby Vision 需要尚未實作的動態中繼資料處理。標準 HDR10／PQ 與 HLG 可在相容裝置上處理。"),

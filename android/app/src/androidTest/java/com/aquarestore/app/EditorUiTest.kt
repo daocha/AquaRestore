@@ -174,13 +174,14 @@ class EditorUiTest {
             ui.onNodeWithTag("estimatedSize").performScrollTo()
             return text()
         }
-        val recommended = estimate()
+        estimate()
         ui.onNodeWithText("Custom").performClick()
         ui.onNodeWithText("Quality", substring = true).performScrollTo().assertIsDisplayed()
+        val jpeg = estimate()
         ui.onNodeWithText("PNG").performScrollTo().performClick()
         ui.onNodeWithText("Quality", substring = true).assertDoesNotExist()
-        // The total follows the settings: lossless PNG is larger than the recommended JPEG.
-        assertNotEquals(recommended, estimate())
+        // The total follows the settings: lossless PNG is larger than JPEG. (Recommended keeps these PNG photos PNG.)
+        assertNotEquals(jpeg, estimate())
         ui.onNodeWithText("Original").performScrollTo().performClick()
         ui.onNodeWithText("JPEG").performClick()
         estimate()
@@ -227,6 +228,10 @@ class EditorUiTest {
     }
     @Test fun batchVideosShowsOnlyWithDeveloperTools() {
         val context = ui.activity
+        // Without it the picker asks Android for access, and the permission screen covers the app.
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_VIDEO" else "android.permission.READ_EXTERNAL_STORAGE"
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission")
+            .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         // Settings turns the tools on and off; the home screen looks again when it closes.
         fun visitSettings(devTools: Boolean) {
             ui.onNodeWithContentDescription("Settings").performClick()

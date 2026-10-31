@@ -107,7 +107,8 @@ data class PhotoHeader(val width: Int, val height: Int, val mime: String)
 private fun photoHeader(context: Context, uri: Uri): PhotoHeader? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-    PhotoHeader(bounds.outWidth, bounds.outHeight, context.contentResolver.getType(uri) ?: bounds.outMimeType ?: "image/jpeg")
+    // The same type the export reads, so both resolve the same Recommended format.
+    PhotoHeader(bounds.outWidth, bounds.outHeight, context.contentResolver.getType(uri) ?: "")
         .takeIf { it.width > 0 && it.height > 0 }
 }.getOrNull()
 

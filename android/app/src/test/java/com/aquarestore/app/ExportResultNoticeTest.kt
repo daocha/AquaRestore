@@ -40,4 +40,14 @@ class ExportResultNoticeTest {
         val (title, _) = ExportStatus(progress = 100, stage = "saved").resultNotice(Strings(true))!!
         assertEquals("已儲存至相簿", title)
     }
+
+    @Test fun timedOutBatchTellsWhyItStopped() {
+        val batch = BatchExportStatus(4, failures = listOf(PhotoExportFailure("a.mp4", "storageFull")), videos = true)
+        val (title, text) = ExportStatus(error = "timedOut", batch = batch).resultNotice(s)!!
+        assertEquals("Export failed", title)
+        val lines = text.lines()
+        assertEquals(s["timedOut"], lines[0])
+        assertEquals("0 of 4 videos saved to Gallery / AquaRestore.", lines[1])
+        assertEquals("a.mp4: ${s["storageFull"]}", lines.last())
+    }
 }

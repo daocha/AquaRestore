@@ -73,6 +73,8 @@ class ExportService : Service() {
     private var lastNotification = 0L
     private var chinese = false
     private var batch: BatchExportStatus? = null
+    /** Android ended the export because the service used up its daily foreground time, not the user. */
+    private var timedOut = false
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "cancel") {
@@ -88,6 +90,7 @@ class ExportService : Service() {
         val request = Exports.request ?: run { stopSelf(); return START_NOT_STICKY }
         chinese = request.chinese
         batch = request.batchStatus()
+        timedOut = false
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
         try {
@@ -112,7 +115,8 @@ class ExportService : Service() {
                     is BatchVideoRequest -> { exportVideoBatch(request); batchFinished() }
                 }
             } catch (e: CancellationException) {
-                terminal = ExportStatus(stage = "cancelled")
+                // A timeout is reported as a failure, so the user is told why it stopped, also by notification.
+                terminal = if (timedOut) ExportStatus(error = "timedOut") else ExportStatus(stage = "cancelled")
             } catch (e: Exception) {
                 android.util.Log.e("AquaRestore", "Export failed", e)
                 terminal = ExportStatus(error = (e as? MediaProblem)?.key ?: "exportFailed")
@@ -339,7 +343,7 @@ class ExportService : Service() {
         }
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) { job?.cancel(); stopSelf() }
+    override fun onTimeout(startId: Int, fgsType: Int) { timedOut = true; job?.cancel(); stopSelf() }
     override fun onDestroy() {
         scope.cancel()
         if (wakeLock?.isHeld == true) wakeLock?.release()

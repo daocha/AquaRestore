@@ -40,7 +40,8 @@ data class BatchVideoRequest(val videos: List<Uri>, val selection: ExportSelecti
 fun batchVideoSpace(sizes: List<Long>): Long = sizes.sum() + (sizes.maxOrNull() ?: 0L) + BATCH_VIDEO_SPACE_MARGIN
 
 /** The options a batch exports this video with: the whole clip, at normal speed, with its own audio. */
-fun BatchVideoRequest.options(source: SourceMedia): ExportOptions = selection.videoOptions(source.width, source.height, source.fps)
+fun ExportSelection.batchVideoOptions(source: SourceMedia): ExportOptions = videoOptions(source.width, source.height, source.fps)
+fun BatchVideoRequest.options(source: SourceMedia): ExportOptions = selection.batchVideoOptions(source)
 
 fun estimatedVideoBytes(source: SourceMedia, options: ExportOptions): Long? = videoExportPlan(source.width, source.height,
     source.fps, source.bitrate, source.audioBitrate, source.durationMs, options).estimatedBytes
@@ -101,8 +102,7 @@ fun BatchVideoExportDialog(videos: List<Uri>, selection: ExportSelection, s: Str
                 val found = sources
                 if (found == null) Text(s.text("Reading the videos…", "正在讀取影片…"), fontSize = 12.sp)
                 else {
-                    val request = BatchVideoRequest(videos, selection, s.chinese)
-                    val sizes = found.map { estimatedVideoBytes(it, request.options(it)) ?: 0L }
+                    val sizes = found.map { estimatedVideoBytes(it, selection.batchVideoOptions(it)) ?: 0L }
                     val needed = batchVideoSpace(sizes)
                     Text(s.text("Total length ${durationText(found.sumOf { it.durationMs })} · about ${batchSizeText(sizes.sum())}",
                         "總長度 ${durationText(found.sumOf { it.durationMs })} · 約 ${batchSizeText(sizes.sum())}"),
