@@ -7,6 +7,9 @@ struct SettingsDialog: View {
     @ObservedObject var model: EditorModel
     let dismiss: () -> Void
     @Environment(\.strings) private var s
+    @Environment(\.palette) private var c
+    @ObservedObject private var devTools = DevTools.shared
+    @State private var versionTaps = 0
 
     var body: some View {
         M3Dialog(title: s.text("Make it yours", "個人化設定"), dismiss: dismiss) {
@@ -15,6 +18,27 @@ struct SettingsDialog: View {
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("zh", "中文"), ("en", "English")], selected: model.language) { model.preference("language", $0) }
                 MText(s.text("Appearance", "外觀"), weight: .semibold)
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("light", s.text("Light", "淺色")), ("dark", s.text("Dark", "深色"))], selected: model.theme) { model.preference("theme", $0) }
+                // Like Android's build number: ten taps on the version unlock the developer tools.
+                MText(DevTools.version, size: 12, color: c.onSurfaceVariant)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if devTools.enabled { return }
+                        versionTaps += 1
+                        if versionTaps >= DevTools.unlockTaps { devTools.enable() }
+                    }
+                    .accessibilityIdentifier("version")
+                if devTools.enabled {
+                    Rectangle().fill(c.outlineVariant).frame(height: 1)
+                    HStack {
+                        MText(s.text("Developer tools", "開發者工具"), weight: .semibold)
+                        Spacer()
+                        // Turning them off locks them again; ten taps on the version unlock them.
+                        Toggle("", isOn: Binding(get: { true }, set: { on in if !on { devTools.disable(); versionTaps = 0 } }))
+                            .labelsHidden().tint(c.primary)
+                            .accessibilityLabel(s.text("Developer tools", "開發者工具"))
+                    }
+                    MText(s.text("Batch restore videos is on the home screen.", "首頁已提供「批次還原影片」。"), size: 12, color: c.onSurfaceVariant)
+                }
             }
         } buttons: {
             M3TextButton(title: s.text("Done", "完成"), action: dismiss)

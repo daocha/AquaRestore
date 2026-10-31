@@ -46,6 +46,8 @@ Output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written
 
 On Android, **Batch restore photos** on the home screen accepts up to 100 photos, with no videos. Hold a photo and drag across others to select or deselect a range; holding near the top or bottom scrolls through more photos. Choose Recommended, Original or Custom export settings once; each photo receives its own default intelligent restoration automatically, without opening the editor. Recommended adapts to each photo's dimensions and format. Batches show an estimated total size, from each photo's resolution, format and quality, and process one photo at a time to limit memory use on midrange phones. Export continues in the background with progress and cancellation; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
 
+**Batch restore videos** is experimental and available only with Android's hidden developer tools turned on: tap the version number in Settings ten times; they stay on until the next app update, or until switched off in Settings. Its button then appears on the home screen below the photo batch. It accepts up to 20 videos; each is restored automatically and exported whole with its own audio (no trim, speed or music), one video at a time. Recommended caps output at 1080p and 30 fps. Before starting, the dialog shows the total length, the estimated size and the free space needed. Before each video the export checks free space, and between videos it waits while the phone is severely hot. A video that this phone can analyze only after decoding it in software is reported as failed; open it in the editor instead.
+
 ## One-step build and release
 
 ```bash
@@ -96,7 +98,7 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pi
 
 Differences that come from the platform:
 
-- **Batch photo restoration:** currently available on Android only.
+- **Batch photo and video restoration:** on iOS, a batch runs only while AquaRestore stays open, so it takes up to 30 photos or 5 videos, against 100 and 20 on Android, and the batch dialog and progress warn not to switch apps or lock the screen. Leaving the app pauses the batch until you return. Photos are picked in the system picker, without hold-and-drag selection. Batch videos need the developer tools, unlocked as on Android by tapping the version in Settings ten times.
 - **Background export:** this iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
 - **No preview proxy.** Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
 - **Audio:** untouched AAC is passed through on iOS; speed, volume or music edits are encoded as AAC. Other source audio is also encoded as AAC for MP4 compatibility.
