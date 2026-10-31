@@ -12,20 +12,23 @@ An iOS version with the same screens, controls and color pipeline lives in [`ios
 
 1. Choose a video or photo from the in-app Recent or Albums library. Android asks for media access when you open the library; on supported versions, you can grant access to selected photos and videos.
 2. The app analyzes the colors and recommends red recovery, white balance, exposure, dehaze, clarity and shadow settings.
-3. Fine-tune with the **Restore intensity** slider. It scales every advanced setting together: 0% is the original and 100% is the full recommended correction. Hold **Hold to compare** to see the original; release to return. The ⛶ button on the preview opens a full-screen viewer (the same player, so playback continues) with compare still available; tap it again or press Back to return.
+3. Fine-tune with the **Restore intensity** slider. It scales every advanced setting together: 0% is the original and 100% is the full recommended correction. Hold **Hold to compare** to see the original; release to return. The ⛶ button on the preview opens a full-screen viewer (the same player, so playback continues) with compare still available; tap it again to return. Android also supports the Back button; on iOS, use the on-screen buttons to leave full screen or the editor.
 4. The preview stays at the top while the controls scroll independently. For videos:
-   - **Video speed:** 0.5×, 1×, 2× or 4×.
+   - **Video speed:** 0.5×, 1×, 2× or 4×. On iOS, Speed is the only option in the player's settings menu.
    - **Trim:** a filmstrip of graded frames covers the whole clip, with footage outside the selection dimmed and the playhead shown. Dragging a handle pauses the preview on that frame. Tap or drag inside the selection to move the cursor and play from there; **Set start / Set end** above the cursor cut exactly at that frame. Playback loops within the trim, and export and the size estimate use only the trimmed part.
-   - **Audio:** set the original sound's volume (0% mutes it) and add background music. The music bar shows the whole song's loudness, with a window as long as the video's output; drag it to choose which part of the song plays, and release to hear it from the trim start. The original sound and music have separate volumes (up to 200%), so you can keep both or play only the music. A song shorter than the video repeats.
+   - **Audio:** set the original sound's volume (0% mutes it) and add background music. The music bar shows the whole song's loudness, with a window as long as the video's output; drag it to choose which part of the song plays, and release to hear it from the trim start. The original sound and music have separate volumes (up to 200%), so you can keep both or play only the music. A song shorter than the video repeats. On iOS, untouched AAC is passed through; speed, volume or music edits, and other source audio formats, are encoded as AAC for MP4 compatibility.
    - **Advanced adjustments:** auto levels, red recovery, protect cool water, warmth, green/magenta tint, exposure, dehaze, clarity, contrast, saturation and shadows.
-5. Top bar: **✕** on the left closes the edit and returns to the home screen (after confirming); on the right are change media, export and settings. Export as Recommended, Original or Custom, with preparing / encoding / saving progress, cancel, background export and a notification.
+5. Top bar: **✕** on the left closes the edit and returns to the home screen (after confirming); on the right are change media, export and settings. Export as Recommended, Original or Custom, with preparing / encoding / saving progress and cancellation.
 6. In settings, switch between 中文 / English and Light / Dark. Both follow the system by default, and your choice is remembered.
 
 ## Smart recommendations and smooth preview
 
 Recommendations come from on-device color statistics, not a cloud-based generative model. For videos, 6 frames spread across 5%–95% of the clip are analyzed together, and one set of parameters is used for the whole video, so the white balance does not pump from frame to frame. The analysis tells deep blue or green water, washed-out hazy water and dim footage apart and recommends settings for each. Low-confidence footage shows a notice and starts at a lower intensity; everything can still be adjusted by hand.
 
-After analysis, videos normally play from the original, with live GPU grading. 4K60 can play directly when the device can decode it smoothly. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, cannot play the original smoothly, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready. Exports **always use the original URI**, never the preview copy.
+After analysis, videos normally play from the original, with live GPU grading. Exports **always use the original URI**, never a preview copy.
+
+- **Android:** 4K60 can play directly when the device can decode it smoothly. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, cannot play the original smoothly, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
+- **iOS:** there is no preview copy. Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
 
 Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. On compatible devices, HDR video is processed and exported as HDR; otherwise it is tone-mapped and exported as SDR. Devices, encoders and color management may cause slight display differences.
 
@@ -42,11 +45,33 @@ Photo previews have a 720px long edge and are graded in the background; each fin
 
 Color correction requires re-encoding the video, so **Original does not mean bit-for-bit lossless**, and colors that the water absorbed completely cannot be fully recovered. Original keeps frame timestamps; Custom fps is an average close to the target, without motion interpolation or guaranteed fixed frame intervals. If the device's encoder does not support the source codec or size, the export fails clearly; choose Custom H.264 with a smaller size instead.
 
-Output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written to a temporary file first and then published with MediaStore's pending mechanism; failed or cancelled exports clean up their partial files, and the source is never overwritten.
+For Original video, Android keeps the source codec; iOS keeps AVC or HEVC codec families, so choose Custom H.264/HEVC for other codecs. Both platforms derive Original frame timing from the source track.
 
-On Android, **Batch restore photos** on the home screen accepts up to 100 photos, with no videos. Hold a photo and drag across others to select or deselect a range; holding near the top or bottom scrolls through more photos. Choose Recommended, Original or Custom export settings once; each photo receives its own default intelligent restoration automatically, without opening the editor. Recommended adapts to each photo's dimensions and format. Batches show an estimated total size, from each photo's resolution, format and quality, and process one photo at a time to limit memory use on midrange phones. Export continues in the background with progress and cancellation; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
+### Saving and background export
 
-**Batch restore videos** is experimental and available only with Android's hidden developer tools turned on: tap the version number in Settings ten times; they stay on until the next app update, or until switched off in Settings. Its button then appears on the home screen below the photo batch. It accepts up to 20 videos; each is restored automatically and exported whole with its own audio (no trim, speed or music), one video at a time. Recommended caps output at 1080p and 30 fps. Before starting, the dialog shows the total length, the estimated size and the free space needed. Before each video the export checks free space, and between videos it waits while the phone is severely hot. A video that this phone can analyze only after decoding it in software is reported as failed; open it in the editor instead.
+- **Android:** output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written to a temporary file first and then published with MediaStore's pending mechanism; failed or cancelled exports clean up their partial files, and the source is never overwritten. Export continues in the background with a notification, using a foreground service and a wake lock. Work does not resume automatically if the system kills the app or the device restarts, and Android's limits on long-running background services still apply.
+- **iOS:** output is saved to the Photos library with add-only access; the app never reads your library. This iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
+
+### Batch restore photos
+
+Choose **Batch restore photos** on the home screen to restore photos without opening the editor; videos are not accepted. Choose Recommended, Original or Custom export settings once, and each photo receives its own default intelligent restoration automatically. Recommended adapts to each photo's dimensions and format. Batches show an estimated total size, from each photo's resolution, format and quality, and process one photo at a time to limit memory use on midrange phones. Progress and cancellation are available; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
+
+- **Android:** up to 100 photos per batch. Hold a photo and drag across others to select or deselect a range; holding near the top or bottom scrolls through more photos. Export continues in the background.
+- **iOS:** up to 30 photos per batch, selected in the system picker without hold-and-drag selection. Keep AquaRestore open and do not switch apps or lock the screen, as the batch dialog and progress remind you. Leaving the app pauses the batch until you return.
+
+### Batch restore videos
+
+**Batch restore videos** is experimental and available only with the hidden [developer tools](#developer-tools) turned on. Its button then appears on the home screen below the photo batch. Each video is restored automatically and exported whole with its own audio (no trim, speed or music), one video at a time. Recommended caps output at 1080p and 30 fps. Before starting, the dialog shows the total length, the estimated size and the free space needed. Before each video the export checks free space, and between videos it waits while the phone is severely hot.
+
+- **Android:** up to 20 videos per batch, with background export. A video that this phone can analyze only after decoding it in software is reported as failed; open it in the editor instead.
+- **iOS:** up to 5 videos per batch, selected in the system picker. Keep AquaRestore open and do not switch apps or lock the screen, as the batch dialog and progress remind you. Leaving the app pauses the batch until you return.
+
+## Developer tools
+
+On both platforms, tap the version number in Settings ten times to unlock the developer tools: the log viewer, Save logs, Save analysis frames and batch video restoration. They stay on until the next app update, or until switched off in Settings.
+
+- **Android:** saved files go to `Download/AquaRestore-analysis`.
+- **iOS:** saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`.
 
 ## One-step build and release
 
@@ -90,24 +115,12 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pi
 | | Android | iOS |
 | --- | --- | --- |
 | UI | Jetpack Compose, Material3 1.4, Material Icons, Media3 player controls | SwiftUI, rebuilt to the same specs: the same Material icons (generated from their sources), Material3 1.4 buttons, chips, slider, progress bars, dialogs and type scale, and Media3's styled player controller |
+| Font | Roboto | SF Pro; sizes, weights and line heights follow the Material type scale |
 | Live preview | ExoPlayer + a GLSL shader | AVPlayer + a Metal compute shader in a custom `AVVideoCompositing` (the same grade as the photo path, to within one level) |
 | Export | Media3 Transformer | `AVAssetReader` → the same Metal compositor → `AVAssetWriter` (H.264 / HEVC, bitrate from the same plan as the size estimate) |
 | Photos | Decoded with `ImageDecoder`, graded on the CPU | Decoded with ImageIO, graded on the CPU |
 | Import | In-app Recent / Albums library with media permission | Photos picker for media, Files for music |
 | Output | `Movies/AquaRestore`, `Pictures/AquaRestore` | Photos library (add-only access; the app never reads your library) |
-
-Differences that come from the platform:
-
-- **Batch photo and video restoration:** on iOS, a batch runs only while AquaRestore stays open, so it takes up to 30 photos or 5 videos, against 100 and 20 on Android, and the batch dialog and progress warn not to switch apps or lock the screen. Leaving the app pauses the batch until you return. Photos are picked in the system picker, without hold-and-drag selection. Batch videos need the developer tools, unlocked as on Android by tapping the version in Settings ten times.
-- **Developer tools:** the same on iOS (the log viewer, Save logs, Save analysis frames). Saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`, instead of `Download/AquaRestore-analysis`.
-- **Background export:** this iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
-- **No preview proxy.** Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
-- **Audio:** untouched AAC is passed through on iOS; speed, volume or music edits are encoded as AAC. Other source audio is also encoded as AAC for MP4 compatibility.
-- **Original video codec:** iOS Original keeps AVC or HEVC codec families; for other codecs, choose Custom H.264/HEVC. Both platforms derive Original frame timing from the source track.
-- **HDR10+ metadata:** Android rejects recognizable HDR10+ profiles because dynamic metadata is not preserved. The iOS importer does not currently detect HDR10+ metadata, so an HDR10+ export may lose it.
-- **Dolby Vision:** the compatible profiles that iPhones record are graded from their HLG base layer and exported as plain HLG; profile 5 is rejected. HDR10 / PQ and HLG are graded on the HLG curve exactly as on Android.
-- The system font is SF Pro instead of Roboto; sizes, weights and line heights follow the Material type scale. iOS has no Back button, so full screen and the editor are left with their on-screen buttons.
-- The player's settings menu offers Speed only.
 
 Build (needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen); the Xcode project is generated from `ios/project.yml`):
 
@@ -131,14 +144,14 @@ See the [validation log](docs/VALIDATION.md#ios) for what has been verified on i
 
 ## Scope and limitations
 
-- SDR, plus HDR10 / PQ and HLG on compatible devices. Keeping HDR needs Android 13+ and a 10-bit HDR encoder that Media3 accepts. On devices without a suitable HDR encoder, HDR video is tone-mapped and exported as SDR. When the device supports HDR export, both Original and Custom preserve it.
+- SDR, plus HDR10 / PQ and HLG on compatible devices. On Android, keeping HDR needs Android 13+ and a 10-bit HDR encoder that Media3 accepts. On devices without a suitable HDR encoder, HDR video is tone-mapped and exported as SDR. When the device supports HDR export, both Original and Custom preserve it.
 - `onFallbackApplied` intercepts Media3's automatic tone-mapping and blocks silent codec / size downgrades. HDR preview brightness depends on the physical display; an emulator cannot replace testing on a real HDR device.
-- Dolby Vision and recognizable HDR10+ dynamic metadata are not fully preserved yet and are rejected at import. HDR10+ is not always detectable from the track format when the container does not label the dynamic profile; this version does not promise to keep dynamic metadata. Static HDR mastering / content light metadata is not re-measured after grading.
+- **HDR10+ metadata:** Android rejects recognizable HDR10+ profiles because dynamic metadata is not preserved; HDR10+ is not always detectable from the track format when the container does not label the dynamic profile. The iOS importer does not currently detect HDR10+ metadata, so an HDR10+ export may lose it. This version does not promise to keep dynamic metadata. Static HDR mastering / content light metadata is not re-measured after grading.
+- **Dolby Vision:** Android rejects it at import. On iOS, the compatible profiles that iPhones record are graded from their HLG base layer and exported as plain HLG; profile 5 is rejected. HDR10 / PQ and HLG are graded on the HLG curve exactly as on Android.
 - Dehaze is a bounded black-point / contrast correction and clarity a small luma unsharp mask, not depth estimation, spatial descattering or machine-learning denoising.
 - Recommendations are based on samples from the whole clip; for clips that combine several scenes, very dark footage or strong colored lights, check the result with the intensity slider. Sampling uses keyframes, so very short clips may sample the same frame more than once.
 - Temporary files need extra storage. High-resolution photos are limited by memory; an out-of-memory export reports an error instead of silently downscaling.
 - Photo EXIF / GPS / container metadata is not kept; an Original PNG can be much larger than the source JPEG. Source audio is subject to MP4 container compatibility.
-- Background export uses a foreground service and a wake lock; work does not resume automatically if the system kills the app or the device restarts. Android's limits on long-running background services still apply.
 - Smoothness depends on the device; dropped frames cannot be ruled out on every older phone. Test on your target phones with `docs/DEVICE_TESTS.md`.
 
 What has been verified so far, and what still needs testing on real devices, is in the [validation log](docs/VALIDATION.md).
