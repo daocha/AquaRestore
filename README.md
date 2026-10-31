@@ -99,6 +99,7 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`. The Gradle Wrapper, pi
 Differences that come from the platform:
 
 - **Batch photo and video restoration:** on iOS, a batch runs only while AquaRestore stays open, so it takes up to 30 photos or 5 videos, against 100 and 20 on Android, and the batch dialog and progress warn not to switch apps or lock the screen. Leaving the app pauses the batch until you return. Photos are picked in the system picker, without hold-and-drag selection. Batch videos need the developer tools, unlocked as on Android by tapping the version in Settings ten times.
+- **Developer tools:** the same on iOS (the log viewer, Save logs, Save analysis frames). Saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`, instead of `Download/AquaRestore-analysis`.
 - **Background export:** this iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
 - **No preview proxy.** Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
 - **Audio:** untouched AAC is passed through on iOS; speed, volume or music edits are encoded as AAC. Other source audio is also encoded as AAC for MP4 compatibility.

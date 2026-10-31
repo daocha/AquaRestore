@@ -10,9 +10,28 @@ struct SettingsDialog: View {
     @Environment(\.palette) private var c
     @ObservedObject private var devTools = DevTools.shared
     @State private var versionTaps = 0
+    @State private var showLog = false
+    @State private var savingFrames = false
+    /// Android shows these as toasts.
+    @State private var notice: String?
 
     var body: some View {
+        ZStack {
+            dialog
+            if showLog { DevLogPanel { showLog = false } }
+        }
+    }
+
+    private var dialog: some View {
         M3Dialog(title: s.text("Make it yours", "個人化設定"), dismiss: dismiss) {
+            // As on Android, at most 480 tall; the developer tools scroll.
+            ScrollIfNeeded(maxHeight: 480) { settingsColumn }
+        } buttons: {
+            M3TextButton(title: s.text("Done", "完成"), action: dismiss)
+        }
+    }
+
+    private var settingsColumn: some View {
             VStack(alignment: .leading, spacing: 12) {
                 MText(s.text("Language", "語言"), weight: .semibold)
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("zh", "中文"), ("en", "English")], selected: model.language) { model.preference("language", $0) }
@@ -37,11 +56,32 @@ struct SettingsDialog: View {
                             .labelsHidden().tint(c.primary)
                             .accessibilityLabel(s.text("Developer tools", "開發者工具"))
                     }
-                    MText(s.text("Batch restore videos is on the home screen.", "首頁已提供「批次還原影片」。"), size: 12, color: c.onSurfaceVariant)
+                    M3Button(title: s.text("Developer logs", "開發者日誌"), style: .outlined) { showLog = true }
+                    M3Button(title: s.text("Save logs", "儲存日誌"), style: .outlined) {
+                        Task { notice = await DevLog.save().map { s.text("Saved to \($0)", "已儲存至 \($0)") } ?? s.text("Could not save the log", "無法儲存日誌") }
+                    }
+                    M3Button(title: s.text("Save analysis frames", "儲存分析畫面"), style: .outlined, spinner: savingFrames) { saveFrames() }
+                        .disabled(model.source?.video != true || savingFrames)
+                    if model.source?.video != true {
+                        MText(s.text("Open a video to save the six frames its grade is analyzed from.", "開啟影片後，可儲存用於分析調色的六張畫面。"),
+                              size: 12, color: c.onSurfaceVariant)
+                    }
+                    MText(s.text("Saved files are in the Files app: On My iPhone › AquaRestore. Batch restore videos is on the home screen.",
+                                 "儲存的檔案位於「檔案」App：我的 iPhone › AquaRestore。首頁已提供「批次還原影片」。"), size: 12, color: c.onSurfaceVariant)
+                    if let notice { MText(notice, size: 12, color: c.primary) }
                 }
             }
-        } buttons: {
-            M3TextButton(title: s.text("Done", "完成"), action: dismiss)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func saveFrames() {
+        guard let media = model.source, media.video else { return }
+        savingFrames = true
+        Task {
+            let saved = (try? await MediaIO.saveAnalysisFrames(media)) ?? 0
+            savingFrames = false
+            notice = saved > 0 ? s.text("Saved \(saved) frames to On My iPhone › AquaRestore › frames", "已儲存 \(saved) 張畫面至「我的 iPhone › AquaRestore › frames」")
+                : s.text("Could not save the frames", "無法儲存畫面")
         }
     }
 }

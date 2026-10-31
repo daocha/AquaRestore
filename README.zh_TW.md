@@ -95,6 +95,7 @@ APK：`android/app/build/outputs/apk/debug/app-debug.apk`。Gradle Wrapper、依
 平台造成的差異：
 
 - **批次照片與影片還原：** iOS 上批次只會在 AquaRestore 保持開啟時進行，因此每批最多 30 張照片或 5 段影片（Android 為 100 張與 20 段）；批次對話框與進度會提醒不要切換 App 或鎖定螢幕。離開 App 會暫停批次，返回後繼續。照片以系統選擇器挑選，不提供長按滑動選取。批次影片需開啟開發者工具，方式與 Android 相同：在「設定」中連續點按版本號碼十次。
+- **開發者工具：** iOS 與 Android 相同（日誌檢視、儲存日誌、儲存分析畫面）。儲存的檔案位於「檔案」App 的「我的 iPhone › AquaRestore」中的 `logs` 與 `frames`，而非 `Download/AquaRestore-analysis`。
 - **背景匯出：** 此 iOS 16+ 版本不在前景時會暫停匯出，匯出期間螢幕保持喚醒。iOS 26 以上在相容裝置上可藉由 Background GPU Access 權限持續使用 GPU，但此版本尚未設定該能力。
 - **沒有預覽代理檔。** 高負載素材（例如 4K60）直接播放；仍需在目標裝置驗證流暢度。
 - **音訊：** 未編輯的 AAC 音訊在 iOS 直接保留；變速、調整音量或混入音樂時會編碼為 AAC。其他來源音訊也會編碼為 AAC，以符合 MP4 相容性。

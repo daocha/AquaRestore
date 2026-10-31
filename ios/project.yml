@@ -52,6 +52,10 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         ITSAppUsesNonExemptEncryption: false
+        # Developer tools save logs and analysis frames to the app's Documents folder, which the Files app shows
+        # as On My iPhone › AquaRestore. Nothing else is kept there; imports live in the temporary folder.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         # The app has no network access and only ever adds to the Photos library.
         NSPhotoLibraryAddUsageDescription: AquaRestore saves your restored photos and videos to your Photos library. It never reads your library.
   AquaRestoreTests:

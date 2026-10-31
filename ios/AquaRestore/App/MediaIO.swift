@@ -120,26 +120,109 @@ enum MediaIO {
         return pixels
     }
 
+    /// Calls `each` with each sampled video analysis frame and its requested time in milliseconds.
+    private static func videoFrames(_ source: SourceMedia, _ each: (Int64, CGImage) throws -> Void) async throws {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source.url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 192, height: 192)
+        // The nearest keyframe is enough for statistics and avoids decoding long GOPs.
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        #if DEBUG
+        NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) codec=\(source.codec) hdr=\(source.hdr) durationMs=\(source.durationMs) fps=\(source.fps)")
+        #endif
+        for fraction in [0.05, 0.23, 0.41, 0.59, 0.77, 0.95] {
+            try Task.checkCancellation()
+            let ms = Int64(Double(source.durationMs) * fraction)
+            let time = CMTime(seconds: Double(source.durationMs) / 1000 * fraction, preferredTimescale: 600)
+            guard let result = try? await generator.image(at: time) else { continue }
+            try each(ms, result.image)
+        }
+    }
+
     static func analyze(_ source: SourceMedia) async throws -> Analysis {
         var frames: [[UInt32]] = []
+        var described: [String] = []
         if source.video {
-            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source.url))
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 192, height: 192)
-            // The nearest keyframe is enough for statistics and avoids decoding long GOPs.
-            generator.requestedTimeToleranceBefore = .positiveInfinity
-            generator.requestedTimeToleranceAfter = .positiveInfinity
-            for fraction in [0.05, 0.23, 0.41, 0.59, 0.77, 0.95] {
-                try Task.checkCancellation()
-                let time = CMTime(seconds: Double(source.durationMs) / 1000 * fraction, preferredTimescale: 600)
-                guard let result = try? await generator.image(at: time), let pixels = PixelImage(result.image) else { continue }
+            try await videoFrames(source) { ms, image in
+                guard let pixels = PixelImage(image) else { return }
                 frames.append(pixels.pixels)
+                #if DEBUG
+                described.append("at \(ms)ms " + describe(pixels))
+                #endif
             }
         } else if let image = try? bitmap(source.url, edge: 192) {
             frames.append(image.pixels)
+            #if DEBUG
+            NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) photo")
+            described.append(describe(image))
+            #endif
         }
         if frames.isEmpty { throw MediaProblem("analysisFailed") }
-        return AutoGrade.analyze(frames, hdr: source.isHdr)
+        let analysis = AutoGrade.analyze(frames, hdr: source.isHdr)
+        #if DEBUG
+        // One line per frame keeps each one readable in the log viewer.
+        for (i, line) in described.enumerated() {
+            NSLog("AquaRestore: Analysis frame \(i + 1)/\(frames.count) \(line)")
+            NSLog("AquaRestore: Analysis frame \(i + 1) alone: \(describe(AutoGrade.analyze([frames[i]], hdr: source.isHdr).grade))")
+        }
+        NSLog("AquaRestore: Analysis grade: \(describe(analysis.grade))")
+        NSLog("AquaRestore: Analysis applied: \(describe(analysis.grade.effective()))")
+        NSLog("AquaRestore: Analysis cast=\(analysis.cast) confidence=\(analysis.confidence) redLoss=\(analysis.redLoss)")
+        #else
+        _ = described
+        #endif
+        return analysis
+    }
+
+    /// Saves a video's analysis frames, exactly as analyzed, to Documents/frames as NN-frame-i.png (for a clip
+    /// named NN-original.mp4), replacing earlier ones, so a sample's frames can be taken from the phone with the
+    /// Files app. Returns how many were saved.
+    static func saveAnalysisFrames(_ source: SourceMedia) async throws -> Int {
+        var stem = (source.name as NSString).deletingPathExtension
+        if stem.hasSuffix("-original") { stem = String(stem.dropLast("-original".count)) }
+        let folder = try DevFiles.folder("frames")
+        var index = 0, saved = 0
+        try await videoFrames(source) { _, image in
+            index += 1
+            let file = folder.appendingPathComponent("\(stem)-frame-\(index).png")
+            try? FileManager.default.removeItem(at: file)
+            guard let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(destination, image, nil)
+            if CGImageDestinationFinalize(destination) {
+                saved += 1
+                NSLog("AquaRestore: Analysis frame saved: \(DevFiles.shown(file))")
+            } else {
+                NSLog("AquaRestore: Analysis frame not saved: \(file.lastPathComponent)")
+            }
+        }
+        return saved
+    }
+
+    /// An analysis frame for the debug log: size and an 8×8 grid of mean colors, to compare with desktop decodes.
+    static func describe(_ image: PixelImage) -> String {
+        let cells = 8
+        var sums = [Int](repeating: 0, count: cells * cells * 4)
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let p = image.pixels[y * image.width + x]
+                let c = ((y * cells / image.height) * cells + x * cells / image.width) * 4
+                sums[c] += Int((p >> 16) & 255); sums[c + 1] += Int((p >> 8) & 255); sums[c + 2] += Int(p & 255); sums[c + 3] += 1
+            }
+        }
+        let grid = (0..<cells * cells).map { i -> String in
+            let n = max(1, sums[i * 4 + 3])
+            return String(format: "%02x%02x%02x", sums[i * 4] / n, sums[i * 4 + 1] / n, sums[i * 4 + 2] / n)
+        }.joined()
+        return "\(image.width)x\(image.height) grid=\(grid)"
+    }
+
+    static func describe(_ g: Grade) -> String {
+        let values: [(String, Float)] = [("strength", g.strength), ("red", g.red), ("temperature", g.temperature), ("tint", g.tint),
+            ("exposure", g.exposure), ("haze", g.haze), ("contrast", g.contrast), ("saturation", g.saturation), ("shadows", g.shadows),
+            ("levels", g.levels), ("blackR", g.blackR), ("blackG", g.blackG), ("blackB", g.blackB), ("whiteR", g.whiteR),
+            ("whiteG", g.whiteG), ("whiteB", g.whiteB), ("coolProtection", g.coolProtection), ("clarity", g.clarity)]
+        return values.map { "\($0.0)=" + String(format: "%.4f", $0.1) }.joined(separator: " ")
     }
 
     /// One frame near the middle of each of `count` equal slots, for the trim bar.
