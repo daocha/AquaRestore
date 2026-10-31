@@ -121,7 +121,14 @@ class EditorUiTest {
         check(99, true)
         ui.onNodeWithText("Continue (100)").performClick()
         ui.onNodeWithText("Start export").performClick()
-        ui.waitUntil(60_000) { !Exports.status.value.busy && Exports.status.value.batch?.completed == 100 }
+        // The CI emulator grades in software, about half a second a photo, so 100 photos take over a minute.
+        // The limit only guards against a hang; on failure, say how far the batch got.
+        val deadline = android.os.SystemClock.uptimeMillis() + 240_000
+        while (Exports.status.value.busy || Exports.status.value.batch?.completed != 100) {
+            assertTrue("Batch still at ${Exports.status.value.batch?.completed} of 100 photos after 4 minutes",
+                android.os.SystemClock.uptimeMillis() < deadline)
+            Thread.sleep(500)
+        }
         ui.runOnIdle {
             assertEquals(100, Exports.status.value.batch!!.saved.size)
             assertTrue(Exports.status.value.batch!!.failures.isEmpty())
