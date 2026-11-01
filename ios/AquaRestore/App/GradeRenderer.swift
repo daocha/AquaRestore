@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreVideo
+import ImageIO
 import Metal
 
 /// Thread-safe grade snapshot shared with the render thread. Slider changes only replace the value;
@@ -18,6 +19,11 @@ final class GradeState {
         get { lock.lock(); defer { lock.unlock() }; return _compare }
         set { lock.lock(); _compare = newValue; lock.unlock() }
     }
+
+    /// How many frames the compositor has been asked for, so the player can notice that they have stopped coming.
+    private var _requests = 0
+    var requests: Int { lock.lock(); defer { lock.unlock() }; return _requests }
+    func noteRequest() { lock.lock(); _requests += 1; lock.unlock() }
 }
 
 /// How the source's transfer curve is read by the shader.
@@ -45,9 +51,17 @@ final class GradeInstruction: NSObject, AVVideoCompositionInstructionProtocol {
         requiredSourceTrackIDs = [NSNumber(value: trackID)]
         self.state = state
         self.hdr = hdr
-        inverse = transform.inverted()
+        inverse = GradeInstruction.normalized(transform, naturalSize).inverted()
         self.naturalSize = naturalSize
         displaySize = GradeInstruction.displaySize(naturalSize, transform)
+    }
+
+    /// The transform with the picture moved so it starts at the top-left corner. A file's rotation can be stored without
+    /// the offset that brings the turned picture back into view (players correct for it), which left the grade sampling
+    /// outside the frame: a stripe of the edge, with nothing else.
+    static func normalized(_ transform: CGAffineTransform, _ natural: CGSize) -> CGAffineTransform {
+        let rect = CGRect(origin: .zero, size: natural).applying(transform)
+        return transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
     }
 
     static func displaySize(_ natural: CGSize, _ transform: CGAffineTransform) -> CGSize {
@@ -79,7 +93,12 @@ enum GradeError: Error { case metalUnavailable, textureFailed }
 
 /// Compiled once; each frame only sets uniforms.
 final class MetalGrader {
-    static let shared: MetalGrader? = try? MetalGrader()
+    static let shared: MetalGrader? = {
+        do { return try MetalGrader() } catch {
+            NSLog("AquaRestore: Metal grader unavailable: \(error)")
+            return nil
+        }
+    }()
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -128,7 +147,7 @@ final class MetalGrader {
         return texture
     }
 
-    func render(_ instruction: GradeInstruction, source: CVPixelBuffer, output: CVPixelBuffer, completion: @escaping (Bool) -> Void) {
+    func render(_ instruction: GradeInstruction, source: CVPixelBuffer, output: CVPixelBuffer, time: Double = 0, completion: @escaping (Bool) -> Void) {
         do {
             let (input, inputKeep) = try texture(source)
             let (target, targetKeep) = try texture(output)
@@ -152,7 +171,10 @@ final class MetalGrader {
             params.radius = Float(Clarity.radius(target.width, target.height))
 
             let working = instruction.hdr == .sdr ? input : try workingTexture(width: input.width, height: input.height)
-            guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else { completion(false); return }
+            guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else {
+                GradeLog.failure("no Metal command buffer or encoder")
+                completion(false); return
+            }
             if instruction.hdr != .sdr {
                 encoder.setComputePipelineState(linearize)
                 encoder.setTexture(input, index: 0)
@@ -160,7 +182,7 @@ final class MetalGrader {
                 encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
                 encoder.dispatchThreadgroups(MTLSize(width: (input.width + 15) / 16, height: (input.height + 15) / 16, depth: 1),
                     threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
-                encoder.memoryBarrier(scope: .textures)
+                // The encoder's default serial dispatch already orders this pass before the grading pass.
             }
             encoder.setComputePipelineState(pipeline)
             encoder.setTexture(working, index: 0)
@@ -172,10 +194,144 @@ final class MetalGrader {
             encoder.endEncoding()
             buffer.addCompletedHandler { b in
                 _ = inputKeep; _ = targetKeep
+                if b.status != .completed { GradeLog.failure("command buffer status \(b.status.rawValue): \(String(describing: b.error))") }
+                else { FrameProbe.log(source: source, output: output, hdr: instruction.hdr, time: time) }
                 completion(b.status == .completed)
             }
             buffer.commit()
-        } catch { completion(false) }
+        } catch {
+            GradeLog.failure("Metal render setup failed: \(error)")
+            completion(false)
+        }
+    }
+}
+
+/// Logs how bright the first few decoded and graded frames are, so a black preview shows whether the
+/// decoder, the grading pass or the display is to blame.
+enum FrameProbe {
+    private static let lock = NSLock()
+    private static var logged = 0
+    private static var requested = 0
+
+    /// A new video starts counting again, so every clip gets its own first frames in the log.
+    static func reset() { lock.lock(); logged = 0; requested = 0; lock.unlock() }
+
+    static var requestCount: Int { lock.lock(); defer { lock.unlock() }; return requested }
+
+    static func request(_ request: AVAsynchronousVideoCompositionRequest) {
+        lock.lock(); requested += 1; let mine = requested; lock.unlock()
+        if mine <= 3 {
+            NSLog("AquaRestore: frame request \(mine) at \(request.compositionTime.seconds)s sources=\(request.sourceTrackIDs) output \(request.renderContext.size)")
+        }
+    }
+
+    /// The first three frames, then one in sixty for the first fifteen seconds' worth, with the video time they are for:
+    /// a picture that does not change shows up as the same numbers at different times.
+    static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode, time: Double) {
+        lock.lock(); logged += 1; let mine = logged; lock.unlock()
+        guard mine <= 3 || (mine % 60 == 0 && mine <= 900) else { return }
+        NSLog("AquaRestore: frame probe \(mine) at \(String(format: "%.2f", time)) s: decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
+        // The first frame of each video is saved as a picture, so a garbled preview can be looked at: the decoded frame
+        // and the graded one show which of the two went wrong.
+        if mine == 1 { save(source, as: "decoded.png"); save(output, as: "graded.png") }
+    }
+
+    /// A half-float value as a Float, without relying on `Float16` (not available on every simulator architecture).
+    private static func half(_ bits: UInt16) -> Float {
+        let sign: Float = bits & 0x8000 != 0 ? -1 : 1
+        let exponent = Int((bits >> 10) & 0x1F), fraction = Float(bits & 0x3FF)
+        if exponent == 0 { return sign * fraction * 5.960_464_5e-8 }
+        if exponent == 31 { return fraction == 0 ? sign * Float.infinity : Float.nan }
+        return sign * (1 + fraction / 1024) * Float(sign: .plus, exponent: exponent - 15, significand: 1)
+    }
+
+    /// Saves a small copy of the frame, from either of the two pixel formats the compositor uses (8-bit and half-float).
+    private static func save(_ buffer: CVPixelBuffer, as name: String) {
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        guard format == kCVPixelFormatType_32BGRA || format == kCVPixelFormatType_64RGBAHalf else { return }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), row = CVPixelBufferGetBytesPerRow(buffer)
+        // Small enough to open and share quickly.
+        let scale = min(1, 540 / CGFloat(max(width, height)))
+        let w = max(1, Int(CGFloat(width) * scale)), h = max(1, Int(CGFloat(height) * scale))
+        var rgba = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            let sy = min(height - 1, y * height / h)
+            for x in 0..<w {
+                let sx = min(width - 1, x * width / w)
+                let out = (y * w + x) * 4
+                if format == kCVPixelFormatType_32BGRA {
+                    let p = base.assumingMemoryBound(to: UInt8.self), o = sy * row + sx * 4
+                    rgba[out] = p[o + 2]; rgba[out + 1] = p[o + 1]; rgba[out + 2] = p[o]
+                } else {
+                    let p = base.assumingMemoryBound(to: UInt16.self), o = sy * (row / 2) + sx * 4
+                    for c in 0..<3 { rgba[out + c] = UInt8(min(max(half(p[o + c]), 0), 1) * 255) }
+                }
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+              let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
+                                  shouldInterpolate: false, intent: .defaultIntent),
+              let folder = probeFolder(),
+              let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: Documents/FrameProbe/\(name)") }
+    }
+
+    /// The app's Documents folder, which the Files app shows as On My iPhone › AquaRestore. This file is compiled on its
+    /// own by the native checks, so it does not use the app's other helpers.
+    private static func probeFolder() -> URL? {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let folder = documents.appendingPathComponent("FrameProbe", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    private static func describe(_ buffer: CVPixelBuffer) -> String {
+        let size = "\(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer))"
+        if CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_64RGBAHalf {
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt16.self) else { return "\(size) unreadable" }
+            let stride = CVPixelBufferGetBytesPerRow(buffer) / 2
+            let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+            var sum: Float = 0, peak: Float = 0, count: Float = 0
+            for gy in 1...8 { for gx in 1...8 {
+                let o = (height * gy / 9) * stride + (width * gx / 9) * 4
+                let r = half(base[o]), g = half(base[o + 1]), b = half(base[o + 2])
+                sum += (r + g + b) / 3; peak = max(peak, r, g, b); count += 1
+            } }
+            return "\(size) half-float mean \(String(format: "%.3f", sum / count)) peak \(String(format: "%.3f", peak))"
+        }
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else {
+            return "\(size) format \(CVPixelBufferGetPixelFormatType(buffer))"
+        }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self) else { return "\(size) unreadable" }
+        let row = CVPixelBufferGetBytesPerRow(buffer)
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        var sum = 0, peak = 0, alpha = 0, count = 0
+        for gy in 1...8 { for gx in 1...8 {
+            let o = (height * gy / 9) * row + (width * gx / 9) * 4
+            let v = max(Int(base[o]), Int(base[o + 1]), Int(base[o + 2]))
+            sum += (Int(base[o]) + Int(base[o + 1]) + Int(base[o + 2])) / 3; peak = max(peak, v); alpha += Int(base[o + 3]); count += 1
+        } }
+        return "\(size) mean \(sum / count) peak \(peak) alpha \(alpha / count)"
+    }
+}
+
+/// Frame failures repeat for every frame, so only the first few reach the log.
+enum GradeLog {
+    private static let lock = NSLock()
+    private static var count = 0
+
+    static func failure(_ message: @autoclosure () -> String) {
+        lock.lock(); count += 1; let mine = count; lock.unlock()
+        if mine <= 5 { NSLog("AquaRestore: frame grading failed: \(message())") }
     }
 }
 
@@ -202,19 +358,44 @@ class GradeCompositor: NSObject, AVVideoCompositing {
         lock.lock(); generation += 1; lock.unlock()
     }
 
+    private static func fillBlack(_ buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        if let base = CVPixelBufferGetBaseAddress(buffer) {
+            memset(base, 0, CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+        }
+    }
+
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         lock.lock(); let mine = generation; lock.unlock()
+        FrameProbe.request(request)
         queue.async {
             self.lock.lock(); let current = self.generation; self.lock.unlock()
             guard current == mine else { request.finishCancelledRequest(); return }
-            guard let instruction = request.videoCompositionInstruction as? GradeInstruction,
-                  let source = request.sourceFrame(byTrackID: instruction.trackID),
-                  let output = request.renderContext.newPixelBuffer(),
-                  let grader = MetalGrader.shared else {
+            guard let instruction = request.videoCompositionInstruction as? GradeInstruction else {
+                GradeLog.failure("instruction is \(type(of: request.videoCompositionInstruction)), not GradeInstruction")
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
-            grader.render(instruction, source: source, output: output) { ok in
+            instruction.state.noteRequest()
+            guard let output = request.renderContext.newPixelBuffer() else {
+                GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
+                request.finish(with: GradeError.textureFailed)
+                return
+            }
+            // Before the video's first frame (action cameras often start a few frames after zero) AVFoundation supplies no
+            // source frame. Answer with black: failing the request would stop the player asking for video at all.
+            guard let source = request.sourceFrame(byTrackID: instruction.trackID) else {
+                Self.fillBlack(output)
+                request.finish(withComposedVideoFrame: output)
+                return
+            }
+            guard let grader = MetalGrader.shared else {
+                GradeLog.failure("Metal grader unavailable")
+                request.finish(with: GradeError.metalUnavailable)
+                return
+            }
+            grader.render(instruction, source: source, output: output, time: request.compositionTime.seconds) { ok in
                 if ok { request.finish(withComposedVideoFrame: output) } else { request.finish(with: GradeError.textureFailed) }
             }
         }

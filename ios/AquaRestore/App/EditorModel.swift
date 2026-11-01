@@ -19,6 +19,10 @@ final class EditorModel: ObservableObject {
     private let defaults = UserDefaults.standard
     @Published var language: String
     @Published var theme: String
+    /// What the export dialogs offer, kept per kind of media and across launches, as on Android. Single and batch
+    /// exports share them.
+    @Published private(set) var photoExportSelection = ExportSelection()
+    @Published private(set) var videoExportSelection = ExportSelection()
     @Published var source: SourceMedia?
     @Published var analysis: Analysis?
     @Published var grade = Grade.neutral
@@ -28,6 +32,10 @@ final class EditorModel: ObservableObject {
     @Published var previewOriginal: PixelImage?
     @Published var previewOriginalImage: CGImage?
     @Published var previewGraded: CGImage?
+    /// Full screen zooms in up to 5×, so a photo gets a sharper copy (up to `detailEdge` pixels) and its graded
+    /// version, with the grade it shows. Built in the background once full screen opens and dropped when it closes.
+    @Published var detailOriginal: CGImage?
+    @Published var detailGraded: (grade: Grade, image: CGImage)?
     @Published var phase: String?
     @Published var progress: Int?
     @Published var error: String?
@@ -57,6 +65,10 @@ final class EditorModel: ObservableObject {
     var playbackPositionMs: Int64 = 0
     var playbackWanted = true
 
+    static let detailEdge = 3840
+    private var detailTask: Task<Void, Never>?
+    private var detailRender: Task<Void, Never>?
+    private var detailGradeSubscription: AnyCancellable?
     private var pickTask: Task<Void, Never>?
     private var importTask: Task<Void, Never>?
     private var gradeTask: Task<Void, Never>?
@@ -70,6 +82,8 @@ final class EditorModel: ObservableObject {
     init() {
         language = defaults.string(forKey: "language") ?? "system"
         theme = defaults.string(forKey: "theme") ?? "system"
+        photoExportSelection = readExportSelection(video: false)
+        videoExportSelection = readExportSelection(video: true)
         // Only the current source is kept: anything a previous run left behind is dropped.
         try? FileManager.default.removeItem(at: Self.importRoot)
         exportStatusObserver = Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
@@ -78,6 +92,33 @@ final class EditorModel: ObservableObject {
     }
 
     nonisolated static var importRoot: URL { FileManager.default.temporaryDirectory.appendingPathComponent("AquaRestoreImport", isDirectory: true) }
+
+    private func readExportSelection(video: Bool) -> ExportSelection {
+        let prefix = video ? "export_video_" : "export_photo_"
+        let mode = ExportMode(rawValue: defaults.string(forKey: prefix + "mode") ?? "") ?? .recommended
+        func integer(_ key: String, _ fallback: Int) -> Int { defaults.object(forKey: prefix + key) as? Int ?? fallback }
+        return ExportSelection(mode: mode, longEdge: integer("edge", 1920), fps: integer("fps", 0),
+                               quality: min(max(integer("quality", 90), 10), 100), png: defaults.bool(forKey: prefix + "png"))
+    }
+
+    func setExportSelection(video: Bool, _ selection: ExportSelection) {
+        let prefix = video ? "export_video_" : "export_photo_"
+        if video { videoExportSelection = selection } else { photoExportSelection = selection }
+        defaults.set(selection.mode.rawValue, forKey: prefix + "mode")
+        defaults.set(selection.longEdge, forKey: prefix + "edge")
+        defaults.set(selection.fps, forKey: prefix + "fps")
+        defaults.set(selection.quality, forKey: prefix + "quality")
+        defaults.set(selection.png, forKey: prefix + "png")
+    }
+
+    /// Forgets the saved Custom settings, so the dialog shows the defaults again.
+    func resetCustomExport(video: Bool) {
+        let prefix = video ? "export_video_" : "export_photo_"
+        for key in ["edge", "fps", "quality", "png"] { defaults.removeObject(forKey: prefix + key) }
+        let mode = (video ? videoExportSelection : photoExportSelection).mode
+        let reset = ExportSelection(mode: mode)
+        if video { videoExportSelection = reset } else { photoExportSelection = reset }
+    }
 
     func preference(_ key: String, _ value: String) {
         defaults.set(value, forKey: key)
@@ -334,6 +375,7 @@ final class EditorModel: ObservableObject {
         player.unload()
         removeMusic()
         setCompare(false)
+        setDetailWanted(false)
         source = nil
         analysis = nil
         previewURL = nil
@@ -383,6 +425,42 @@ final class EditorModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 16_000_000)
             }
             self?.gradeTask = nil
+        }
+    }
+
+    /// Full screen asks for the sharper photo; leaving it frees the memory again.
+    func setDetailWanted(_ wanted: Bool) {
+        detailTask?.cancel(); detailTask = nil
+        detailRender?.cancel(); detailRender = nil
+        detailGradeSubscription = nil
+        guard wanted, let media = source, !media.video else {
+            detailOriginal = nil
+            detailGraded = nil
+            return
+        }
+        detailTask = Task { [weak self] in
+            do {
+                let pixels = try await Task.detached(priority: .userInitiated) { try MediaIO.bitmap(media.url, edge: EditorModel.detailEdge) }.value
+                guard let self, !Task.isCancelled, self.source == media else { return }
+                self.detailOriginal = pixels.cgImage
+                // Wait for the sliders to settle: a full-size grade takes far longer than the preview's.
+                self.detailGradeSubscription = self.$grade.removeDuplicates()
+                    .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+                    .sink { [weak self] snapshot in self?.renderDetail(snapshot, of: pixels) }
+            } catch {
+                // Full screen keeps the preview; a sharper copy is only an improvement.
+                NSLog("AquaRestore: full-screen detail unavailable: \(error)")
+            }
+        }
+    }
+
+    private func renderDetail(_ snapshot: Grade, of original: PixelImage) {
+        if detailGraded?.grade == snapshot { return }
+        detailRender?.cancel()
+        detailRender = Task { [weak self] in
+            let image = await Task.detached(priority: .userInitiated) { try? MediaIO.gradeBitmap(original, snapshot).cgImage }.value
+            guard let self, !Task.isCancelled, let image else { return }
+            self.detailGraded = (snapshot, image)
         }
     }
 

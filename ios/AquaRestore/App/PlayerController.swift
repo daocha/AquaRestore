@@ -11,7 +11,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var playhead: Int64 = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var durationMs: Int64 = 0
-    /// The rate playback runs at; the controller's settings menu can change it, as Media3's does.
+    /// The rate playback runs at, which follows the speed chosen in the clip controls.
     @Published private(set) var rate: Float = 1
     /// The source's display aspect ratio, which the player view keeps (its controls cover only the video).
     @Published private(set) var aspect: CGFloat?
@@ -54,7 +54,7 @@ final class PlayerController: ObservableObject {
             // After the song window moves, replay from the trim start so the new section can be heard.
             model.audition.sink { [weak self] in
                 guard let self else { return }
-                self.seek(self.model.trim.lowerBound); self.play()
+                self.loopBack(self.model.trim.lowerBound, reason: "the song section moved")
             },
             Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
                 guard let self else { return }
@@ -68,6 +68,10 @@ final class PlayerController: ObservableObject {
 
     func load(_ media: SourceMedia) {
         unload()
+        loopingSince = nil
+        FrameProbe.reset()
+        requestsSeen = model.gradeState.requests
+        lastRequestAt = Date()
         loadTask = Task { [weak self] in
             do {
                 let asset = AVURLAsset(url: media.url)
@@ -103,14 +107,38 @@ final class PlayerController: ObservableObject {
                 self.player = player
                 self.setOriginalVolume(self.model.originalVolume)
                 self.applyRate()
-                self.seek(self.model.playbackPositionMs)
-                if self.model.playbackWanted && !self.exporting && self.appActive { self.play() }
                 self.startTimer()
+                // The watchdog runs on its own, so a seek that never completes cannot switch it off.
+                Task { [weak self] in await self?.watchStart(item, media) }
+                // Start only once the item is ready, from the seek's completion, rather than seeking and playing while it is
+                // still preparing: with an HDR clip in the iOS Simulator that left the video waiting for ever for its first
+                // frame. Readiness is polled, with a limit, so that it can never stop playback from starting.
+                var polls = 0
+                while item.status == .unknown && polls < 200 && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    polls += 1
+                }
+                guard !Task.isCancelled, self.item === item, item.status != .failed else { return }
+                let start = min(max(self.model.playbackPositionMs, 0), max(self.durationMs - 1, 0))
+                self.playhead = start
+                player.seek(to: CMTime(value: start, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.item === item else { return }
+                        if self.model.playbackWanted && !self.exporting && self.appActive { self.play() }
+                    }
+                }
             } catch is CancellationError {
             } catch {
                 self?.model.error = "playbackFailed"
             }
         }
+    }
+
+    /// A black preview with sound leaves no error, so say what the player is doing shortly after it starts.
+    private func watchStart(_ item: AVPlayerItem, _ media: SourceMedia) async {
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        guard let player, self.item === item else { return }
+        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(model.gradeState.requests) error=\(String(describing: item.error))")
     }
 
     func unload() {
@@ -131,6 +159,7 @@ final class PlayerController: ObservableObject {
     private func observe(_ item: AVPlayerItem, _ player: AVPlayer) {
         itemObservers = [
             item.publisher(for: \.status).sink { [weak self] status in
+                if status == .readyToPlay { NSLog("AquaRestore: preview ready \(item.presentationSize) tracks=\(item.tracks.count)") }
                 if status == .failed {
                     NSLog("AquaRestore: preview playback failed: \(String(describing: item.error))")
                     self?.model.error = "playbackFailed"
@@ -139,7 +168,7 @@ final class PlayerController: ObservableObject {
             // The loop stays inside the trim range; ending the whole clip wraps to the trim start.
             NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: item).sink { [weak self] _ in
                 guard let self else { return }
-                self.seek(self.model.trim.lowerBound); self.play()
+                self.loopBack(self.model.trim.lowerBound, reason: "the clip ended")
             },
             player.publisher(for: \.timeControlStatus).dropFirst().sink { [weak self] status in
                 guard let self else { return }
@@ -173,32 +202,33 @@ final class PlayerController: ObservableObject {
         player.seek(to: CMTime(value: target, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    private var loopingSince: Date?
+
+    /// Back to the start of the loop and playing from there. Playing from the seek's completion, as at the start, rather
+    /// than while the seek is still going: that left an HDR clip's picture frozen in the iOS Simulator at the second loop.
+    private func loopBack(_ positionMs: Int64, reason: String) {
+        // A seek still going is left alone, but never for more than three seconds, in case its completion never arrives.
+        guard let player, let item, loopingSince.map({ Date().timeIntervalSince($0) > 3 }) ?? true else { return }
+        loopingSince = Date()
+        let limit = durationMs > 0 ? min(positionMs, durationMs - 1) : positionMs
+        let target = max(limit, 0)
+        NSLog("AquaRestore: looping back to \(target) ms because \(reason) (frame requests so far \(model.gradeState.requests))")
+        playhead = target
+        player.seek(to: CMTime(value: target, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.loopingSince = nil
+                guard self.item === item else { return }
+                self.play()
+            }
+        }
+    }
+
     private func applyRate() {
         rate = speed
         guard let player else { return }
         player.defaultRate = speed
         if player.rate != 0 { player.rate = speed }
-    }
-
-    /// The controller's "Speed" setting: changes the player only, like Media3's settings menu.
-    func overrideRate(_ value: Float) {
-        rate = value
-        guard let player else { return }
-        player.defaultRate = value
-        if player.rate != 0 { player.rate = value }
-    }
-
-    /// Media3's rewind (5 s) and fast-forward (15 s) buttons.
-    func seek(by deltaMs: Int64) { seek(min(max(playhead + deltaMs, 0), max(durationMs - 1, 0))) }
-
-    /// Media3's previous button with a single item: back to the beginning.
-    func seekToPrevious() { seek(0) }
-
-    /// How far the file has been loaded, for the time bar's buffered segment.
-    var bufferedMs: Int64 {
-        guard let item else { return 0 }
-        let end = item.loadedTimeRanges.map { $0.timeRangeValue.end.seconds }.max() ?? 0
-        return Int64((end * 1000).rounded())
     }
 
     private func setOriginalVolume(_ value: Float) {
@@ -240,11 +270,33 @@ final class PlayerController: ObservableObject {
         if position != playhead && position >= 0 { playhead = position }
         let range = model.trim
         // Loop inside the trim range; ending the whole clip alone would replay everything.
-        if !model.trimming && range.upperBound > range.lowerBound && item.status == .readyToPlay &&
-            (position < range.lowerBound - 50 || (player.rate != 0 && position >= range.upperBound)) {
-            seek(range.lowerBound)
+        if !model.trimming && range.upperBound > range.lowerBound && item.status == .readyToPlay {
+            if player.rate != 0 && position >= range.upperBound { loopBack(range.lowerBound, reason: "the trim end was reached") }
+            else if position < range.lowerBound - 50 { seek(range.lowerBound) }
         }
+        watchForStall(player, item, position)
         syncMusic(position, range)
+    }
+
+    private var requestsSeen = 0
+    private var lastRequestAt = Date()
+
+    /// The clock runs but the compositor is no longer asked for frames, so the picture freezes while the sound goes on.
+    /// With an HDR clip in the iOS Simulator this happens when playback starts from the beginning, at the start and again
+    /// at each loop; moving the playhead a little ahead and playing starts it again, as a tap on the trim bar does.
+    private func watchForStall(_ player: AVPlayer, _ item: AVPlayerItem, _ position: Int64) {
+        let count = model.gradeState.requests
+        guard player.rate != 0, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
+            requestsSeen = count; lastRequestAt = Date(); return
+        }
+        if count != requestsSeen { requestsSeen = count; lastRequestAt = Date(); return }
+        guard Date().timeIntervalSince(lastRequestAt) > 1.2 else { return }
+        lastRequestAt = Date()
+        let range = model.trim
+        let ahead = min(position + 500, max(range.upperBound - 1, range.lowerBound))
+        NSLog("AquaRestore: video stalled at \(position) ms (no frame requested for 1.2 s while playing); jumping to \(ahead) ms and playing")
+        seek(ahead)
+        play()
     }
 
     /// While paused, a changed grade is shown by re-rendering the current frame.

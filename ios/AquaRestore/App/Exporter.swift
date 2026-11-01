@@ -43,6 +43,15 @@ final class CancelFlag {
     func set() { lock.lock(); value = true; lock.unlock() }
 }
 
+/// Counts the video frames an export reads, for the log and for noticing that none ever arrive.
+final class FrameCounter {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+    /// Returns true for the first frame.
+    func add() -> Bool { lock.lock(); defer { lock.unlock() }; value += 1; return value == 1 }
+}
+
 /// This build has no Background GPU Access entitlement, so the export pauses in the background.
 enum AppActivity {
     private static let lock = NSLock()
@@ -406,9 +415,13 @@ enum Exporter {
         guard writer.startWriting() else { throw writer.error ?? MediaProblem("exportFailed") }
         guard reader.startReading() else { throw reader.error ?? MediaProblem("exportFailed") }
         writer.startSession(atSourceTime: .zero)
+        NSLog("AquaRestore: video export started: \(width)x\(height) hdr=\(source.hdr.rawValue) codec=\(useHevc ? "hevc" : "h264") bitrate=\(bitrate) length=\(composition.duration.seconds)s")
+        let started = Date()
 
         let flag = CancelFlag()
         let failed = CancelFlag()
+        let finished = CancelFlag()
+        let frames = FrameCounter()
         let totalSeconds = max(composition.duration.seconds, 0.001)
         let group = DispatchGroup()
 
@@ -422,6 +435,7 @@ enum Exporter {
                     guard let sample = output.copyNextSampleBuffer() else { input.markAsFinished(); group.leave(); return }
                     let time = CMSampleBufferGetPresentationTimeStamp(sample)
                     if video {
+                        if frames.add() { NSLog("AquaRestore: video export read its first frame after \(String(format: "%.1f", Date().timeIntervalSince(started))) s") }
                         update(Int(min(time.seconds / totalSeconds, 1) * 90), "exporting")
                         if let cadence, !cadence.accept(timeUs: Int64((time.seconds * 1_000_000).rounded())) { continue }
                     }
@@ -432,9 +446,26 @@ enum Exporter {
         pump(videoInput, videoOutput, label: "video", video: true)
         if let audioInput, let audioOutput { pump(audioInput, audioOutput, label: "audio", video: false) }
 
+        // If the video step never produces a frame (the HDR pipeline on some devices), stop with an error rather than
+        // waiting for ever. Time spent in the background does not count.
+        func watch(_ waited: Int) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                if frames.count > 0 || flag.isSet || failed.isSet || finished.isSet { return }
+                let next = waited + (AppActivity.active ? 5 : 0)
+                if next >= 30 {
+                    NSLog("AquaRestore: video export received no frames in 30 s; stopping")
+                    failed.set()
+                    reader.cancelReading()
+                } else { watch(next) }
+            }
+        }
+        watch(0)
+
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 group.notify(queue: .global()) {
+                    finished.set()
+                    NSLog("AquaRestore: video export read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
                     if flag.isSet {
                         reader.cancelReading(); writer.cancelWriting()
                         continuation.resume(throwing: CancellationError())
@@ -444,6 +475,8 @@ enum Exporter {
                         continuation.resume(throwing: error)
                     } else {
                         writer.finishWriting {
+                            let size = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int) ?? nil
+                            NSLog("AquaRestore: video export writer status \(writer.status.rawValue), file \(size.map(String.init) ?? "missing") bytes, error \(String(describing: writer.error))")
                             if writer.status == .completed { continuation.resume() }
                             else { continuation.resume(throwing: writer.error ?? MediaProblem("exportFailed")) }
                         }
@@ -459,11 +492,17 @@ enum PhotoSaver {
     static func save(_ file: URL, video: Bool, name: String) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else { throw MediaProblem("photosDenied") }
-        try await PHPhotoLibrary.shared().performChanges {
-            let options = PHAssetResourceCreationOptions()
-            options.shouldMoveFile = false
-            options.originalFilename = name
-            PHAssetCreationRequest.forAsset().addResource(with: video ? .video : .photo, fileURL: file, options: options)
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let options = PHAssetResourceCreationOptions()
+                options.shouldMoveFile = false
+                options.originalFilename = name
+                PHAssetCreationRequest.forAsset().addResource(with: video ? .video : .photo, fileURL: file, options: options)
+            }
+            NSLog("AquaRestore: saved \(name) to Photos")
+        } catch {
+            NSLog("AquaRestore: saving \(name) to Photos failed: \(error)")
+            throw error
         }
     }
 }

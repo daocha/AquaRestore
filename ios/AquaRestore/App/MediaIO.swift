@@ -75,6 +75,53 @@ enum MediaIO {
     }
 
     /// Decodes an upright sRGB bitmap with its long edge at most `edge` (0 = full size).
+    /// The longest edge the size samples are cut from. A larger photo is sampled at this scale, which keeps the picture
+    /// the samples come from within a safe amount of memory.
+    private static let sizeSampleEdge = 4096
+
+    /// Graded patches from a 3×3 grid across a photo, at the export's output scale. Encoding them measures how this
+    /// photo compresses, which depends on its detail far more than on its resolution.
+    static func sizeSamples(_ url: URL, outWidth: Int, outHeight: Int, grade: Grade, cancelled: () -> Bool = { false }) throws -> [PixelImage] {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let picture = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: min(max(outWidth, outHeight), sizeSampleEdge),
+              ] as CFDictionary) else { throw MediaProblem("unsupported") }
+        let width = picture.width, height = picture.height
+        let tile = max(1, min(320, width / 3, height / 3))
+        let radius = Clarity.radius(outWidth, outHeight)
+        var samples: [PixelImage] = []
+        for i in 0..<9 {
+            if cancelled() { throw CancellationError() }
+            let left = min(max(Int((Double(i % 3) + 0.5) * Double(width) / 3) - tile / 2, 0), width - tile)
+            let top = min(max(Int((Double(i / 3) + 0.5) * Double(height) / 3) - tile / 2, 0), height - tile)
+            guard let patch = picture.cropping(to: CGRect(x: left, y: top, width: tile, height: tile)),
+                  let pixels = PixelImage(patch) else { continue }
+            samples.append(try gradeBitmap(pixels, grade, clarityRadius: radius))
+        }
+        return samples
+    }
+
+    /// Bytes per pixel of `samples` encoded as the export encodes, without each file's fixed headers.
+    static func sampleBytesPerPixel(_ samples: [PixelImage], png: Bool, quality: Int) -> Double {
+        func size(_ image: CGImage) -> Int {
+            let data = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(data, (png ? UTType.png : UTType.jpeg).identifier as CFString, 1, nil) else { return 0 }
+            let properties = png ? nil : [kCGImageDestinationLossyCompressionQuality: Double(quality) / 100] as CFDictionary
+            CGImageDestinationAddImage(destination, image, properties)
+            return CGImageDestinationFinalize(destination) ? data.length : 0
+        }
+        let blank = PixelImage(width: 8, height: 8, pixels: [UInt32](repeating: 0xFF00_0000, count: 64)).cgImage
+        let header = blank.map(size) ?? 0
+        var bytes = 0, pixels = 0
+        for sample in samples {
+            guard let image = sample.cgImage else { continue }
+            bytes += max(0, size(image) - header)
+            pixels += image.width * image.height
+        }
+        return pixels > 0 ? Double(bytes) / Double(pixels) : 0
+    }
+
     static func bitmap(_ url: URL, edge: Int) throws -> PixelImage {
         let (width, height) = try imageSize(url)
         let (w, h) = ExportSizing.dimensions(width, height, edge)
@@ -212,7 +259,7 @@ enum MediaIO {
     }
 
     /// Grades every pixel, on all cores. Throws `CancellationError` when `cancelled` turns true.
-    static func gradeBitmap(_ image: PixelImage, _ grade: Grade, progress: ((Int) -> Void)? = nil,
+    static func gradeBitmap(_ image: PixelImage, _ grade: Grade, clarityRadius: Int? = nil, progress: ((Int) -> Void)? = nil,
                             cancelled: () -> Bool = { false }) throws -> PixelImage {
         let effective = grade.effective()
         let gain = exp2(effective.exposure)
@@ -220,7 +267,7 @@ enum MediaIO {
         let rows = image.height, width = image.width
         // Clarity reads neighbours of the ungraded source, so keep its luma apart from the graded rows.
         let luma = effective.clarity != 0 && effective.strength != 0 ? Clarity.luma(image.pixels) : []
-        let radius = Clarity.radius(width, rows)
+        let radius = clarityRadius ?? Clarity.radius(width, rows)
         let chunk = 32
         let chunks = (rows + chunk - 1) / chunk
         let lock = NSLock()

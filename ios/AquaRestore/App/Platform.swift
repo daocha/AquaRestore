@@ -16,10 +16,19 @@ struct PlayerSurface: UIViewRepresentable {
     final class LayerView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var readyObserver: NSKeyValueObservation?
+
+        /// Logs when the layer first has a frame to show, with its size, so a black preview can be told from no frame.
+        func watchDisplay() {
+            readyObserver = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { layer, _ in
+                NSLog("AquaRestore: video layer ready for display=\(layer.isReadyForDisplay) bounds=\(layer.bounds) videoRect=\(layer.videoRect)")
+            }
+        }
     }
 
     func makeUIView(context: Context) -> LayerView {
         let view = LayerView()
+        view.watchDisplay()
         view.backgroundColor = .black
         view.playerLayer.videoGravity = .resizeAspect
         view.playerLayer.player = player
@@ -128,6 +137,51 @@ struct TouchArea: UIViewRepresentable {
     func updateUIView(_ view: TouchView, context: Context) { view.area = self }
 }
 
+/// Pinch and pan reported as Compose's `detectTransformGestures` does: the centre of the fingers, how far they moved
+/// since the last event and the zoom factor since the last event.
+struct TransformArea: UIViewRepresentable {
+    var onTransform: (_ centroid: CGPoint, _ pan: CGSize, _ zoom: CGFloat) -> Void
+
+    final class TransformView: UIView, UIGestureRecognizerDelegate {
+        var onTransform: (CGPoint, CGSize, CGFloat) -> Void = { _, _, _ in }
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = .clear
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+            pinch.delegate = self
+            pan.delegate = self
+            addGestureRecognizer(pinch)
+            addGestureRecognizer(pan)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        @objc private func pinched(_ recognizer: UIPinchGestureRecognizer) {
+            guard recognizer.state == .changed else { return }
+            onTransform(recognizer.location(in: self), .zero, recognizer.scale)
+            recognizer.scale = 1
+        }
+
+        @objc private func panned(_ recognizer: UIPanGestureRecognizer) {
+            guard recognizer.state == .changed else { return }
+            let moved = recognizer.translation(in: self)
+            onTransform(recognizer.location(in: self), CGSize(width: moved.x, height: moved.y), 1)
+            recognizer.setTranslation(.zero, in: self)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    func makeUIView(context: Context) -> TransformView {
+        let view = TransformView()
+        view.onTransform = onTransform
+        return view
+    }
+    func updateUIView(_ view: TransformView, context: Context) { view.onTransform = onTransform }
+}
+
 enum Platform {
     @MainActor static func openPhotos() {
         guard let url = URL(string: "photos-redirect://") else { return }
@@ -178,6 +232,12 @@ struct TouchArea: View {
             }
             .onEnded { drag in onRelease?(drag.location, dragging); began = false; dragging = false })
     }
+}
+
+struct TransformArea: NSViewRepresentable {
+    var onTransform: (_ centroid: CGPoint, _ pan: CGSize, _ zoom: CGFloat) -> Void
+    func makeNSView(context: Context) -> NSView { NSView() }
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 enum Platform {
