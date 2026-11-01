@@ -357,7 +357,9 @@ struct FlowLayout: Layout {
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
-            if x > 0 && x + size.width > width { x = 0; y += rowHeight; rowHeight = 0 }
+            // A row that exactly fits its own content is handed back to `placeSubviews` rounded to 32 bits, which can be a
+            // hair narrower than the sum of its items; without the allowance its last item wraps onto a line of its own.
+            if x > 0 && x + size.width > width + 0.5 { x = 0; y += rowHeight; rowHeight = 0 }
             frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
             x += size.width + spacing; rowHeight = max(rowHeight, size.height); maxX = max(maxX, x - spacing)
         }
