@@ -46,6 +46,12 @@ jobs:
           print(next(device["udid"] for runtime in devices.values() for device in runtime
                      if device.get("isAvailable") and device["name"].startswith("iPhone")))
           ')"
+          xcrun simctl boot "$simulator_id" || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          # Exercise the system picker with real public fixtures, shared with Android's device tests.
+          xcrun simctl addmedia "$simulator_id" \
+            ../android/app/src/androidTest/assets/audit-exif.jpg \
+            ../android/app/src/androidTest/assets/audit-video.mp4
           xcodebuild test -project AquaRestore.xcodeproj -scheme AquaRestore -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build \
             -parallel-testing-enabled NO -resultBundlePath build/AppTests.xcresult CODE_SIGNING_ALLOWED=NO

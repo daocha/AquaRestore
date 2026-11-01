@@ -43,6 +43,47 @@ class EditorUiTest {
         uris.forEach { ui.activity.contentResolver.delete(it, null, null) }
         ui.runOnUiThread { model.preference("language", "system"); model.preference("theme", "system") }
     }
+    @Test fun importTabsFilterAlbumsAndDefaultToLibraryOnReopen() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val permissions = mediaPermissions(false, false).filter { it != android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED }
+        permissions.forEach { permission ->
+            automation.executeShellCommand("pm grant ${ui.activity.packageName} $permission").use { fd ->
+                java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() }
+            }
+        }
+        val suffix = System.nanoTime()
+        val photoAlbum = "PickerPhotos-$suffix"
+        val videoAlbum = "PickerVideos-$suffix"
+        listOf(false to photoAlbum, true to videoAlbum).forEach { (video, album) ->
+            val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val uri = ui.activity.contentResolver.insert(collection, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, if (video) "picker.mp4" else "picker.png")
+                put(MediaStore.MediaColumns.MIME_TYPE, if (video) "video/mp4" else "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/$album")
+            })!!
+            uris += uri
+        }
+        ui.runOnUiThread {
+            ui.activity.getSharedPreferences("preferences", 0).edit()
+                .putString("library_media_section", "albums").remove("library_media_album").apply()
+        }
+        ui.onNodeWithText("Import video or photo").performScrollTo().performClick()
+        ui.onNodeWithText("Library").assertIsSelected()
+        ui.onNodeWithText("Choose video or photo").assertDoesNotExist()
+        ui.waitUntil(15_000) { ui.onAllNodesWithText("$photoAlbum · 1").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText("$videoAlbum · 1").assertExists()
+        ui.onNodeWithText("Videos").performClick().assertIsSelected()
+        ui.onNodeWithText("$photoAlbum · 1").assertDoesNotExist()
+        ui.onNodeWithText("$videoAlbum · 1").assertExists()
+        ui.onNodeWithText("Photos").performClick().assertIsSelected()
+        ui.onNodeWithText("$videoAlbum · 1").assertDoesNotExist()
+        ui.onNodeWithText("$photoAlbum · 1").assertExists()
+        ui.onNodeWithContentDescription("Close").performClick()
+        ui.onNodeWithText("Import video or photo").performScrollTo().performClick()
+        ui.onNodeWithText("Library").assertIsSelected()
+        ui.onNodeWithText("$videoAlbum · 1").assertExists()
+        ui.onNodeWithContentDescription("Close").performClick()
+    }
     @Test fun batchLongPressDragSelectsDeselectsAndScrollsTo100PhotoLimit() {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"

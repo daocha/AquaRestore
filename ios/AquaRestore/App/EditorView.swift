@@ -64,9 +64,10 @@ struct EditorView: View {
         }
         .animation(.easeOut(duration: 0.15), value: dialogKey)
         .hideSystemBars(maximized)
-        .photosPicker(isPresented: $showPicker, selection: $pickedItem, matching: .any(of: [.videos, .images]))
+        .modifier(ImportMediaPicker(isPresented: $showPicker, selection: $pickedItem))
         .onChange(of: pickedItem) { item in
             guard let item else { return }
+            showPicker = false
             pickedItem = nil
             model.importPicked(item)
         }
@@ -215,6 +216,7 @@ struct EditorView: View {
         OceanArt().frame(height: 230)
         M3Button(title: s.text("Import video or photo", "匯入影片或照片"), icon: .addPhotoAlternate, iconSize: 24, iconSpacing: 10,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
+            .accessibilityIdentifier("importMedia")
             .disabled(busy)
         M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
@@ -376,5 +378,79 @@ struct TopAppBarLayout: Layout {
         subviews[1].place(at: CGPoint(x: bounds.minX + x, y: bounds.midY), anchor: .leading,
                           proposal: ProposedViewSize(width: min(title.width, room), height: bounds.height))
         subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
+    }
+}
+
+/// Keep Apple's privacy-preserving picker while giving the import sheet a compact header.
+private struct ImportMediaPicker: ViewModifier {
+    @Binding var isPresented: Bool
+    @Binding var selection: PhotosPickerItem?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 17, *) {
+            content.sheet(isPresented: $isPresented) {
+                ImportMediaLibrary(selection: $selection)
+                    .presentationDetents([.large])
+            }
+        } else {
+            content.photosPicker(isPresented: $isPresented, selection: $selection,
+                                 matching: .any(of: [.videos, .images]))
+        }
+    }
+}
+
+@available(iOS 17, *)
+private struct ImportMediaLibrary: View {
+    @Binding var selection: PhotosPickerItem?
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.strings) private var s
+    @State private var tab = 0
+    @State private var pickedItems: [PhotosPickerItem] = []
+
+    private var filter: PHPickerFilter {
+        switch tab {
+        case 1: return .videos
+        case 2: return .images
+        default: return .any(of: [.videos, .images])
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { viewport in
+                PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
+                             matching: filter) { EmptyView() }
+                    .photosPickerStyle(.inline)
+                    .photosPickerAccessoryVisibility(.hidden, edges: .bottom)
+                    .photosPickerDisabledCapabilities([.search, .selectionActions])
+                    .id(tab)
+                    .frame(width: viewport.size.width, height: viewport.size.height)
+                    .onChange(of: pickedItems) { items in
+                        if let item = items.first { selection = item }
+                    }
+            }
+            .clipped()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // A native bar keeps these controls below the status bar and Dynamic Island.
+                ToolbarItem(placement: .principal) {
+                    Picker(s.text("Media type", "媒體類型"), selection: $tab) {
+                        Text(s.text("Library", "媒體庫")).tag(0)
+                        Text(s.text("Videos", "影片")).tag(1)
+                        Text(s.text("Photos", "照片")).tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("importMediaTabs")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(s.text("Close", "關閉"))
+                    .accessibilityIdentifier("importMediaClose")
+                }
+            }
+        }
+        .presentationDragIndicator(.hidden)
     }
 }
