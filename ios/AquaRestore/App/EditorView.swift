@@ -64,9 +64,10 @@ struct EditorView: View {
         }
         .animation(.easeOut(duration: 0.15), value: dialogKey)
         .hideSystemBars(maximized)
-        .photosPicker(isPresented: $showPicker, selection: $pickedItem, matching: .any(of: [.videos, .images]))
+        .modifier(ImportMediaPicker(isPresented: $showPicker, selection: $pickedItem))
         .onChange(of: pickedItem) { item in
             guard let item else { return }
+            showPicker = false
             pickedItem = nil
             model.importPicked(item)
         }
@@ -376,5 +377,68 @@ struct TopAppBarLayout: Layout {
         subviews[1].place(at: CGPoint(x: bounds.minX + x, y: bounds.midY), anchor: .leading,
                           proposal: ProposedViewSize(width: min(title.width, room), height: bounds.height))
         subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
+    }
+}
+
+/// Keep Apple's privacy-preserving picker while giving the import sheet a compact header.
+private struct ImportMediaPicker: ViewModifier {
+    @Binding var isPresented: Bool
+    @Binding var selection: PhotosPickerItem?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 17, *) {
+            content.sheet(isPresented: $isPresented) {
+                ImportMediaLibrary(selection: $selection)
+                    .presentationDetents([.large])
+            }
+        } else {
+            content.photosPicker(isPresented: $isPresented, selection: $selection,
+                                 matching: .any(of: [.videos, .images]))
+        }
+    }
+}
+
+@available(iOS 17, *)
+private struct ImportMediaLibrary: View {
+    @Binding var selection: PhotosPickerItem?
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.strings) private var s
+    @State private var tab = 0
+    @State private var pickedItems: [PhotosPickerItem] = []
+
+    private var filter: PHPickerFilter {
+        switch tab {
+        case 1: return .videos
+        case 2: return .images
+        default: return .any(of: [.videos, .images])
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Picker(s.text("Media type", "媒體類型"), selection: $tab) {
+                    Text(s.text("Library", "媒體庫")).tag(0)
+                    Text(s.text("Videos", "影片")).tag(1)
+                    Text(s.text("Photos", "照片")).tag(2)
+                }
+                .pickerStyle(.segmented)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(s.text("Close", "關閉"))
+            }
+            .padding(.leading, 12)
+            PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
+                         matching: filter) { EmptyView() }
+                .photosPickerStyle(.inline)
+                .photosPickerAccessoryVisibility(.hidden, edges: [.top, .bottom])
+                .photosPickerDisabledCapabilities([.search, .selectionActions])
+                .id(tab)
+                .onChange(of: pickedItems) { items in
+                    if let item = items.first { selection = item }
+                }
+        }
+        .presentationDragIndicator(.hidden)
     }
 }

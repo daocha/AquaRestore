@@ -138,6 +138,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     onChoosePhotos: ((List<Uri>) -> Unit)? = null, onDismiss: () -> Unit, onChoose: (Uri) -> Unit = {}) {
     val context = LocalContext.current
     val multiple = onChoosePhotos != null
+    val mixedMedia = !audioOnly && !photosOnly && !videosOnly
+    var mediaTab by rememberSaveable { mutableStateOf("library") }
     val limit = if (videosOnly) MAX_BATCH_VIDEOS else MAX_BATCH_PHOTOS
     var chosen by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val permissions = remember(audioOnly, photosOnly, videosOnly) { mediaPermissions(audioOnly, photosOnly, videosOnly) }
@@ -174,15 +176,18 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     }
     var menuExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
-    val albums = remember(items, sort) {
-        val grouped = items.orEmpty().groupBy { it.albumId }.map { (id, members) ->
+    val filteredItems = remember(items, mediaTab) {
+        items?.filter { mediaTab == "library" || (if (mediaTab == "videos") it.video else !it.video) }
+    }
+    val albums = remember(filteredItems, sort) {
+        val grouped = filteredItems.orEmpty().groupBy { it.albumId }.map { (id, members) ->
             LibraryAlbum(id, members.first().albumName, members.first(), members.size,
                 members.maxOf { it.date }, members.minOf { it.date })
         }
         librarySorted(grouped, sort, { it.name }, { if (sort == LibrarySort.OLDEST) it.oldest else it.newest })
     }
-    val shown = remember(items, sort, section, selectedAlbum) {
-        librarySorted(items.orEmpty().filter { section == "recent" || it.albumId == selectedAlbum }, sort, { it.name }, { it.date })
+    val shown = remember(filteredItems, sort, section, selectedAlbum) {
+        librarySorted(filteredItems.orEmpty().filter { section == "recent" || it.albumId == selectedAlbum }, sort, { it.name }, { it.date })
     }
     val photoGrid = key(section, selectedAlbum, sort) { rememberLazyGridState() }
     val photoKeys = remember(shown) { shown.map { it.uri.toString() } }
@@ -196,13 +201,22 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (audioOnly) s.text("Choose music", "選擇音樂") else if (photosOnly) s.text("Choose photos", "選擇照片")
-                        else if (videosOnly) s.text("Choose videos", "選擇影片") else s.text("Choose video or photo", "選擇影片或照片"),
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (mixedMedia) Row(Modifier.weight(1f)) {
+                        listOf("library" to s.text("Library", "媒體庫"), "videos" to s.text("Videos", "影片"),
+                            "photos" to s.text("Photos", "照片")).forEach { (tab, label) ->
+                            Tab(selected = mediaTab == tab, onClick = { mediaTab = tab },
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                                Text(label, color = if (mediaTab == tab) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
+                    } else Text(if (audioOnly) s.text("Choose music", "選擇音樂") else if (photosOnly) s.text("Choose photos", "選擇照片")
+                        else s.text("Choose videos", "選擇影片"),
                         Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, s.text("Close", "關閉")) }
                 }
-                if (access.allowed && !access.full) TextButton(onClick = { permission.launch(permissions) },
+                if (!mixedMedia && access.allowed && !access.full) TextButton(onClick = { permission.launch(permissions) },
                     modifier = Modifier.padding(horizontal = 12.dp)) { Text(s.text("Manage access", "管理存取權限")) }
                 if (multiple) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Text(if (videosOnly) s.text("${chosen.size} / $limit selected · Videos only", "已選 ${chosen.size}／$limit 段 · 僅限影片")
@@ -218,9 +232,13 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         modifier = Modifier.fillMaxWidth()) { Text(s.text("Continue (${chosen.size})", "繼續（${chosen.size}）")) }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (section == "albums" && selectedAlbum != null) IconButton(onClick = { selectedAlbum = null }) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, if (audioOnly) s.text("All folders", "所有資料夾") else s.text("All albums", "所有相簿"))
+                    }
                     Box(Modifier.weight(1f)) {
                         TextButton(onClick = { menuExpanded = true }) {
-                            Text(if (section == "recent") s.text("Recent", "最近") else if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿"))
+                            Text(if (section == "albums" && selectedAlbum != null) albums.firstOrNull { it.id == selectedAlbum }?.name.orEmpty()
+                                else if (section == "recent") s.text("Recent", "最近") else if (audioOnly) s.text("Folders", "資料夾") else s.text("Albums", "相簿"), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                             Icon(Icons.Rounded.ArrowDropDown, null)
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -231,6 +249,9 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                                 section = "albums"; selectedAlbum = null; menuExpanded = false
                             })
                         }
+                    }
+                    if (mixedMedia && access.allowed && !access.full) TextButton(onClick = { permission.launch(permissions) }) {
+                        Text(s.text("Manage access", "管理存取權限"))
                     }
                     Box {
                         IconButton(onClick = { sortExpanded = true }) { Icon(Icons.AutoMirrored.Rounded.Sort, s.text("Sort", "排序")) }
@@ -245,13 +266,6 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         }
                     }
                 }
-                if (section == "albums" && selectedAlbum != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { selectedAlbum = null }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, if (audioOnly) s.text("All folders", "所有資料夾") else s.text("All albums", "所有相簿"))
-                    }
-                    Text(albums.firstOrNull { it.id == selectedAlbum }?.name.orEmpty(), style = MaterialTheme.typography.titleMedium)
-                }
                 when {
                     !access.allowed -> Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center) {
@@ -263,10 +277,10 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         Button(onClick = { permission.launch(permissions) }) { Text(s.text("Allow access", "允許存取")) }
                     }
                     items == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    items!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    filteredItems!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
-                            else if (photosOnly) s.text("No photos found", "找不到照片")
-                            else if (videosOnly) s.text("No videos found", "找不到影片")
+                            else if (photosOnly || mediaTab == "photos") s.text("No photos found", "找不到照片")
+                            else if (videosOnly || mediaTab == "videos") s.text("No videos found", "找不到影片")
                             else s.text("No videos or photos found", "找不到影片或照片"))
                     }
                     audioOnly -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
