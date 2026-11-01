@@ -181,6 +181,7 @@ final class MetalGrader {
             buffer.addCompletedHandler { b in
                 _ = inputKeep; _ = targetKeep
                 if b.status != .completed { GradeLog.failure("command buffer status \(b.status.rawValue): \(String(describing: b.error))") }
+                else { FrameProbe.log(source: source, output: output, hdr: instruction.hdr) }
                 completion(b.status == .completed)
             }
             buffer.commit()
@@ -188,6 +189,38 @@ final class MetalGrader {
             GradeLog.failure("Metal render setup failed: \(error)")
             completion(false)
         }
+    }
+}
+
+/// Logs how bright the first few decoded and graded frames are, so a black preview shows whether the
+/// decoder, the grading pass or the display is to blame.
+enum FrameProbe {
+    private static let lock = NSLock()
+    private static var logged = 0
+
+    static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode) {
+        lock.lock(); logged += 1; let mine = logged; lock.unlock()
+        guard mine <= 3 else { return }
+        NSLog("AquaRestore: frame probe \(mine): decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
+    }
+
+    private static func describe(_ buffer: CVPixelBuffer) -> String {
+        let size = "\(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer))"
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else {
+            return "\(size) format \(CVPixelBufferGetPixelFormatType(buffer))"
+        }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self) else { return "\(size) unreadable" }
+        let row = CVPixelBufferGetBytesPerRow(buffer)
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        var sum = 0, peak = 0, alpha = 0, count = 0
+        for gy in 1...8 { for gx in 1...8 {
+            let o = (height * gy / 9) * row + (width * gx / 9) * 4
+            let v = max(Int(base[o]), Int(base[o + 1]), Int(base[o + 2]))
+            sum += (Int(base[o]) + Int(base[o + 1]) + Int(base[o + 2])) / 3; peak = max(peak, v); alpha += Int(base[o + 3]); count += 1
+        } }
+        return "\(size) mean \(sum / count) peak \(peak) alpha \(alpha / count)"
     }
 }
 

@@ -16,10 +16,19 @@ struct PlayerSurface: UIViewRepresentable {
     final class LayerView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var readyObserver: NSKeyValueObservation?
+
+        /// Logs when the layer first has a frame to show, with its size, so a black preview can be told from no frame.
+        func watchDisplay() {
+            readyObserver = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { layer, _ in
+                NSLog("AquaRestore: video layer ready for display=\(layer.isReadyForDisplay) bounds=\(layer.bounds) videoRect=\(layer.videoRect)")
+            }
+        }
     }
 
     func makeUIView(context: Context) -> LayerView {
         let view = LayerView()
+        view.watchDisplay()
         view.backgroundColor = .black
         view.playerLayer.videoGravity = .resizeAspect
         view.playerLayer.player = player
