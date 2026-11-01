@@ -46,9 +46,17 @@ final class GradeInstruction: NSObject, AVVideoCompositionInstructionProtocol {
         requiredSourceTrackIDs = [NSNumber(value: trackID)]
         self.state = state
         self.hdr = hdr
-        inverse = transform.inverted()
+        inverse = GradeInstruction.normalized(transform, naturalSize).inverted()
         self.naturalSize = naturalSize
         displaySize = GradeInstruction.displaySize(naturalSize, transform)
+    }
+
+    /// The transform with the picture moved so it starts at the top-left corner. A file's rotation can be stored without
+    /// the offset that brings the turned picture back into view (players correct for it), which left the grade sampling
+    /// outside the frame: a stripe of the edge, with nothing else.
+    static func normalized(_ transform: CGAffineTransform, _ natural: CGSize) -> CGAffineTransform {
+        let rect = CGRect(origin: .zero, size: natural).applying(transform)
+        return transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
     }
 
     static func displaySize(_ natural: CGSize, _ transform: CGAffineTransform) -> CGSize {
