@@ -22,7 +22,7 @@ struct PreviewView: View {
     /// Full screen: the media is centred in the space above the controls instead of in the whole screen.
     private var lift: CGFloat {
         guard maximized, let source = model.source else { return 0 }
-        return PreviewLayout.lift(width: previewSize.width, height: previewSize.height, controls: controlsHeight,
+        return FullScreenLayout.lift(width: previewSize.width, height: previewSize.height, controls: controlsHeight,
                                   mediaWidth: source.width, mediaHeight: source.height)
     }
 
@@ -103,7 +103,7 @@ struct PreviewView: View {
     }
 
     private func transform(_ centroid: CGPoint, _ panBy: CGSize, _ factor: CGFloat) {
-        let next = PreviewLayout.transformed(scale: zoom, pan: pan, size: previewSize, lift: lift,
+        let next = FullScreenLayout.transformed(scale: zoom, pan: pan, size: previewSize, lift: lift,
                                              centroid: centroid, panBy: panBy, zoom: factor)
         zoom = next.scale
         pan = next.pan

@@ -2,7 +2,7 @@ import CoreGraphics
 
 /// The full-screen preview's geometry, as the Android `Preview` composable computes it: where the media sits above
 /// the controls, and how pinch and pan move it.
-enum PreviewLayout {
+enum FullScreenLayout {
     static let maxZoom: CGFloat = 5
 
     /// How far the media moves vertically so that it is centred in the space above the controls instead of in the
