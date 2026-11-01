@@ -142,7 +142,7 @@ final class MetalGrader {
         return texture
     }
 
-    func render(_ instruction: GradeInstruction, source: CVPixelBuffer, output: CVPixelBuffer, completion: @escaping (Bool) -> Void) {
+    func render(_ instruction: GradeInstruction, source: CVPixelBuffer, output: CVPixelBuffer, time: Double = 0, completion: @escaping (Bool) -> Void) {
         do {
             let (input, inputKeep) = try texture(source)
             let (target, targetKeep) = try texture(output)
@@ -190,7 +190,7 @@ final class MetalGrader {
             buffer.addCompletedHandler { b in
                 _ = inputKeep; _ = targetKeep
                 if b.status != .completed { GradeLog.failure("command buffer status \(b.status.rawValue): \(String(describing: b.error))") }
-                else { FrameProbe.log(source: source, output: output, hdr: instruction.hdr) }
+                else { FrameProbe.log(source: source, output: output, hdr: instruction.hdr, time: time) }
                 completion(b.status == .completed)
             }
             buffer.commit()
@@ -220,10 +220,12 @@ enum FrameProbe {
         }
     }
 
-    static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode) {
+    /// The first three frames, then one in sixty for the first fifteen seconds' worth, with the video time they are for:
+    /// a picture that does not change shows up as the same numbers at different times.
+    static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode, time: Double) {
         lock.lock(); logged += 1; let mine = logged; lock.unlock()
-        guard mine <= 3 else { return }
-        NSLog("AquaRestore: frame probe \(mine): decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
+        guard mine <= 3 || (mine % 60 == 0 && mine <= 900) else { return }
+        NSLog("AquaRestore: frame probe \(mine) at \(String(format: "%.2f", time)) s: decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
         // The first frame of each video is saved as a picture, so a garbled preview can be looked at: the decoded frame
         // and the graded one show which of the two went wrong.
         if mine == 1 { save(source, as: "decoded.png"); save(output, as: "graded.png") }
@@ -276,6 +278,20 @@ enum FrameProbe {
 
     private static func describe(_ buffer: CVPixelBuffer) -> String {
         let size = "\(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer))"
+        if CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_64RGBAHalf {
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt16.self) else { return "\(size) unreadable" }
+            let stride = CVPixelBufferGetBytesPerRow(buffer) / 2
+            let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+            var sum: Float = 0, peak: Float = 0, count: Float = 0
+            for gy in 1...8 { for gx in 1...8 {
+                let o = (height * gy / 9) * stride + (width * gx / 9) * 4
+                let r = half(base[o]), g = half(base[o + 1]), b = half(base[o + 2])
+                sum += (r + g + b) / 3; peak = max(peak, r, g, b); count += 1
+            } }
+            return "\(size) half-float mean \(String(format: "%.3f", sum / count)) peak \(String(format: "%.3f", peak))"
+        }
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else {
             return "\(size) format \(CVPixelBufferGetPixelFormatType(buffer))"
         }
@@ -364,7 +380,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
-            grader.render(instruction, source: source, output: output) { ok in
+            grader.render(instruction, source: source, output: output, time: request.compositionTime.seconds) { ok in
                 if ok { request.finish(withComposedVideoFrame: output) } else { request.finish(with: GradeError.textureFailed) }
             }
         }

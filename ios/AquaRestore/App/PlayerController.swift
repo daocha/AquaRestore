@@ -124,6 +124,13 @@ final class PlayerController: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     guard let self, let player = self.player, self.item === item else { return }
                     NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
+                    // Whether frames keep arriving as the clock runs: a picture that stands still while the time moves
+                    // shows up as a request count that stops growing.
+                    for _ in 0..<8 {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        guard let player = self.player, self.item === item else { return }
+                        NSLog("AquaRestore: playback progress time=\(String(format: "%.2f", player.currentTime().seconds)) s frame requests=\(FrameProbe.requestCount) rate=\(player.rate)")
+                    }
                 }
             } catch is CancellationError {
             } catch {
