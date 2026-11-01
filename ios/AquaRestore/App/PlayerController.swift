@@ -131,6 +131,7 @@ final class PlayerController: ObservableObject {
     private func observe(_ item: AVPlayerItem, _ player: AVPlayer) {
         itemObservers = [
             item.publisher(for: \.status).sink { [weak self] status in
+                if status == .readyToPlay { NSLog("AquaRestore: preview ready \(item.presentationSize) tracks=\(item.tracks.count)") }
                 if status == .failed {
                     NSLog("AquaRestore: preview playback failed: \(String(describing: item.error))")
                     self?.model.error = "playbackFailed"

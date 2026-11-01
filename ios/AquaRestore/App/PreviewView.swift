@@ -10,18 +10,45 @@ struct PreviewView: View {
     @Environment(\.strings) private var s
     @Environment(\.screenHeight) private var screenHeight
     @State private var adjusting = false
+    @State private var controlsHeight: CGFloat = 0
+    @State private var previewHeight: CGFloat = 0
+
+    /// Full screen: centre the fitted media in the space above the controls instead of the whole screen, so the
+    /// controls (and the Adjust panel) cover as little of it as possible. Media as tall as the screen stays at the top.
+    private var lift: CGFloat {
+        guard maximized, previewHeight > 0 else { return 0 }
+        let fitted: CGFloat
+        if let source = model.source, source.width > 0, source.height > 0, previewWidth > 0 {
+            fitted = min(previewHeight, previewWidth * CGFloat(source.height) / CGFloat(source.width))
+        } else {
+            fitted = previewHeight
+        }
+        return max((previewHeight - controlsHeight - fitted) / 2, 0) - (previewHeight - fitted) / 2
+    }
+    @State private var previewWidth: CGFloat = 0
+
+    private func measure(_ size: CGSize) {
+        previewWidth = size.width
+        previewHeight = size.height
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 Color.black
                 media
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: lift)
+                    .animation(.easeInOut(duration: 0.25), value: lift)
                 tags
                 fullscreenButton
                 if maximized { maximizedOverlay }
             }
             .frame(height: maximized ? nil : min(max(screenHeight * 0.24, 72), 250))
             .frame(maxWidth: .infinity, maxHeight: maximized ? .infinity : nil)
+            .background(GeometryReader { geo in
+                Color.clear.onAppear { measure(geo.size) }.onChange(of: geo.size) { measure($0) }
+            })
             .clipShape(RoundedRectangle(cornerRadius: maximized ? 0 : 20, style: .continuous))
             .accessibilityIdentifier("mediaPreview")
             if !maximized {
@@ -81,17 +108,22 @@ struct PreviewView: View {
     private var maximizedOverlay: some View {
         VStack(spacing: 8) {
             Spacer(minLength: 0)
-            HStack(spacing: 8) {
-                CompareButton(model: model, overlay: true)
-                M3Button(title: adjusting ? s.text("Hide", "收起") : s.text("Adjust", "調整"), icon: adjusting ? .expandMore : .tune,
-                         iconSize: 16, iconSpacing: 6, style: .custom(container: Color.black.opacity(0.65), content: .white)) { adjusting.toggle() }
-                    .accessibilityIdentifier("fullScreenAdjust")
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    CompareButton(model: model, overlay: true)
+                    M3Button(title: adjusting ? s.text("Hide", "收起") : s.text("Adjust", "調整"), icon: adjusting ? .expandMore : .tune,
+                             iconSize: 16, iconSpacing: 6, style: .custom(container: Color.black.opacity(0.65), content: .white)) { adjusting.toggle() }
+                        .accessibilityIdentifier("fullScreenAdjust")
+                }
+                if adjusting {
+                    FullScreenAdjustments(model: model, enabled: !exporting, maxHeight: screenHeight * 0.4)
+                } else {
+                    Spacer().frame(height: model.source?.video == true ? 80 : 16)
+                }
             }
-            if adjusting {
-                FullScreenAdjustments(model: model, enabled: !exporting, maxHeight: screenHeight * 0.4)
-            } else {
-                Spacer().frame(height: 80)
-            }
+            .background(GeometryReader { geo in
+                Color.clear.onAppear { controlsHeight = geo.size.height }.onChange(of: geo.size.height) { controlsHeight = $0 }
+            })
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

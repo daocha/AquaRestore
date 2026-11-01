@@ -79,7 +79,12 @@ enum GradeError: Error { case metalUnavailable, textureFailed }
 
 /// Compiled once; each frame only sets uniforms.
 final class MetalGrader {
-    static let shared: MetalGrader? = try? MetalGrader()
+    static let shared: MetalGrader? = {
+        do { return try MetalGrader() } catch {
+            NSLog("AquaRestore: Metal grader unavailable: \(error)")
+            return nil
+        }
+    }()
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -152,7 +157,10 @@ final class MetalGrader {
             params.radius = Float(Clarity.radius(target.width, target.height))
 
             let working = instruction.hdr == .sdr ? input : try workingTexture(width: input.width, height: input.height)
-            guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else { completion(false); return }
+            guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeComputeCommandEncoder() else {
+                GradeLog.failure("no Metal command buffer or encoder")
+                completion(false); return
+            }
             if instruction.hdr != .sdr {
                 encoder.setComputePipelineState(linearize)
                 encoder.setTexture(input, index: 0)
@@ -172,10 +180,25 @@ final class MetalGrader {
             encoder.endEncoding()
             buffer.addCompletedHandler { b in
                 _ = inputKeep; _ = targetKeep
+                if b.status != .completed { GradeLog.failure("command buffer status \(b.status.rawValue): \(String(describing: b.error))") }
                 completion(b.status == .completed)
             }
             buffer.commit()
-        } catch { completion(false) }
+        } catch {
+            GradeLog.failure("Metal render setup failed: \(error)")
+            completion(false)
+        }
+    }
+}
+
+/// Frame failures repeat for every frame, so only the first few reach the log.
+enum GradeLog {
+    private static let lock = NSLock()
+    private static var count = 0
+
+    static func failure(_ message: @autoclosure () -> String) {
+        lock.lock(); count += 1; let mine = count; lock.unlock()
+        if mine <= 5 { NSLog("AquaRestore: frame grading failed: \(message())") }
     }
 }
 
@@ -211,6 +234,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                   let source = request.sourceFrame(byTrackID: instruction.trackID),
                   let output = request.renderContext.newPixelBuffer(),
                   let grader = MetalGrader.shared else {
+                GradeLog.failure("missing instruction, source frame, output buffer or Metal grader")
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
