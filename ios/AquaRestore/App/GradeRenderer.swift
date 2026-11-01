@@ -168,7 +168,7 @@ final class MetalGrader {
                 encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
                 encoder.dispatchThreadgroups(MTLSize(width: (input.width + 15) / 16, height: (input.height + 15) / 16, depth: 1),
                     threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
-                encoder.memoryBarrier(scope: .textures)
+                // The encoder's default serial dispatch already orders this pass before the grading pass.
             }
             encoder.setComputePipelineState(pipeline)
             encoder.setTexture(working, index: 0)
@@ -230,11 +230,23 @@ class GradeCompositor: NSObject, AVVideoCompositing {
         queue.async {
             self.lock.lock(); let current = self.generation; self.lock.unlock()
             guard current == mine else { request.finishCancelledRequest(); return }
-            guard let instruction = request.videoCompositionInstruction as? GradeInstruction,
-                  let source = request.sourceFrame(byTrackID: instruction.trackID),
-                  let output = request.renderContext.newPixelBuffer(),
-                  let grader = MetalGrader.shared else {
-                GradeLog.failure("missing instruction, source frame, output buffer or Metal grader")
+            guard let instruction = request.videoCompositionInstruction as? GradeInstruction else {
+                GradeLog.failure("instruction is \(type(of: request.videoCompositionInstruction)), not GradeInstruction")
+                request.finish(with: GradeError.metalUnavailable)
+                return
+            }
+            guard let source = request.sourceFrame(byTrackID: instruction.trackID) else {
+                GradeLog.failure("no source frame for track \(instruction.trackID); sources \(request.sourceTrackIDs)")
+                request.finish(with: GradeError.textureFailed)
+                return
+            }
+            guard let output = request.renderContext.newPixelBuffer() else {
+                GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
+                request.finish(with: GradeError.textureFailed)
+                return
+            }
+            guard let grader = MetalGrader.shared else {
+                GradeLog.failure("Metal grader unavailable")
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
