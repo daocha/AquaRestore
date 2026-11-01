@@ -145,7 +145,7 @@ struct VideoControls: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             playPill
             speedButton
-            CompareButton(model: model)
+            CompareButton(model: model).fixedSize(horizontal: true, vertical: false).layoutPriority(1)
         }
     }
 
@@ -159,8 +159,10 @@ struct VideoControls: View {
             .buttonStyle(MaterialPress(shape: Circle(), color: .white))
             .disabled(!enabled || player.player == nil)
             .accessibilityLabel(player.isPlaying ? s.text("Pause", "暫停") : s.text("Play", "播放"))
+            // Equal-width digits, so the pill stays the same size as the time runs and does not push Compare about.
             Text("\(clock(player.playhead)) / \(clock(duration))")
                 .font(.system(size: 12, weight: .semibold))
+                .monospacedDigit()
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .fixedSize()
@@ -168,6 +170,8 @@ struct VideoControls: View {
         .padding(.trailing, 12)
         .frame(height: 40)
         .background(Capsule().fill(pillColor))
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     private var speedButton: some View {
@@ -283,6 +287,7 @@ struct CompareButton: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white)
                 .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 12)
         .frame(height: 40)
