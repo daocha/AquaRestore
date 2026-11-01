@@ -1,13 +1,15 @@
 import SwiftUI
 
 /// Filmstrip trim bar: original (uncorrected) thumbnails, a framed selection with a handle on each side, dimmed
-/// footage outside it, and the playhead. Dragging near a handle moves it; a tap or drag elsewhere
-/// places the cursor, with tools above it to start or end the trim exactly on that frame.
+/// footage outside it, and the playhead. Dragging near a handle moves it; a tap or drag elsewhere places the
+/// cursor, which stays until a touch outside the bar; the trim actions replace the playback controls above this
+/// bar, over the cursor.
 struct TrimBar: View {
     let frames: [CGImage]
     let duration: Int64
     let range: MsRange
     @ObservedObject var player: PlayerController
+    @ObservedObject var ui: ClipUI
     let enabled: Bool
     let description: String
     let onChange: (MsRange) -> Void
@@ -15,11 +17,6 @@ struct TrimBar: View {
     let onScrub: (Int64, Bool) -> Void
 
     @Environment(\.palette) private var c
-    @Environment(\.strings) private var s
-    // The frame the user placed the cursor on. Playback continues from it, so its tools stay pinned
-    // to that frame (marked on the strip) until one is used or a handle moves.
-    @State private var picked: Int64?
-    @State private var toolsWidth: CGFloat = 0
     @State private var target = 0 // -1 start handle, 1 end handle, 0 playhead
     @State private var position: Double = 0
     @State private var dragOrigin: CGFloat = 0
@@ -30,93 +27,77 @@ struct TrimBar: View {
     var body: some View {
         // Keep at least half a second (or the whole clip, if shorter) between the handles.
         let minimum = min(500, duration)
-        let showTools = enabled && picked.map { range.contains($0) } == true
         GeometryReader { geo in
             let barWidth = geo.size.width
             let track = max(barWidth - 2 * handle, 1)
             let total = max(Double(duration), 1)
             let x: (Int64) -> CGFloat = { t in handle + CGFloat(Double(t) / total) * track }
             let time: (CGFloat) -> Int64 = { px in Int64((Double((px - handle) / track) * total).rounded()) }
-            VStack(spacing: 0) {
-                if showTools, let at = picked {
-                    tools(at: at, minimum: minimum)
-                        .background(GeometryReader { g in Color.clear.preference(key: WidthKey.self, value: g.size.width) })
-                        .onPreferenceChange(WidthKey.self) { toolsWidth = $0 }
-                        .offset(x: min(max(x(at) - toolsWidth / 2, 0), max(barWidth - toolsWidth, 0)))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 6)
-                        .transition(.expandVertically)
-                }
-                ZStack {
-                    HStack(spacing: 0) {
-                        ForEach(frames.indices, id: \.self) { i in
-                            Image(decorative: frames[i], scale: 1).resizable().scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-                        }
+            ZStack {
+                HStack(spacing: 0) {
+                    ForEach(frames.indices, id: \.self) { i in
+                        Image(decorative: frames[i], scale: 1).resizable().scaledToFill()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(c.surfaceVariant)
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .padding(.horizontal, handle)
-                    overlay(x: x)
                 }
-                .frame(height: 56)
-                .overlay(TouchArea(
-                    onDragStart: { touch in
-                        guard enabled else { return }
-                        // A touch within reach of a handle moves it; anywhere else picks a preview frame inside the range.
-                        let toStart = abs(touch.x - (x(range.lowerBound) - handle / 2))
-                        let toEnd = abs(touch.x - (x(range.upperBound) + handle / 2))
-                        target = min(toStart, toEnd) > reach ? 0 : (toStart <= toEnd ? -1 : 1)
-                        dragOrigin = touch.x
-                        switch target {
-                        case -1: position = Double(range.lowerBound)
-                        case 1: position = Double(range.upperBound)
-                        default: position = Double(time(touch.x))
-                        }
-                        if target == 0 { pick(clamp(Int64(position.rounded())), play: false) } else { picked = nil }
-                    },
-                    onDrag: { point in
-                        guard enabled else { return }
-                        let t = Int64((position + Double((point.x - dragOrigin) / track) * total).rounded())
-                        switch target {
-                        case -1: onChange(min(max(t, 0), range.upperBound - minimum)...range.upperBound)
-                        case 1: onChange(range.lowerBound...min(max(t, range.lowerBound + minimum), duration))
-                        default: pick(clamp(t), play: false)
-                        }
-                    },
-                    onRelease: { point, dragged in
-                        guard enabled else { return }
-                        if !dragged { pick(clamp(time(point.x)), play: true) } else { finish() }
-                    },
-                    onCancel: { dragged in if enabled && dragged { finish() } }))
-                .accessibilityLabel(description)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(c.surfaceVariant)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .padding(.horizontal, handle)
+                overlay(x: x)
             }
+            .frame(height: 56)
+            .overlay(TouchArea(
+                onDragStart: { touch in
+                    guard enabled else { return }
+                    // A touch within reach of a handle moves it; anywhere else picks a preview frame inside the range.
+                    let toStart = abs(touch.x - (x(range.lowerBound) - handle / 2))
+                    let toEnd = abs(touch.x - (x(range.upperBound) + handle / 2))
+                    target = min(toStart, toEnd) > reach ? 0 : (toStart <= toEnd ? -1 : 1)
+                    dragOrigin = touch.x
+                    switch target {
+                    case -1: position = Double(range.lowerBound)
+                    case 1: position = Double(range.upperBound)
+                    default: position = Double(time(touch.x))
+                    }
+                    if target == 0 { pick(clamp(Int64(position.rounded())), play: false) }
+                },
+                onDrag: { point in
+                    guard enabled else { return }
+                    let t = Int64((position + Double((point.x - dragOrigin) / track) * total).rounded())
+                    switch target {
+                    case -1: change(min(max(t, 0), range.upperBound - minimum)...range.upperBound)
+                    case 1: change(range.lowerBound...min(max(t, range.lowerBound + minimum), duration))
+                    default: pick(clamp(t), play: false)
+                    }
+                },
+                onRelease: { point, dragged in
+                    guard enabled else { return }
+                    if !dragged { pick(clamp(time(point.x)), play: true) } else { finish() }
+                },
+                onCancel: { dragged in if enabled && dragged { finish() } }))
+            .accessibilityLabel(description)
         }
-        .frame(height: 56 + (showTools ? 48 + 6 : 0))
-        .animation(.spring(response: 0.35, dampingFraction: 1), value: showTools)
-        .onChange(of: duration) { _ in picked = nil }
+        .frame(height: 56)
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: ClipFramesKey.self, value: ClipFrames(overlay: nil, trim: geo.frame(in: .global)))
+        })
     }
 
     private func clamp(_ t: Int64) -> Int64 { min(max(t, range.lowerBound), range.upperBound) }
-    private func pick(_ t: Int64, play: Bool) { picked = t; onScrub(t, play) }
-    private func finish() { if target != 0 { onDone() } else if let picked { onScrub(picked, true) } }
 
-    /// `Surface(RoundedCornerShape(16), primaryContainer)` with "Set start" and "Set end" text buttons.
-    private func tools(at: Int64, minimum: Int64) -> some View {
-        HStack(spacing: 0) {
-            M3TextButton(title: s.text("Set start", "設為起點"), fontSize: 12, icon: .firstPage) {
-                onChange(at...range.upperBound); onDone(); picked = nil
-            }
-            .disabled(at > range.upperBound - minimum)
-            Rectangle().fill(c.onPrimaryContainer.opacity(0.2)).frame(width: 1, height: 20)
-            M3TextButton(title: s.text("Set end", "設為終點"), fontSize: 12, icon: .lastPage, iconTrailing: true) {
-                onChange(range.lowerBound...at); onDone(); picked = nil
-            }
-            .disabled(at < range.lowerBound + minimum)
-        }
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.primaryContainer))
-        .contentColor(c.onPrimaryContainer)
+    private func pick(_ t: Int64, play: Bool) {
+        ui.pick(t)
+        onScrub(t, play)
+    }
+
+    private func change(_ next: MsRange) {
+        ui.speedExpanded = false
+        onChange(next)
+    }
+
+    private func finish() {
+        if target != 0 { onDone() } else if let picked = ui.picked { onScrub(picked, true) }
     }
 
     /// Dimmed footage outside the selection, frame, handles with grips, cursor and playhead.
@@ -127,16 +108,17 @@ struct TrimBar: View {
             ctx.fill(Path(CGRect(x: handle, y: 0, width: max(s - handle, 0), height: size.height)), with: .color(dim))
             ctx.fill(Path(CGRect(x: e, y: 0, width: max(size.width - handle - e, 0), height: size.height)), with: .color(dim))
             let border: CGFloat = 3
-            ctx.fill(Path(CGRect(x: s, y: 0, width: e - s, height: border)), with: .color(c.primary))
-            ctx.fill(Path(CGRect(x: s, y: size.height - border, width: e - s, height: border)), with: .color(c.primary))
-            ctx.fill(Path(roundedRect: CGRect(x: s - handle, y: 0, width: handle, height: size.height), cornerRadius: 4), with: .color(c.primary))
-            ctx.fill(Path(roundedRect: CGRect(x: e, y: 0, width: handle, height: size.height), cornerRadius: 4), with: .color(c.primary))
+            ctx.fill(Path(CGRect(x: s, y: 0, width: e - s, height: border)), with: .color(.white))
+            ctx.fill(Path(CGRect(x: s, y: size.height - border, width: e - s, height: border)), with: .color(.white))
+            ctx.fill(Path(roundedRect: CGRect(x: s - handle, y: 0, width: handle, height: size.height), cornerRadius: 4), with: .color(.white))
+            ctx.fill(Path(roundedRect: CGRect(x: e, y: 0, width: handle, height: size.height), cornerRadius: 4), with: .color(.white))
+            let grips = Color(red: 0x44 / 255.0, green: 0x44 / 255.0, blue: 0x44 / 255.0)
             for grip in [s - handle / 2, e + handle / 2] {
                 var line = Path()
                 line.move(to: CGPoint(x: grip, y: size.height * 0.35)); line.addLine(to: CGPoint(x: grip, y: size.height * 0.65))
-                ctx.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                ctx.stroke(line, with: .color(grips), style: StrokeStyle(lineWidth: 2, lineCap: .round))
             }
-            if let at = picked, range.contains(at) {
+            if let at = ui.picked, range.contains(at) {
                 var line = Path()
                 line.move(to: CGPoint(x: x(at), y: 0)); line.addLine(to: CGPoint(x: x(at), y: size.height))
                 ctx.stroke(line, with: .color(c.primary), lineWidth: 2)
@@ -151,11 +133,6 @@ struct TrimBar: View {
         }
         .allowsHitTesting(false)
     }
-}
-
-private struct WidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 /// The whole song as a loudness envelope, with a window as long as the video's output. Dragging

@@ -30,9 +30,7 @@ struct EditorView: View {
     @State private var settings = false
     @State private var showExport = false
     @State private var showProgress = false
-    @State private var speedExpanded = false
     @State private var restoreExpanded = false
-    @State private var trimExpanded = false
     @State private var audioExpanded = false
     @State private var confirmClose = false
     @State private var maximized = false
@@ -43,6 +41,7 @@ struct EditorView: View {
     @State private var batchVideos = false
     @State private var batchItems: [PhotosPickerItem] = []
     @State private var scrollToTop = 0
+    @StateObject private var clip = ClipUI()
 
     private var export: ExportStatus { exports.status }
     private var busy: Bool { model.phase != nil || export.busy }
@@ -64,6 +63,7 @@ struct EditorView: View {
         }
         .animation(.easeOut(duration: 0.15), value: dialogKey)
         .hideSystemBars(maximized)
+        .closesClipControls(clip)
         .modifier(ImportMediaPicker(isPresented: $showPicker, selection: $pickedItem))
         .onChange(of: pickedItem) { item in
             guard let item else { return }
@@ -84,6 +84,7 @@ struct EditorView: View {
         .onChange(of: model.source) { value in
             if value == nil || model.phase != nil { maximized = false }
             scrollToTop += 1
+            clip.reset()
         }
         .onChange(of: model.phase) { value in
             if value != nil { maximized = false }
@@ -153,7 +154,7 @@ struct EditorView: View {
     @ViewBuilder private var content: some View {
         if hasEditor, let source = model.source {
             VStack(alignment: .leading, spacing: spacing) {
-                PreviewView(model: model, exporting: export.busy, maximized: $maximized)
+                PreviewView(model: model, player: model.player, ui: clip, exporting: export.busy, maximized: $maximized)
                     .frame(maxHeight: maximized ? .infinity : nil)
                 if !maximized {
                     ScrollViewReader { proxy in
@@ -256,9 +257,8 @@ struct EditorView: View {
     @ViewBuilder private func adjustments(_ source: SourceMedia) -> some View {
         let enabled = !export.busy
         if source.video {
-            SpeedPanel(model: model, expanded: $speedExpanded, enabled: enabled)
             if source.durationMs > 0 {
-                TrimPanel(model: model, player: model.player, duration: source.durationMs, expanded: $trimExpanded, enabled: enabled)
+                ClipControls(model: model, player: model.player, ui: clip, duration: source.durationMs, enabled: enabled)
             }
             AudioPanel(model: model, expanded: $audioExpanded, enabled: enabled) { showMusicPicker = true }
         }

@@ -3,7 +3,7 @@ import SwiftUI
 /// Material Icons (Rounded, 1.7.8), the set the Android app uses, drawn from their own 24 x 24 path data.
 /// Generated from the androidx.compose.material:material-icons-extended sources (Apache License 2.0).
 enum MaterialIcon {
-    case close, swapHoriz, fileDownload, settings, speed, expandLess, expandMore, contentCut, musicNote, libraryMusic, autoAwesome, addPhotoAlternate, tune, highQuality, fullscreenExit, fullscreen, compare, firstPage, lastPage, playArrow, pause, photoLibrary, videoLibrary
+    case close, swapHoriz, fileDownload, settings, speed, expandLess, expandMore, contentCut, musicNote, libraryMusic, autoAwesome, addPhotoAlternate, tune, highQuality, fullscreenExit, fullscreen, compare, firstPage, lastPage, playArrow, pause, photoLibrary, videoLibrary, info
 
     var data: String {
         switch self {
@@ -30,6 +30,8 @@ enum MaterialIcon {
         case .pause: return "M 8 19 C 9.1 19 10 18.1 10 17 L 10 7 C 10 5.9 9.1 5 8 5 C 6.9 5 6 5.9 6 7 L 6 17 C 6 18.1 6.9 19 8 19 Z M 14 7 L 14 17 C 14 18.1 14.9 19 16 19 C 17.1 19 18 18.1 18 17 L 18 7 C 18 5.9 17.1 5 16 5 C 14.9 5 14 5.9 14 7 Z"
         case .photoLibrary: return "M 22 16 L 22 4 C 22 2.9 21.1 2 20 2 L 8 2 C 6.9 2 6 2.9 6 4 L 6 16 C 6 17.1 6.9 18 8 18 L 20 18 C 21.1 18 22 17.1 22 16 Z M 11.4 12.53 L 13.03 14.71 L 15.61 11.49 C 15.81 11.24 16.19 11.24 16.39 11.49 L 19.35 15.19 C 19.61 15.52 19.38 16 18.96 16 L 9 16 C 8.59 16 8.35 15.53 8.6 15.2 L 10.6 12.53 C 10.8 12.27 11.2 12.27 11.4 12.53 Z M 2 7 L 2 20 C 2 21.1 2.9 22 4 22 L 17 22 C 17.55 22 18 21.55 18 21 C 18 20.45 17.55 20 17 20 L 5 20 C 4.45 20 4 19.55 4 19 L 4 7 C 4 6.45 3.55 6 3 6 C 2.45 6 2 6.45 2 7 Z"
         case .videoLibrary: return "M 3 6 C 2.45 6 2 6.45 2 7 L 2 20 C 2 21.1 2.9 22 4 22 L 17 22 C 17.55 22 18 21.55 18 21 C 18 20.45 17.55 20 17 20 L 5 20 C 4.45 20 4 19.55 4 19 L 4 7 C 4 6.45 3.55 6 3 6 Z M 20 2 L 8 2 C 6.9 2 6 2.9 6 4 L 6 16 C 6 17.1 6.9 18 8 18 L 20 18 C 21.1 18 22 17.1 22 16 L 22 4 C 22 2.9 21.1 2 20 2 Z M 12 14.5 L 12 5.5 L 17.47 9.6 C 17.74 9.8 17.74 10.2 17.47 10.4 L 12 14.5 Z"
+        // Material Rounded "info", with the "i" cut out by the opposite winding: a circle, then the stem and the dot.
+        case .info: return "M 12 2 C 17.523 2 22 6.477 22 12 C 22 17.523 17.523 22 12 22 C 6.477 22 2 17.523 2 12 C 2 6.477 6.477 2 12 2 Z M 11 11 L 11 17 L 13 17 L 13 11 Z M 11 7 L 11 9 L 13 9 L 13 7 Z"
         }
     }
 

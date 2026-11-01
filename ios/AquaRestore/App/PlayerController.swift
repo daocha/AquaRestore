@@ -11,7 +11,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var playhead: Int64 = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var durationMs: Int64 = 0
-    /// The rate playback runs at; the controller's settings menu can change it, as Media3's does.
+    /// The rate playback runs at, which follows the speed chosen in the clip controls.
     @Published private(set) var rate: Float = 1
     /// The source's display aspect ratio, which the player view keeps (its controls cover only the video).
     @Published private(set) var aspect: CGFloat?
@@ -186,27 +186,6 @@ final class PlayerController: ObservableObject {
         guard let player else { return }
         player.defaultRate = speed
         if player.rate != 0 { player.rate = speed }
-    }
-
-    /// The controller's "Speed" setting: changes the player only, like Media3's settings menu.
-    func overrideRate(_ value: Float) {
-        rate = value
-        guard let player else { return }
-        player.defaultRate = value
-        if player.rate != 0 { player.rate = value }
-    }
-
-    /// Media3's rewind (5 s) and fast-forward (15 s) buttons.
-    func seek(by deltaMs: Int64) { seek(min(max(playhead + deltaMs, 0), max(durationMs - 1, 0))) }
-
-    /// Media3's previous button with a single item: back to the beginning.
-    func seekToPrevious() { seek(0) }
-
-    /// How far the file has been loaded, for the time bar's buffered segment.
-    var bufferedMs: Int64 {
-        guard let item else { return 0 }
-        let end = item.loadedTimeRanges.map { $0.timeRangeValue.end.seconds }.max() ?? 0
-        return Int64((end * 1000).rounded())
     }
 
     private func setOriginalVolume(_ value: Float) {
