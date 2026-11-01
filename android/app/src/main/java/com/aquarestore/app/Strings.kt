@@ -10,7 +10,7 @@ class Strings(val chinese: Boolean) {
         private val values = mapOf(
             "preparing" to ("Decoding in software…" to "正在以軟體解碼…"),
             "analyzing" to ("Reading the water’s colors…" to "正在分析水下色彩…"),
-            "exporting" to ("Restoring at full quality…" to "正在以匯出畫質還原…"),
+            "exporting" to ("Restoring at export quality…" to "正在以匯出畫質還原…"),
             "encoding" to ("Encoding your image…" to "正在編碼圖片…"),
             "saving" to ("Saving to your gallery…" to "正在儲存至相簿…"),
             "saved" to ("Saved to your gallery" to "已儲存至相簿"),
