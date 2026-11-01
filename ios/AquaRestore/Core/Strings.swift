@@ -10,7 +10,7 @@ struct Strings {
 
     private static let values: [String: (String, String)] = [
         "analyzing": ("Reading the water’s colors…", "正在分析水下色彩…"),
-        "exporting": ("Restoring at full quality…", "正在以匯出畫質還原…"),
+        "exporting": ("Restoring at export quality…", "正在以匯出畫質還原…"),
         "encoding": ("Encoding your image…", "正在編碼圖片…"),
         "saving": ("Saving to your gallery…", "正在儲存至相簿…"),
         "saved": ("Saved to your gallery", "已儲存至相簿"),
