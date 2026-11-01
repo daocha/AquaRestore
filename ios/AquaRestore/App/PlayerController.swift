@@ -66,9 +66,7 @@ final class PlayerController: ObservableObject {
 
     // MARK: Loading
 
-    /// `previewAsSdr` plays an HDR clip through the 8-bit path, which every device can start. Export is unaffected:
-    /// it keeps the clip's own HDR.
-    func load(_ media: SourceMedia, previewAsSdr: Bool = false) {
+    func load(_ media: SourceMedia) {
         unload()
         FrameProbe.reset()
         loadTask = Task { [weak self] in
@@ -86,7 +84,7 @@ final class PlayerController: ObservableObject {
                 let render = CGSize(width: max(2, (display.width * scale / 2).rounded() * 2), height: max(2, (display.height * scale / 2).rounded() * 2))
                 let fps = Int32(min(max(media.fps.rounded(), 24), 60))
                 let composition = GradeComposition.make(track: track, trackID: track.trackID, duration: duration, state: self.model.gradeState,
-                    hdr: previewAsSdr ? .sdr : media.hdr, transform: transform, naturalSize: natural, renderSize: render, frameDuration: CMTime(value: 1, timescale: fps))
+                    hdr: media.hdr, transform: transform, naturalSize: natural, renderSize: render, frameDuration: CMTime(value: 1, timescale: fps))
                 let item = AVPlayerItem(asset: asset)
                 item.videoComposition = composition
                 item.audioTimePitchAlgorithm = .spectral
@@ -111,16 +109,9 @@ final class PlayerController: ObservableObject {
                 self.startTimer()
                 // A black preview with sound leaves no error, so say what the player is doing shortly after it starts.
                 Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                     guard let self, let player = self.player, self.item === item else { return }
-                    NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) sdrPreview=\(previewAsSdr) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
-                    // Some devices (the iOS Simulator among them) cannot start the half-float HDR pipeline: the audio plays
-                    // but the compositor is never asked for a frame. Preview the clip in SDR instead, like Android's fallback.
-                    if media.hdr != .sdr && !previewAsSdr && FrameProbe.requestCount == 0 {
-                        NSLog("AquaRestore: HDR preview produced no frames; previewing in SDR")
-                        self.model.playbackPositionMs = self.playhead
-                        self.load(media, previewAsSdr: true)
-                    }
+                    NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
                 }
             } catch is CancellationError {
             } catch {
