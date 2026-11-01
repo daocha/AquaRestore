@@ -221,23 +221,46 @@ enum FrameProbe {
         if mine == 1 { save(source, as: "decoded.png"); save(output, as: "graded.png") }
     }
 
+    /// A half-float value as a Float, without relying on `Float16` (not available on every simulator architecture).
+    private static func half(_ bits: UInt16) -> Float {
+        let sign: Float = bits & 0x8000 != 0 ? -1 : 1
+        let exponent = Int((bits >> 10) & 0x1F), fraction = Float(bits & 0x3FF)
+        if exponent == 0 { return sign * fraction * 5.960_464_5e-8 }
+        if exponent == 31 { return fraction == 0 ? sign * Float.infinity : Float.nan }
+        return sign * (1 + fraction / 1024) * Float(sign: .plus, exponent: exponent - 15, significand: 1)
+    }
+
+    /// Saves a small copy of the frame, from either of the two pixel formats the compositor uses (8-bit and half-float).
     private static func save(_ buffer: CVPixelBuffer, as name: String) {
-        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return }
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        guard format == kCVPixelFormatType_32BGRA || format == kCVPixelFormatType_64RGBAHalf else { return }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
-        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
-        let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
-        guard let full = CGContext(data: base, width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info)?.makeImage() else { return }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), row = CVPixelBufferGetBytesPerRow(buffer)
         // Small enough to open and share quickly.
         let scale = min(1, 540 / CGFloat(max(width, height)))
         let w = max(1, Int(CGFloat(width) * scale)), h = max(1, Int(CGFloat(height) * scale))
-        guard let small = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { return }
-        small.interpolationQuality = .medium
-        small.draw(full, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let image = small.makeImage(), let folder = try? DevFiles.folder("FrameProbe"),
+        var rgba = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            let sy = min(height - 1, y * height / h)
+            for x in 0..<w {
+                let sx = min(width - 1, x * width / w)
+                let out = (y * w + x) * 4
+                if format == kCVPixelFormatType_32BGRA {
+                    let p = base.assumingMemoryBound(to: UInt8.self), o = sy * row + sx * 4
+                    rgba[out] = p[o + 2]; rgba[out + 1] = p[o + 1]; rgba[out + 2] = p[o]
+                } else {
+                    let p = base.assumingMemoryBound(to: UInt16.self), o = sy * (row / 2) + sx * 4
+                    for c in 0..<3 { rgba[out + c] = UInt8(min(max(half(p[o + c]), 0), 1) * 255) }
+                }
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+              let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
+                                  shouldInterpolate: false, intent: .defaultIntent),
+              let folder = try? DevFiles.folder("FrameProbe"),
               let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(destination, image, nil)
         if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: \(DevFiles.shown(folder.appendingPathComponent(name)))") }
