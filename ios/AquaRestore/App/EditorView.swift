@@ -216,6 +216,7 @@ struct EditorView: View {
         OceanArt().frame(height: 230)
         M3Button(title: s.text("Import video or photo", "匯入影片或照片"), icon: .addPhotoAlternate, iconSize: 24, iconSpacing: 10,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
+            .accessibilityIdentifier("importMedia")
             .disabled(busy)
         M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
@@ -423,12 +424,16 @@ private struct ImportMediaLibrary: View {
                     Text(s.text("Photos", "照片")).tag(2)
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("importMediaTabs")
                 Button { dismiss() } label: {
                     Image(systemName: "xmark").frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(s.text("Close", "關閉"))
+                .accessibilityIdentifier("importMediaClose")
             }
             .padding(.leading, 12)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("importMediaHeader")
             PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
                          matching: filter) { EmptyView() }
                 .photosPickerStyle(.inline)

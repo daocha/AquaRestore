@@ -72,16 +72,28 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app.tests
         GENERATE_INFOPLIST_FILE: YES
+  AquaRestoreUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/AquaUITests
+    dependencies:
+      - target: AquaRestore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   AquaRestore:
     build:
       targets:
         AquaRestore: all
         AquaRestoreTests: [test]
+        AquaRestoreUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
-      targets: [AquaRestoreTests]
+      targets: [AquaRestoreTests, AquaRestoreUITests]
     archive:
       config: Release
