@@ -26,17 +26,15 @@ final class ImportMediaPickerTests: XCTestCase {
         XCTAssertTrue(asset("Photo").waitForExistence(timeout: 15), "Seed a photo with simctl addmedia before running.")
         XCTAssertTrue(asset("Video").waitForExistence(timeout: 15), "Seed a video with simctl addmedia before running.")
 
-        tabs.buttons["Videos"].tap()
-        XCTAssertTrue(tabs.buttons["Videos"].isSelected)
+        selectTab("Videos")
         XCTAssertTrue(asset("Video").waitForExistence(timeout: 15))
         assertDisappears(asset("Photo"))
 
-        tabs.buttons["Photos"].tap()
-        XCTAssertTrue(tabs.buttons["Photos"].isSelected)
+        selectTab("Photos")
         XCTAssertTrue(asset("Photo").waitForExistence(timeout: 15))
         assertDisappears(asset("Video"))
 
-        tabs.buttons["Library"].tap()
+        selectTab("Library")
         XCTAssertTrue(asset("Photo").waitForExistence(timeout: 15))
         XCTAssertTrue(asset("Video").waitForExistence(timeout: 15))
     }
@@ -45,9 +43,10 @@ final class ImportMediaPickerTests: XCTestCase {
         openPicker()
         let header = app.otherElements["importMediaHeader"]
         XCTAssertTrue(header.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(header.frame.height, 0)
         XCTAssertLessThanOrEqual(header.frame.height, 56, "Keep the fixed import header to one control row.")
         XCTAssertFalse(app.staticTexts["Choose video or photo"].exists)
-        app.segmentedControls["importMediaTabs"].buttons["Photos"].tap()
+        selectTab("Photos")
         app.buttons["importMediaClose"].tap()
         assertDisappears(app.segmentedControls["importMediaTabs"])
         XCTAssertTrue(app.buttons["importMedia"].isHittable)
@@ -62,6 +61,19 @@ final class ImportMediaPickerTests: XCTestCase {
         if !button.isHittable { app.swipeUp() }
         button.tap()
         XCTAssertTrue(app.segmentedControls["importMediaTabs"].waitForExistence(timeout: 10))
+        for label in ["Library", "Videos", "Photos"] {
+            let tab = app.segmentedControls["importMediaTabs"].buttons[label]
+            let tappable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: tab)
+            XCTAssertEqual(XCTWaiter.wait(for: [tappable], timeout: 10), .completed, "\(label) must be reachable below the status bar.")
+        }
+    }
+
+    private func selectTab(_ label: String) {
+        let tab = app.segmentedControls["importMediaTabs"].buttons[label]
+        XCTAssertTrue(tab.isHittable, "\(label) must be tappable before switching filters.")
+        tab.tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: tab)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "Tapping \(label) must switch the selected tab.")
     }
 
     private func asset(_ type: String) -> XCUIElement {

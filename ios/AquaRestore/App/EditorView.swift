@@ -432,17 +432,24 @@ private struct ImportMediaLibrary: View {
                 .accessibilityIdentifier("importMediaClose")
             }
             .padding(.leading, 12)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("importMediaHeader")
-            PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
-                         matching: filter) { EmptyView() }
-                .photosPickerStyle(.inline)
-                .photosPickerAccessoryVisibility(.hidden, edges: .bottom)
-                .photosPickerDisabledCapabilities([.search, .selectionActions])
-                .id(tab)
-                .onChange(of: pickedItems) { items in
-                    if let item = items.first { selection = item }
-                }
+            // The native picker has a screen-sized ideal height. Give it only the remaining
+            // viewport so it cannot push the header above the sheet's safe area.
+            GeometryReader { viewport in
+                PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
+                             matching: filter) { EmptyView() }
+                    .photosPickerStyle(.inline)
+                    .photosPickerAccessoryVisibility(.hidden, edges: .bottom)
+                    .photosPickerDisabledCapabilities([.search, .selectionActions])
+                    .id(tab)
+                    .frame(width: viewport.size.width, height: viewport.size.height)
+                    .onChange(of: pickedItems) { items in
+                        if let item = items.first { selection = item }
+                    }
+            }
+            .clipped()
         }
         .presentationDragIndicator(.hidden)
     }
