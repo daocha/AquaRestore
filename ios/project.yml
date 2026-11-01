@@ -45,6 +45,8 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: $(INFOPLIST_KEY_CFBundleDisplayName)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleLocalizations: [en, zh-Hant]
         CFBundleDevelopmentRegion: en
         UILaunchScreen: {}

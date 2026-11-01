@@ -9,7 +9,7 @@ default_keystore="$HOME/.aquarestore-signing/aquarestore-release.jks"
 default_key_alias=release
 default_lineage="$HOME/.aquarestore-signing/lineage.bin"
 # Directories whose untracked files could end up in a release build.
-build_dirs=(android core scripts)
+build_dirs=(android ios core scripts)
 # The Play build must not update itself (Play forbids installing APKs from outside Play), and it has no network access.
 play_forbidden_permissions=(android.permission.REQUEST_INSTALL_PACKAGES android.permission.INTERNET
   android.permission.ACCESS_NETWORK_STATE)
@@ -52,3 +52,7 @@ Download the signed APK and verify it against the SHA256SUMS file.
 Source commit: $3
 NOTES
 }
+
+# iOS App Store release configuration. Versions come from Android release metadata.
+ios_scheme=AquaRestore
+run_ios_tests() { swift test; }

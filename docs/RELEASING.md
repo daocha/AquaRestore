@@ -1,4 +1,4 @@
-# Android builds and GitHub releases
+# Android and iOS builds and releases
 
 ## In-app updates
 
@@ -6,7 +6,7 @@ The regular `release` APK install quietly checks the latest public GitHub Releas
 
 For Google Play, `:app:bundlePlayRelease` builds the Play AAB. That build uses Google Play in-app updates and has neither the `REQUEST_INSTALL_PACKAGES` permission nor the GitHub APK install flow. Release it with signing compatible with existing installs and an increasing `versionCode`. If a regular `release` build is installed through Google Play, the app also uses Play updates, based on its install source. Test the update flow on a Play testing track first; whether a Play update is available is up to the Play services.
 
-The Android build and release scripts are shared with another project (see "Shared scripts" at the end); there are no iOS steps. Releasing does not require uploading the JKS to GitHub.
+The Android build and release scripts are shared with another project (see "Shared scripts" at the end); iOS App Store steps are below. Releasing does not require uploading the JKS to GitHub.
 
 ## 1. Set up another computer
 
@@ -226,8 +226,65 @@ done
 ## Script checks
 
 ```bash
-bash -n scripts/*.sh
+for script in scripts/*.sh; do bash -n "$script" || exit; done
 python3 -m unittest discover -s scripts/tests -v
 ```
 
 The workflow tests run in an isolated temporary Git repository with mocked `gh` and push, and check version increments, tags pointing at the right commit, asset upload order, blocking on a dirty tree or an existing tag, dry-run, and that failures never publish a partial release. The tests never touch the real GitHub.
+
+## iOS App Store / TestFlight
+
+Use full Xcode 26+ with the iOS 26+ SDK, XcodeGen, Python 3, and a paid Apple Developer team.
+Install these yourself; the App Store script installs nothing. In Xcode Settings > Accounts, sign in
+and select the team. Set `DEVELOPMENT_TEAM` to the ten-character team ID. Alternatively set all three
+of `ASC_KEY_PATH` (private `.p8` file outside the repository), `ASC_KEY_ID`, and `ASC_ISSUER_ID` for a
+team App Store Connect API key with provisioning permissions.
+
+```bash
+export DEVELOPMENT_TEAM=YOURTEAMID
+./scripts/build-ios-app-store.sh --check
+./scripts/build-ios-app-store.sh
+# Or build alongside the Android GitHub release (also add --play for the Play bundle):
+./scripts/release-github.sh --version 2026.11.2 --app-store
+```
+
+The App Store build takes `versionName` and `versionCode` from `android/app/build.gradle.kts` and
+passes them to Xcode as `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`. App Store versions must
+have three numeric components without a beta suffix. The current single-component build number
+must be 1–9999, and every new uploaded build needs an unused, increasing number. To rebuild the same
+version after an upload, increase the version code in a branch and merge that metadata through a PR.
+Do not reuse an existing GitHub tag. `--skip-tests` skips the Swift package checks too.
+
+Outputs are `dist/AquaRestore-VERSION-CODE.xcarchive` and
+`dist/AquaRestore-VERSION-CODE-app-store/AquaRestore.ipa`. Keep the archive, including its dSYMs, for crash reports.
+The build refuses to overwrite either output. Move failed/local artifacts aside before rebuilding.
+The default checks run Swift package tests; run simulator and real-device app checks before submission.
+
+Neither `--app-store` nor `--dry-run --app-store` uploads to Apple or adds the IPA to GitHub.
+Export and signing may contact Apple to obtain provisioning assets even during a dry run.
+Upload the **existing** archive explicitly, without rebuilding:
+
+```bash
+./scripts/build-ios-app-store.sh --upload-archive dist/AquaRestore-2026.11.2-CODE.xcarchive
+```
+
+Replace `CODE` with the build number printed by the build. Upload retries use the same archive;
+if processing already succeeded in App Store Connect, do not upload it again. Archive bundle ID
+and team are checked before export/upload. Xcode keeps the build number unchanged.
+
+Before uploading, register the release bundle ID in Apple Developer and create its iOS app record
+in App Store Connect. After processing, test with TestFlight, complete the listing, iPhone/iPad
+screenshots, privacy policy and App Privacy answers, age rating, price/availability and encryption
+questions, select the build and submit for App Review in App Store Connect. Uploading does not
+submit for review or release the app. App Store updates are distributed by Apple, while the Android
+GitHub APK retains its existing update flow.
+
+
+References: [Apple SDK requirements](https://developer.apple.com/news/upcoming-requirements/?id=04282026a),
+[create the app record](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/),
+[upload builds](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/),
+[submit for review](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app/).
+
+The shared files also include `build-ios-app-store.sh` and `tests/test_ios_app_store.py`;
+keep these and `release-github.sh` / `tests/test_release_workflow.py` identical in both repositories.
+The iOS scheme and test command belong in each project's `release-settings.sh`.
