@@ -416,27 +416,7 @@ private struct ImportMediaLibrary: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker(s.text("Media type", "媒體類型"), selection: $tab) {
-                    Text(s.text("Library", "媒體庫")).tag(0)
-                    Text(s.text("Videos", "影片")).tag(1)
-                    Text(s.text("Photos", "照片")).tag(2)
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("importMediaTabs")
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(s.text("Close", "關閉"))
-                .accessibilityIdentifier("importMediaClose")
-            }
-            .padding(.leading, 12)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("importMediaHeader")
-            // The native picker has a screen-sized ideal height. Give it only the remaining
-            // viewport so it cannot push the header above the sheet's safe area.
+        NavigationStack {
             GeometryReader { viewport in
                 PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
                              matching: filter) { EmptyView() }
@@ -450,6 +430,26 @@ private struct ImportMediaLibrary: View {
                     }
             }
             .clipped()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // A native bar keeps these controls below the status bar and Dynamic Island.
+                ToolbarItem(placement: .principal) {
+                    Picker(s.text("Media type", "媒體類型"), selection: $tab) {
+                        Text(s.text("Library", "媒體庫")).tag(0)
+                        Text(s.text("Videos", "影片")).tag(1)
+                        Text(s.text("Photos", "照片")).tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("importMediaTabs")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(s.text("Close", "關閉"))
+                    .accessibilityIdentifier("importMediaClose")
+                }
+            }
         }
         .presentationDragIndicator(.hidden)
     }

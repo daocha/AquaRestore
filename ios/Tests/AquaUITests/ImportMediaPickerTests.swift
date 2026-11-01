@@ -41,7 +41,7 @@ final class ImportMediaPickerTests: XCTestCase {
 
     func testDismissAndReopenDefaultsToLibraryWithCompactHeader() {
         openPicker()
-        let header = app.otherElements["importMediaHeader"]
+        let header = app.navigationBars.firstMatch
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(header.frame.height, 0)
         XCTAssertLessThanOrEqual(header.frame.height, 56, "Keep the fixed import header to one control row.")
