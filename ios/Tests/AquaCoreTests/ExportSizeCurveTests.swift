@@ -1,5 +1,9 @@
 import XCTest
+#if canImport(AquaCore)
 @testable import AquaCore
+#else
+@testable import AquaRestore
+#endif
 
 final class ExportSizeCurveTests: XCTestCase {
     private let curve = sizeCurveQualities.map { 0.1 + Double($0) / 100 }

@@ -1,5 +1,9 @@
 import XCTest
+#if canImport(AquaCore)
 @testable import AquaCore
+#else
+@testable import AquaRestore
+#endif
 
 final class FullScreenLayoutTests: XCTestCase {
     func testMediaIsCentredAboveTheControls() {
