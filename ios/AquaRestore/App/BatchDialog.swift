@@ -3,15 +3,23 @@ import SwiftUI
 /// Settings for a batch of photos or videos, chosen once and resolved for each item, as on Android.
 struct BatchExportDialog: View {
     let draft: BatchDraft
+    let selection: ExportSelection
+    let onSelectionChange: (ExportSelection) -> Void
+    let onResetCustom: () -> Void
     let onDismiss: () -> Void
     let onStart: (ExportSelection) -> Void
 
     @Environment(\.palette) private var c
     @Environment(\.strings) private var s
     @Environment(\.screenHeight) private var screenHeight
-    @State private var selection = ExportSelection()
 
     private var videos: Bool { draft.videos }
+
+    private func change(_ edit: (inout ExportSelection) -> Void) {
+        var next = selection
+        edit(&next)
+        onSelectionChange(next)
+    }
 
     var body: some View {
         M3Dialog(title: videos ? s.text("Export \(draft.total) videos", "匯出 \(draft.total) 段影片")
@@ -28,7 +36,7 @@ struct BatchExportDialog: View {
                           : s.text("Each photo gets its own intelligent restoration automatically. Photos are processed one at a time.",
                                    "每張照片會自動套用個別的智慧還原設定，並逐張處理。"))
                     Choices(items: [(ExportMode.recommended, s.text("Recommended", "建議")), (.original, s.text("Original", "原始")), (.custom, s.text("Custom", "自訂"))],
-                            selected: selection.mode) { selection.mode = $0 }
+                            selected: selection.mode) { mode in change { $0.mode = mode } }
                     modeOptions
                     if draft.ready {
                         if !draft.sources.isEmpty { estimate }
@@ -67,7 +75,7 @@ struct BatchExportDialog: View {
                 MText(s.text("Keeps each video's dimensions, frames and codec (AVC or HEVC). Large or high-frame-rate video takes much longer and makes larger files.",
                              "保留每段影片的尺寸、影格與編碼格式（AVC 或 HEVC）。大尺寸或高幀率影片會花費更長時間，檔案也更大。"), size: 12)
             } else {
-                Choices(items: [(false, "JPEG"), (true, "PNG")], selected: selection.png) { selection.png = $0 }
+                Choices(items: [(false, "JPEG"), (true, "PNG")], selected: selection.png) { png in change { $0.png = png } }
                 MText(selection.png
                       ? s.text("Full source dimensions, saved as lossless PNG after color correction. Files are several times larger than JPEG. Metadata is not copied.",
                                "保留原始尺寸，調色後儲存為無損 PNG。檔案比 JPEG 大數倍，不複製中繼資料。")
@@ -77,27 +85,35 @@ struct BatchExportDialog: View {
         case .custom:
             HStack {
                 MText(s.text("Resolution · longest edge", "解析度 · 最長邊"), weight: .semibold)
-                Spacer()
-                M3TextButton(title: s.text("Reset to defaults", "恢復預設值")) { selection = ExportSelection(mode: .custom) }
-                    .disabled(selection == ExportSelection(mode: .custom))
+                if videos {
+                    Spacer()
+                    resetButton
+                }
             }
             Choices(items: [(0, s.text("Source", "原尺寸")), (3840, "3840"), (2560, "2560"), (1920, "1920"), (1280, "1280"), (960, "960"), (640, "640")],
-                    selected: selection.longEdge) { selection.longEdge = $0 }
+                    selected: selection.longEdge) { edge in change { $0.longEdge = edge } }
             if videos {
                 MText(s.text("Frame rate", "幀率"), weight: .semibold)
-                Choices(items: [(0, s.text("Original", "原始"))] + [24, 25, 30, 50, 60].map { ($0, "\($0) fps") }, selected: selection.fps) { selection.fps = $0 }
+                Choices(items: [(0, s.text("Original", "原始"))] + [24, 25, 30, 50, 60].map { ($0, "\($0) fps") }, selected: selection.fps) { fps in change { $0.fps = fps } }
                 MText(s.text("Never enlarges a video or adds frames: a video already smaller or slower keeps its own size and rate.",
                              "不會放大影片或插幀：已較小或幀率較低的影片保留原尺寸與幀率。"), size: 11)
             } else {
                 MText(s.text("Keeps each photo's aspect ratio; never enlarges smaller photos.", "保留每張照片的比例，不放大較小的照片。"), size: 12)
-                Choices(items: [(false, "JPEG"), (true, "PNG")], selected: selection.png) { selection.png = $0 }
+                Choices(items: [(false, "JPEG"), (true, "PNG")], selected: selection.png) { png in change { $0.png = png } }
+                resetButton
             }
             if videos || !selection.png {
                 MText(s.text("Quality", "畫質") + " · \(selection.quality)%", weight: .semibold)
-                M3Slider(value: Float(selection.quality), range: 10...100, onChange: { selection.quality = Int($0.rounded()) },
+                M3Slider(value: Float(selection.quality), range: 10...100, onChange: { value in change { $0.quality = Int(value.rounded()) } },
                          accessibility: s.text("Quality", "畫質"))
+                if !videos { MText(s.text("JPEG compression quality.", "JPEG 壓縮畫質。"), size: 11) }
             }
         }
+    }
+
+    private var resetButton: some View {
+        M3TextButton(title: s.text("Reset to defaults", "恢復預設值"), fontSize: 12, action: onResetCustom)
+            .disabled(selection == ExportSelection(mode: .custom))
     }
 
     private var preparing: some View {

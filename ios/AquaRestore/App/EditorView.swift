@@ -321,7 +321,10 @@ struct EditorView: View {
         }
         if settings { SettingsDialog(model: model) { settings = false } }
         if let draft = model.batchDraft {
-            BatchExportDialog(draft: draft, onDismiss: { model.discardBatch() }) { selection in
+            BatchExportDialog(draft: draft, selection: draft.videos ? model.videoExportSelection : model.photoExportSelection,
+                              onSelectionChange: { model.setExportSelection(video: draft.videos, $0) },
+                              onResetCustom: { model.resetCustomExport(video: draft.videos) },
+                              onDismiss: { model.discardBatch() }) { selection in
                 guard let prepared = model.takeBatch() else { return }
                 exports.startBatch(BatchRequest(sources: prepared.sources, failures: prepared.failures, selection: selection,
                                                 videos: prepared.videos, chinese: s.chinese, folders: prepared.folders))
@@ -337,11 +340,13 @@ struct EditorView: View {
             }
         }
         if showExport, let source = model.source {
-            ExportDialog(source: source, speed: model.speed, trim: model.trim, audio: model.audioMix(), onDismiss: { showExport = false }) { options in
+            ExportDialog(source: source, grade: model.grade, speed: model.speed, trim: model.trim, audio: model.audioMix(),
+                         selection: source.video ? model.videoExportSelection : model.photoExportSelection,
+                         onSelectionChange: { model.setExportSelection(video: source.video, $0) },
+                         onResetCustom: { model.resetCustomExport(video: source.video) },
+                         onDismiss: { showExport = false }) { options in
                 showExport = false
-                var chosen = options
-                chosen.speed = model.speed
-                exports.start(ExportRequest(source: source, grade: model.grade, options: chosen, chinese: s.chinese, audio: model.audioMix()))
+                exports.start(ExportRequest(source: source, grade: model.grade, options: options, chinese: s.chinese, audio: model.audioMix()))
             }
         }
     }

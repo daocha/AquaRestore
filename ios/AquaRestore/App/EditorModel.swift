@@ -19,6 +19,10 @@ final class EditorModel: ObservableObject {
     private let defaults = UserDefaults.standard
     @Published var language: String
     @Published var theme: String
+    /// What the export dialogs offer, kept per kind of media and across launches, as on Android. Single and batch
+    /// exports share them.
+    @Published private(set) var photoExportSelection = ExportSelection()
+    @Published private(set) var videoExportSelection = ExportSelection()
     @Published var source: SourceMedia?
     @Published var analysis: Analysis?
     @Published var grade = Grade.neutral
@@ -78,6 +82,8 @@ final class EditorModel: ObservableObject {
     init() {
         language = defaults.string(forKey: "language") ?? "system"
         theme = defaults.string(forKey: "theme") ?? "system"
+        photoExportSelection = readExportSelection(video: false)
+        videoExportSelection = readExportSelection(video: true)
         // Only the current source is kept: anything a previous run left behind is dropped.
         try? FileManager.default.removeItem(at: Self.importRoot)
         exportStatusObserver = Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
@@ -86,6 +92,33 @@ final class EditorModel: ObservableObject {
     }
 
     nonisolated static var importRoot: URL { FileManager.default.temporaryDirectory.appendingPathComponent("AquaRestoreImport", isDirectory: true) }
+
+    private func readExportSelection(video: Bool) -> ExportSelection {
+        let prefix = video ? "export_video_" : "export_photo_"
+        let mode = ExportMode(rawValue: defaults.string(forKey: prefix + "mode") ?? "") ?? .recommended
+        func integer(_ key: String, _ fallback: Int) -> Int { defaults.object(forKey: prefix + key) as? Int ?? fallback }
+        return ExportSelection(mode: mode, longEdge: integer("edge", 1920), fps: integer("fps", 0),
+                               quality: min(max(integer("quality", 90), 10), 100), png: defaults.bool(forKey: prefix + "png"))
+    }
+
+    func setExportSelection(video: Bool, _ selection: ExportSelection) {
+        let prefix = video ? "export_video_" : "export_photo_"
+        if video { videoExportSelection = selection } else { photoExportSelection = selection }
+        defaults.set(selection.mode.rawValue, forKey: prefix + "mode")
+        defaults.set(selection.longEdge, forKey: prefix + "edge")
+        defaults.set(selection.fps, forKey: prefix + "fps")
+        defaults.set(selection.quality, forKey: prefix + "quality")
+        defaults.set(selection.png, forKey: prefix + "png")
+    }
+
+    /// Forgets the saved Custom settings, so the dialog shows the defaults again.
+    func resetCustomExport(video: Bool) {
+        let prefix = video ? "export_video_" : "export_photo_"
+        for key in ["edge", "fps", "quality", "png"] { defaults.removeObject(forKey: prefix + key) }
+        let mode = (video ? videoExportSelection : photoExportSelection).mode
+        let reset = ExportSelection(mode: mode)
+        if video { videoExportSelection = reset } else { photoExportSelection = reset }
+    }
 
     func preference(_ key: String, _ value: String) {
         defaults.set(value, forKey: key)

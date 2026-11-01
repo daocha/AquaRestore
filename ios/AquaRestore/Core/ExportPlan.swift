@@ -59,6 +59,20 @@ enum ExportSizing {
 /// Shared by the export pipeline and its size preview. Decimal MB/GB match the UI.
 struct VideoExportPlan: Equatable { let bitrate: Int; let estimatedBytes: Int64? }
 
+/// The JPEG qualities a photo's samples are measured at. Size changes fastest near 100, so they are densest there.
+let sizeCurveQualities = [10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 88, 90, 92, 94, 95, 96, 97, 98, 99, 100]
+
+/// Bytes per pixel at `quality` from `measured` values at `sizeCurveQualities`, interpolated in log space.
+func interpolateBytesPerPixel(_ measured: [Double], _ quality: Int) -> Double {
+    let qualities = sizeCurveQualities
+    let q = min(max(quality, qualities[0]), qualities[qualities.count - 1])
+    let upper = qualities.firstIndex { $0 >= q } ?? qualities.count - 1
+    if qualities[upper] == q { return measured[upper] }
+    let q0 = qualities[upper - 1], q1 = qualities[upper]
+    let b0 = max(measured[upper - 1], 1e-6), b1 = max(measured[upper], 1e-6)
+    return exp(log(b0) + (log(b1) - log(b0)) * Double(q - q0) / Double(q1 - q0))
+}
+
 /// A rough encoded size from output pixels, format and JPEG quality. Image detail changes compression substantially.
 func photoEstimatedBytes(width: Int, height: Int, options: ExportOptions) -> Int64 {
     let (w, h) = ExportSizing.dimensions(width, height, options.original ? 0 : options.longEdge)
@@ -106,12 +120,14 @@ struct ExportSelection: Equatable {
         }
     }
 
-    /// Recommended follows each video's size and rate; a custom frame rate above the source keeps the source timing.
-    func videoOptions(width: Int, height: Int, fps sourceFps: Float, codec: String, hdr: Bool = false) -> ExportOptions {
+    /// Recommended follows each video's size and rate; a custom frame rate above the rate left after a speed change
+    /// (`outputFps`, the source rate by default) keeps the source timing.
+    func videoOptions(width: Int, height: Int, fps sourceFps: Float, outputFps: Float? = nil, codec: String, hdr: Bool = false) -> ExportOptions {
+        let outputFps = outputFps ?? sourceFps
         switch mode {
         case .recommended: return ExportRecommendation.video(width: width, height: height, fps: sourceFps, codec: codec, hdr: hdr)
         case .original: return ExportOptions(original: true, quality: ExportOptions.originalJpegQuality, png: png)
-        case .custom: return ExportOptions(original: false, longEdge: longEdge, fps: fps == 0 || Float(fps) <= sourceFps ? fps : 0,
+        case .custom: return ExportOptions(original: false, longEdge: longEdge, fps: fps == 0 || Float(fps) <= outputFps ? fps : 0,
                                            quality: quality, png: png)
         }
     }
