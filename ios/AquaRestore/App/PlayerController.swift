@@ -54,7 +54,7 @@ final class PlayerController: ObservableObject {
             // After the song window moves, replay from the trim start so the new section can be heard.
             model.audition.sink { [weak self] in
                 guard let self else { return }
-                self.seek(self.model.trim.lowerBound); self.play()
+                self.loopBack(self.model.trim.lowerBound, reason: "the song section moved")
             },
             Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
                 guard let self else { return }
@@ -68,6 +68,7 @@ final class PlayerController: ObservableObject {
 
     func load(_ media: SourceMedia) {
         unload()
+        loopingSince = nil
         FrameProbe.reset()
         requestsSeen = model.gradeState.requests
         lastRequestAt = Date()
@@ -167,7 +168,7 @@ final class PlayerController: ObservableObject {
             // The loop stays inside the trim range; ending the whole clip wraps to the trim start.
             NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: item).sink { [weak self] _ in
                 guard let self else { return }
-                self.seek(self.model.trim.lowerBound); self.play()
+                self.loopBack(self.model.trim.lowerBound, reason: "the clip ended")
             },
             player.publisher(for: \.timeControlStatus).dropFirst().sink { [weak self] status in
                 guard let self else { return }
@@ -199,6 +200,28 @@ final class PlayerController: ObservableObject {
         let target = max(limit, 0)
         playhead = target
         player.seek(to: CMTime(value: target, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    private var loopingSince: Date?
+
+    /// Back to the start of the loop and playing from there. Playing from the seek's completion, as at the start, rather
+    /// than while the seek is still going: that left an HDR clip's picture frozen in the iOS Simulator at the second loop.
+    private func loopBack(_ positionMs: Int64, reason: String) {
+        // A seek still going is left alone, but never for more than three seconds, in case its completion never arrives.
+        guard let player, let item, loopingSince.map({ Date().timeIntervalSince($0) > 3 }) ?? true else { return }
+        loopingSince = Date()
+        let limit = durationMs > 0 ? min(positionMs, durationMs - 1) : positionMs
+        let target = max(limit, 0)
+        NSLog("AquaRestore: looping back to \(target) ms because \(reason) (frame requests so far \(model.gradeState.requests))")
+        playhead = target
+        player.seek(to: CMTime(value: target, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.loopingSince = nil
+                guard self.item === item else { return }
+                self.play()
+            }
+        }
     }
 
     private func applyRate() {
@@ -247,9 +270,9 @@ final class PlayerController: ObservableObject {
         if position != playhead && position >= 0 { playhead = position }
         let range = model.trim
         // Loop inside the trim range; ending the whole clip alone would replay everything.
-        if !model.trimming && range.upperBound > range.lowerBound && item.status == .readyToPlay &&
-            (position < range.lowerBound - 50 || (player.rate != 0 && position >= range.upperBound)) {
-            seek(range.lowerBound)
+        if !model.trimming && range.upperBound > range.lowerBound && item.status == .readyToPlay {
+            if player.rate != 0 && position >= range.upperBound { loopBack(range.lowerBound, reason: "the trim end was reached") }
+            else if position < range.lowerBound - 50 { seek(range.lowerBound) }
         }
         watchForStall(player, item, position)
         syncMusic(position, range)
