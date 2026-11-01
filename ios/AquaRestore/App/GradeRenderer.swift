@@ -270,10 +270,19 @@ enum FrameProbe {
               let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
                                   shouldInterpolate: false, intent: .defaultIntent),
-              let folder = try? DevFiles.folder("FrameProbe"),
+              let folder = probeFolder(),
               let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(destination, image, nil)
-        if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: \(DevFiles.shown(folder.appendingPathComponent(name)))") }
+        if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: Documents/FrameProbe/\(name)") }
+    }
+
+    /// The app's Documents folder, which the Files app shows as On My iPhone › AquaRestore. This file is compiled on its
+    /// own by the native checks, so it does not use the app's other helpers.
+    private static func probeFolder() -> URL? {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let folder = documents.appendingPathComponent("FrameProbe", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
     }
 
     private static func describe(_ buffer: CVPixelBuffer) -> String {
