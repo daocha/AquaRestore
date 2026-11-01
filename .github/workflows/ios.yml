@@ -27,6 +27,14 @@ jobs:
       - name: Core tests (grading, recommendations, export sizing)
         run: swift test
         working-directory: ios
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        if: env.HAS_CORE == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Native rendering checks
+        if: env.HAS_CORE == 'true'
+        run: core/tools/parity/test.sh --allow-no-gpu
       - name: Generate the Xcode project
         run: brew install xcodegen && xcodegen generate
         working-directory: ios

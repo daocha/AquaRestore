@@ -21,38 +21,6 @@ struct SourceMedia: Equatable {
     var hdrName: String { hdr == .hlg ? "HLG" : "HDR10 / PQ" }
 }
 
-/// Decoded pixels as 0xAARRGGBB, the layout `ColorGrade` and `AutoGrade` work on.
-final class PixelImage {
-    let width: Int
-    let height: Int
-    let pixels: [UInt32]
-    init(width: Int, height: Int, pixels: [UInt32]) { self.width = width; self.height = height; self.pixels = pixels }
-
-    private static let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-    private static let space = CGColorSpace(name: CGColorSpace.sRGB)!
-
-    convenience init?(_ image: CGImage) {
-        let w = image.width, h = image.height
-        var pixels = [UInt32](repeating: 0, count: w * h)
-        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
-            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                          space: PixelImage.space, bitmapInfo: PixelImage.bitmapInfo) else { return false }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-            return true
-        }
-        guard drawn else { return nil }
-        self.init(width: w, height: h, pixels: pixels)
-    }
-
-    var cgImage: CGImage? {
-        let data = pixels.withUnsafeBufferPointer { Data(buffer: $0) } as CFData
-        guard let provider = CGDataProvider(data: data) else { return nil }
-        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-                       space: PixelImage.space, bitmapInfo: CGBitmapInfo(rawValue: PixelImage.bitmapInfo), provider: provider,
-                       decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-    }
-}
-
 enum MediaIO {
     static func isVideo(_ url: URL) -> Bool {
         (UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .movie)) ?? false

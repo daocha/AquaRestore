@@ -9,7 +9,6 @@ enum GradeShader {
         float4 a; float4 b; float4 black; float4 white;
         float levels; float strength; int mode; float coolProtection;
         float4 m0; float4 m1; float2 displaySize; float2 naturalSize;
-        int taps; int3 pad2;
         float clarity; float radius; float2 pad3;
     };
 
@@ -38,12 +37,24 @@ enum GradeShader {
         return pow((PQ_C1 + PQ_C2 * p) / (1.0 + PQ_C3 * p), float3(PQ_M2));
     }
 
+    // Renderer input conversion entry point, shared by the basic and private core APIs.
+    kernel void linearize(texture2d<float, access::read> input [[texture(0)]],
+                          texture2d<float, access::write> output [[texture(1)]],
+                          constant Params& params [[buffer(0)]], uint2 point [[thread_position_in_grid]]) {
+        if (point.x >= output.get_width() || point.y >= output.get_height()) return;
+        float4 value = input.read(point);
+        value.rgb = clamp(value.rgb, 0.0, 1.0);
+        if (params.mode == 1) { value.rgb = decodeHlg(value.rgb); }
+        else { value.rgb = pqToLinear(value.rgb); }
+        output.write(value, point);
+    }
+
     // Luma of the ungraded source in the grading encoding, as in `Clarity.detail` on the CPU.
     // `d` is in display coordinates; `step` is one output pixel.
     float lumaAt(texture2d<float, access::sample> src, sampler smp, constant Params& P, float2 d) {
         float2 s = float2(P.m0.x * d.x + P.m0.y * d.y + P.m0.z, P.m1.x * d.x + P.m1.y * d.y + P.m1.z);
         float3 t = src.sample(smp, s / P.naturalSize).rgb;
-        if (P.mode == 2) { t = encodeHlg(pqToLinear(t)); }
+        if (P.mode != 0) { t = encodeHlg(t); }
         return dot(clamp(t, 0.0, P.mode != 0 ? 1.5 : 1.0),
                    P.mode != 0 ? float3(0.2627, 0.6780, 0.0593) : float3(0.2126, 0.7152, 0.0722));
     }
@@ -54,25 +65,19 @@ enum GradeShader {
         uint w = dst.get_width(), h = dst.get_height();
         if (gid.x >= w || gid.y >= h) return;
         constexpr sampler smp(filter::linear, address::clamp_to_edge, coord::normalized);
-        float4 tex = float4(0.0);
-        int n = max(P.taps, 1);
-        for (int j = 0; j < n; j++) {
-            for (int i = 0; i < n; i++) {
-                float2 sub = (float2(i, j) + 0.5) / float(n);
-                float2 d = (float2(gid) + sub) / float2(w, h) * P.displaySize;
-                float2 s = float2(P.m0.x * d.x + P.m0.y * d.y + P.m0.z, P.m1.x * d.x + P.m1.y * d.y + P.m1.z);
-                tex += src.sample(smp, s / P.naturalSize);
-            }
+        float2 d = (float2(gid) + 0.5) / float2(w, h) * P.displaySize;
+        float2 s = float2(P.m0.x * d.x + P.m0.y * d.y + P.m0.z, P.m1.x * d.x + P.m1.y * d.y + P.m1.z);
+        float4 tex = src.sample(smp, s / P.naturalSize);
+        if (P.strength <= 0.0) {
+            if (P.mode == 1) { tex.rgb = encodeHlg(tex.rgb); }
+            else if (P.mode == 2) { tex.rgb = linearToPq(tex.rgb); }
+            dst.write(tex, gid); return;
         }
-        tex /= float(n * n);
-        if (P.strength <= 0.0) { dst.write(tex, gid); return; }
 
         bool hdr = P.mode != 0;
         float top = hdr ? 1.5 : 1.0;
-        float3 lin = float3(0.0);
-        float3 original = tex.rgb;
-        if (P.mode == 1) { lin = decodeHlg(tex.rgb); }
-        else if (P.mode == 2) { lin = pqToLinear(tex.rgb); original = encodeHlg(lin); }
+        float3 lin = tex.rgb;
+        float3 original = hdr ? encodeHlg(lin) : lin;
         original = clamp(original, 0.0, top);
         float3 c = hdr ? encodeHlg(lin) : original;
         if (!hdr) { c = mix(c, clamp((c - P.black.rgb) / (P.white.rgb - P.black.rgb), 0.0, 1.0), P.levels); }
