@@ -26,7 +26,12 @@ final class PixelImageTests: XCTestCase {
     }
 
     func testOpaquePixelsRoundTripWithoutChanges() throws {
-        let pixels: [UInt32] = (0..<256).map { 0xff000000 | UInt32($0 << 16 | (255-$0) << 8 | $0/2) }
+        let pixels: [UInt32] = (0..<256).map { i in
+            let red = UInt32(i) << 16
+            let green = UInt32(255 - i) << 8
+            let blue = UInt32(i / 2)
+            return 0xff000000 | red | green | blue
+        }
         let decoded = try XCTUnwrap(PixelImage(source(pixels)))
         XCTAssertEqual(decoded.pixels, pixels)
         let encoded = try XCTUnwrap(decoded.cgImage)
