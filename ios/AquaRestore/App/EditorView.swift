@@ -432,7 +432,7 @@ private struct ImportMediaLibrary: View {
             PhotosPicker(selection: $pickedItems, maxSelectionCount: 1, selectionBehavior: .continuous,
                          matching: filter) { EmptyView() }
                 .photosPickerStyle(.inline)
-                .photosPickerAccessoryVisibility(.hidden, edges: [.top, .bottom])
+                .photosPickerAccessoryVisibility(.hidden, edges: .bottom)
                 .photosPickerDisabledCapabilities([.search, .selectionActions])
                 .id(tab)
                 .onChange(of: pickedItems) { items in
