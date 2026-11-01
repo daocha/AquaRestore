@@ -197,6 +197,19 @@ final class MetalGrader {
 enum FrameProbe {
     private static let lock = NSLock()
     private static var logged = 0
+    private static var requested = 0
+
+    /// A new video starts counting again, so every clip gets its own first frames in the log.
+    static func reset() { lock.lock(); logged = 0; requested = 0; lock.unlock() }
+
+    static var requestCount: Int { lock.lock(); defer { lock.unlock() }; return requested }
+
+    static func request(_ request: AVAsynchronousVideoCompositionRequest) {
+        lock.lock(); requested += 1; let mine = requested; lock.unlock()
+        if mine <= 3 {
+            NSLog("AquaRestore: frame request \(mine) at \(request.compositionTime.seconds)s sources=\(request.sourceTrackIDs) output \(request.renderContext.size)")
+        }
+    }
 
     static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode) {
         lock.lock(); logged += 1; let mine = logged; lock.unlock()
@@ -268,6 +281,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         lock.lock(); let mine = generation; lock.unlock()
+        FrameProbe.request(request)
         queue.async {
             self.lock.lock(); let current = self.generation; self.lock.unlock()
             guard current == mine else { request.finishCancelledRequest(); return }

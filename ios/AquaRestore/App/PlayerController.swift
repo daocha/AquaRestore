@@ -68,6 +68,7 @@ final class PlayerController: ObservableObject {
 
     func load(_ media: SourceMedia) {
         unload()
+        FrameProbe.reset()
         loadTask = Task { [weak self] in
             do {
                 let asset = AVURLAsset(url: media.url)
@@ -106,6 +107,12 @@ final class PlayerController: ObservableObject {
                 self.seek(self.model.playbackPositionMs)
                 if self.model.playbackWanted && !self.exporting && self.appActive { self.play() }
                 self.startTimer()
+                // A black preview with sound leaves no error, so say what the player is doing shortly after it starts.
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard let self, let player = self.player, self.item === item else { return }
+                    NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
+                }
             } catch is CancellationError {
             } catch {
                 self?.model.error = "playbackFailed"
