@@ -19,6 +19,11 @@ final class GradeState {
         get { lock.lock(); defer { lock.unlock() }; return _compare }
         set { lock.lock(); _compare = newValue; lock.unlock() }
     }
+
+    /// How many frames the compositor has been asked for, so the player can notice that they have stopped coming.
+    private var _requests = 0
+    var requests: Int { lock.lock(); defer { lock.unlock() }; return _requests }
+    func noteRequest() { lock.lock(); _requests += 1; lock.unlock() }
 }
 
 /// How the source's transfer curve is read by the shader.
@@ -372,6 +377,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
+            instruction.state.noteRequest()
             guard let output = request.renderContext.newPixelBuffer() else {
                 GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
                 request.finish(with: GradeError.textureFailed)

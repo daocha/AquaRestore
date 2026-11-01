@@ -69,6 +69,8 @@ final class PlayerController: ObservableObject {
     func load(_ media: SourceMedia) {
         unload()
         FrameProbe.reset()
+        requestsSeen = model.gradeState.requests
+        lastRequestAt = Date()
         loadTask = Task { [weak self] in
             do {
                 let asset = AVURLAsset(url: media.url)
@@ -131,23 +133,11 @@ final class PlayerController: ObservableObject {
         }
     }
 
-    /// Playing from the start can leave the video pipeline waiting for ever: with an HDR clip in the iOS Simulator the audio
-    /// plays and the compositor is never asked for a frame, until the playhead is moved to another spot. So if no frame has
-    /// been asked for after a second, jump a little ahead and keep playing, as a tap on the trim bar does. A black preview
-    /// with sound leaves no error, so the log says what the player is doing.
+    /// A black preview with sound leaves no error, so say what the player is doing shortly after it starts.
     private func watchStart(_ item: AVPlayerItem, _ media: SourceMedia) async {
-        for attempt in 1...2 {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard self.item === item else { return }
-            if FrameProbe.requestCount > 0 { break }
-            let ahead = min(playhead + 500 * Int64(attempt), max(durationMs - 1, 0))
-            NSLog("AquaRestore: no frames requested after \(attempt) s; jumping to \(ahead) ms and playing to start the video")
-            seek(ahead)
-            if model.playbackWanted && !exporting && appActive { play() }
-        }
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
         guard let player, self.item === item else { return }
-        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
+        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(model.gradeState.requests) error=\(String(describing: item.error))")
     }
 
     func unload() {
@@ -261,7 +251,29 @@ final class PlayerController: ObservableObject {
             (position < range.lowerBound - 50 || (player.rate != 0 && position >= range.upperBound)) {
             seek(range.lowerBound)
         }
+        watchForStall(player, item, position)
         syncMusic(position, range)
+    }
+
+    private var requestsSeen = 0
+    private var lastRequestAt = Date()
+
+    /// The clock runs but the compositor is no longer asked for frames, so the picture freezes while the sound goes on.
+    /// With an HDR clip in the iOS Simulator this happens when playback starts from the beginning, at the start and again
+    /// at each loop; moving the playhead a little ahead and playing starts it again, as a tap on the trim bar does.
+    private func watchForStall(_ player: AVPlayer, _ item: AVPlayerItem, _ position: Int64) {
+        let count = model.gradeState.requests
+        guard player.rate != 0, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
+            requestsSeen = count; lastRequestAt = Date(); return
+        }
+        if count != requestsSeen { requestsSeen = count; lastRequestAt = Date(); return }
+        guard Date().timeIntervalSince(lastRequestAt) > 1.2 else { return }
+        lastRequestAt = Date()
+        let range = model.trim
+        let ahead = min(position + 500, max(range.upperBound - 1, range.lowerBound))
+        NSLog("AquaRestore: video stalled at \(position) ms (no frame requested for 1.2 s while playing); jumping to \(ahead) ms and playing")
+        seek(ahead)
+        play()
     }
 
     /// While paused, a changed grade is shown by re-rendering the current frame.
