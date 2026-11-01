@@ -258,6 +258,14 @@ class GradeCompositor: NSObject, AVVideoCompositing {
         lock.lock(); generation += 1; lock.unlock()
     }
 
+    private static func fillBlack(_ buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        if let base = CVPixelBufferGetBaseAddress(buffer) {
+            memset(base, 0, CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+        }
+    }
+
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         lock.lock(); let mine = generation; lock.unlock()
         queue.async {
@@ -268,14 +276,16 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
-            guard let source = request.sourceFrame(byTrackID: instruction.trackID) else {
-                GradeLog.failure("no source frame for track \(instruction.trackID); sources \(request.sourceTrackIDs)")
-                request.finish(with: GradeError.textureFailed)
-                return
-            }
             guard let output = request.renderContext.newPixelBuffer() else {
                 GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
                 request.finish(with: GradeError.textureFailed)
+                return
+            }
+            // Before the video's first frame (action cameras often start a few frames after zero) AVFoundation supplies no
+            // source frame. Answer with black: failing the request would stop the player asking for video at all.
+            guard let source = request.sourceFrame(byTrackID: instruction.trackID) else {
+                Self.fillBlack(output)
+                request.finish(withComposedVideoFrame: output)
                 return
             }
             guard let grader = MetalGrader.shared else {
