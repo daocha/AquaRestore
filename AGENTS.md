@@ -13,6 +13,17 @@ AquaRestore is public. Its tuned color grading is not: it lives in the private
   (a new `Grade` field, a new shader uniform), update `core-stub/` to match, and keep every uniform in
   use in the stub shaders.
 
+## Android and iOS parity
+
+- By default, apply requested changes to both Android and iOS. Limit a change to one platform only
+  when the user explicitly requests it or the feature is intentionally available on only that platform.
+- For each change, compare the corresponding Android and iOS behavior, implementations and tests.
+  Check for mismatches in the affected features, including existing discrepancies, and keep shared
+  behavior consistent across both platforms.
+- Tell the user about any discrepancy found: which platform behaves differently, its user-visible
+  impact, and whether it was fixed, remains unresolved or is intentional. If parity could not be
+  verified, say what remains unchecked and why.
+
 ## Changing the core
 
 1. In `core/`: `git switch main && git pull`, make the change, run the tests, commit, and push to
