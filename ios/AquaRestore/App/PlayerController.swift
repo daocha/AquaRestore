@@ -104,32 +104,24 @@ final class PlayerController: ObservableObject {
                 self.player = player
                 self.setOriginalVolume(self.model.originalVolume)
                 self.applyRate()
-                self.seek(self.model.playbackPositionMs)
-                if self.model.playbackWanted && !self.exporting && self.appActive { self.play() }
                 self.startTimer()
-                // Playing from the start can leave the video pipeline waiting for ever: with an HDR clip in the iOS Simulator the
-                // audio plays and the compositor is never asked for a frame, until the playhead is moved to another spot.
-                // So if no frame has been asked for after a second, jump a little ahead and keep playing, as a tap on the trim
-                // bar does. A black preview with sound leaves no error, so the log says what the player is doing.
-                Task { [weak self] in
-                    for attempt in 1...2 {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                // The watchdog runs on its own, so a seek that never completes cannot switch it off.
+                Task { [weak self] in await self?.watchStart(item, media) }
+                // Start only once the item is ready, from the seek's completion, rather than seeking and playing while it is
+                // still preparing: with an HDR clip in the iOS Simulator that left the video waiting for ever for its first
+                // frame. Readiness is polled, with a limit, so that it can never stop playback from starting.
+                var polls = 0
+                while item.status == .unknown && polls < 200 && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    polls += 1
+                }
+                guard !Task.isCancelled, self.item === item, item.status != .failed else { return }
+                let start = min(max(self.model.playbackPositionMs, 0), max(self.durationMs - 1, 0))
+                self.playhead = start
+                player.seek(to: CMTime(value: start, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor [weak self] in
                         guard let self, self.item === item else { return }
-                        if FrameProbe.requestCount > 0 { break }
-                        let ahead = min(self.playhead + 500 * Int64(attempt), max(self.durationMs - 1, 0))
-                        NSLog("AquaRestore: no frames requested after \(attempt) s; jumping to \(ahead) ms and playing to start the video")
-                        self.seek(ahead)
                         if self.model.playbackWanted && !self.exporting && self.appActive { self.play() }
-                    }
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    guard let self, let player = self.player, self.item === item else { return }
-                    NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
-                    // Whether frames keep arriving as the clock runs: a picture that stands still while the time moves
-                    // shows up as a request count that stops growing.
-                    for _ in 0..<8 {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        guard let player = self.player, self.item === item else { return }
-                        NSLog("AquaRestore: playback progress time=\(String(format: "%.2f", player.currentTime().seconds)) s frame requests=\(FrameProbe.requestCount) rate=\(player.rate)")
                     }
                 }
             } catch is CancellationError {
@@ -137,6 +129,25 @@ final class PlayerController: ObservableObject {
                 self?.model.error = "playbackFailed"
             }
         }
+    }
+
+    /// Playing from the start can leave the video pipeline waiting for ever: with an HDR clip in the iOS Simulator the audio
+    /// plays and the compositor is never asked for a frame, until the playhead is moved to another spot. So if no frame has
+    /// been asked for after a second, jump a little ahead and keep playing, as a tap on the trim bar does. A black preview
+    /// with sound leaves no error, so the log says what the player is doing.
+    private func watchStart(_ item: AVPlayerItem, _ media: SourceMedia) async {
+        for attempt in 1...2 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard self.item === item else { return }
+            if FrameProbe.requestCount > 0 { break }
+            let ahead = min(playhead + 500 * Int64(attempt), max(durationMs - 1, 0))
+            NSLog("AquaRestore: no frames requested after \(attempt) s; jumping to \(ahead) ms and playing to start the video")
+            seek(ahead)
+            if model.playbackWanted && !exporting && appActive { play() }
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        guard let player, self.item === item else { return }
+        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(FrameProbe.requestCount) error=\(String(describing: item.error))")
     }
 
     func unload() {
