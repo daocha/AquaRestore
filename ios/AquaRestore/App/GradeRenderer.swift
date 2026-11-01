@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreVideo
+import ImageIO
 import Metal
 
 /// Thread-safe grade snapshot shared with the render thread. Slider changes only replace the value;
@@ -215,6 +216,31 @@ enum FrameProbe {
         lock.lock(); logged += 1; let mine = logged; lock.unlock()
         guard mine <= 3 else { return }
         NSLog("AquaRestore: frame probe \(mine): decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
+        // The first frame of each video is saved as a picture, so a garbled preview can be looked at: the decoded frame
+        // and the graded one show which of the two went wrong.
+        if mine == 1 { save(source, as: "decoded.png"); save(output, as: "graded.png") }
+    }
+
+    private static func save(_ buffer: CVPixelBuffer, as name: String) {
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
+        guard let full = CGContext(data: base, width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info)?.makeImage() else { return }
+        // Small enough to open and share quickly.
+        let scale = min(1, 540 / CGFloat(max(width, height)))
+        let w = max(1, Int(CGFloat(width) * scale)), h = max(1, Int(CGFloat(height) * scale))
+        guard let small = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { return }
+        small.interpolationQuality = .medium
+        small.draw(full, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let image = small.makeImage(), let folder = try? DevFiles.folder("FrameProbe"),
+              let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: \(DevFiles.shown(folder.appendingPathComponent(name)))") }
     }
 
     private static func describe(_ buffer: CVPixelBuffer) -> String {
