@@ -158,10 +158,12 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
             if (access.requestOnOpen) permission.launch(permissions)
         }
     }
-    val items by produceState<List<LibraryItem>?>(null, access.allowed, libraryRevision, permissions) {
+    val libraryItems = produceState<List<LibraryItem>?>(null, access.allowed, libraryRevision, permissions) {
         value = if (access.allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
             else emptyList()
     }
+    // Capture one value for derived data and the separately composed dialog.
+    val items = libraryItems.value
     // Opens where it was last left, separately for media and music.
     val prefs = remember { context.getSharedPreferences("preferences", 0) }
     val key = if (audioOnly) "library_music_" else if (photosOnly) "library_photos_" else if (videosOnly) "library_videos_" else "library_media_"
@@ -192,8 +194,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     val photoGrid = key(section, selectedAlbum, sort) { rememberLazyGridState() }
     val photoKeys = remember(shown) { shown.map { it.uri.toString() } }
     // A remembered folder or album that is gone falls back to Recent.
-    LaunchedEffect(albums) {
-        if (items != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
+    LaunchedEffect(albums, filteredItems != null) {
+        if (filteredItems != null && selectedAlbum != null && albums.none { it.id == selectedAlbum }) {
             section = "recent"
             selectedAlbum = null
         }
@@ -276,8 +278,8 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                         Spacer(Modifier.height(16.dp))
                         Button(onClick = { permission.launch(permissions) }) { Text(s.text("Allow access", "允許存取")) }
                     }
-                    items == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    filteredItems!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    filteredItems == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    filteredItems.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
                             else if (photosOnly || mediaTab == "photos") s.text("No photos found", "找不到照片")
                             else if (videosOnly || mediaTab == "videos") s.text("No videos found", "找不到影片")
