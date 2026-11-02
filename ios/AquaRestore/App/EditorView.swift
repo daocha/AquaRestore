@@ -109,8 +109,8 @@ struct EditorView: View {
 
     /// The batch's own reminder: iOS pauses the export whenever AquaRestore is not on screen.
     private var keepOpenText: String {
-        s.text("Keep AquaRestore open and the screen on until the batch finishes. Leaving the app pauses it; it continues when you return.",
-               "批次完成前請保持 AquaRestore 開啟並維持螢幕亮著。離開 App 會暫停批次，返回後才會繼續。")
+        s.text("Keep AquaRestore open for uninterrupted exporting. Leaving the app pauses the batch; the current item restarts when you return. Completed items are kept.",
+               "請保持 AquaRestore 開啟以連續匯出。離開 App 會暫停批次，返回後會重新匯出目前項目。已完成的項目會保留。")
     }
 
     private var dialogKey: String {
@@ -197,8 +197,8 @@ struct EditorView: View {
                 if export.batch != nil {
                     MText(keepOpenText, size: 12, weight: .semibold, color: c.error)
                 } else {
-                    MText(s.text("Keep AquaRestore open until the export finishes. It pauses while the app is in the background.",
-                                 "匯出完成前請保持 AquaRestore 開啟；App 在背景時匯出會暫停。"), size: 12)
+                    MText(s.text("Keep AquaRestore open until the export finishes. If interrupted, it restarts automatically when you return.",
+                                 "匯出完成前請保持 AquaRestore 開啟。如有中斷，返回後會自動重新匯出。"), size: 12)
                 }
                 M3TextButton(title: s.text("Cancel export", "取消匯出")) { exports.cancel() }
             }
