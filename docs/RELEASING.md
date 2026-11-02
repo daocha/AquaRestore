@@ -162,6 +162,8 @@ Existing local or remote tags are never overwritten. Releases go to the GitHub r
 
 `--dry-run` still really builds, signs and verifies the APK, but does not commit, tag or push, and never calls GitHub. If a new version was given, the version file changes stay in the working tree for review.
 
+Before editing version metadata or building, `release-github.sh` checks that the output paths for the requested version and build number are unused. This also applies to dry runs. It checks the APK and checksums, the bundle and mapping with `--play`, and the archive and export directory with `--app-store`; publishing also checks the generated notes path unless `--notes-file` is supplied. Move conflicting outputs aside before retrying. Other versions and outputs for unselected platforms may remain in `dist/`. To retry only an Apple upload, use `build-ios-app-store.sh --upload-archive PATH` with the existing archive.
+
 The debug build uses its own package name `com.aquarestore.app.debug` and the app name "AquaRestore Dev", so it installs next to the release build without replacing it. Debug builds installed before this change still use `com.aquarestore.app` and the debug key: uninstall them, or run `scripts/rotate-signing-key.sh` once so the release build updates them in place and keeps their settings. Later releases must keep using the same signing key to update in place.
 
 ## 6. Interrupted releases
