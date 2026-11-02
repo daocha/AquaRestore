@@ -2,15 +2,19 @@ import Foundation
 
 /// Tracks interruptions even when the app returns before an asynchronous operation reports its error.
 enum AppActivity {
+    static let didBecomeInactive = Notification.Name("AquaRestoreDidBecomeInactive")
     private static let lock = NSLock()
     private static var _active = true
     private static var _generation = 0
     static var active: Bool { lock.lock(); defer { lock.unlock() }; return _active }
     static var generation: Int { lock.lock(); defer { lock.unlock() }; return _generation }
     static func set(_ value: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        if _active && !value { _generation += 1 }
+        lock.lock()
+        let interrupted = _active && !value
+        if interrupted { _generation += 1 }
         _active = value
+        lock.unlock()
+        if interrupted { NotificationCenter.default.post(name: didBecomeInactive, object: nil) }
     }
 
     private static var observers: [NSObjectProtocol] = []
@@ -25,6 +29,33 @@ enum AppActivity {
 }
 
 struct ExportInterrupted: Error {}
+
+/// Interruption can finish the attempt without waiting for AVFoundation's sample queues to drain.
+final class ExportCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<Void, Error>?
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    func resolve(_ result: Result<Void, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            let result = self.result
+            if result == nil { self.continuation = continuation }
+            lock.unlock()
+            if let result { continuation.resume(with: result) }
+        }
+    }
+}
 
 /// Pause callbacks update the UI directly when the caller is a batch export.
 @MainActor

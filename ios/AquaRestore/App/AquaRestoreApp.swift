@@ -3,8 +3,13 @@ import SwiftUI
 @main
 struct AquaRestoreApp: App {
     @StateObject private var model = EditorModel()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
-        WindowGroup { RootView(model: model) }
+        WindowGroup {
+            RootView(model: model)
+                .onAppear { Exports.shared.activityChanged(scenePhase == .active) }
+                .onChange(of: scenePhase) { phase in Exports.shared.activityChanged(phase == .active) }
+        }
     }
 }
 

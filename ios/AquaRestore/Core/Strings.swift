@@ -17,6 +17,7 @@ struct Strings {
         "cancelled": ("Export cancelled", "已取消匯出"),
         "preparing": ("Getting your media from Photos…", "正在從相簿取得素材…"),
         "paused": ("Paused · return to AquaRestore to continue", "已暫停 · 返回 AquaRestore 即可繼續"),
+        "restarting": ("Restarting interrupted export…", "正在重新開始中斷的匯出…"),
         "batchFinished": ("Batch export finished", "批次匯出已完成"),
         "photoUnreadable": ("Could not read this photo. It may have been deleted, or saved in an unsupported format.", "無法讀取此照片，可能已被刪除，或為不支援的格式。"),
         "videoUnreadable": ("Could not read this video. It may have been deleted, or saved in an unsupported format.", "無法讀取此影片，可能已被刪除，或為不支援的格式。"),

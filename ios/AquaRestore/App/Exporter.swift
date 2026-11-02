@@ -52,11 +52,27 @@ final class FrameCounter {
     func add() -> Bool { lock.lock(); defer { lock.unlock() }; value += 1; return value == 1 }
 }
 
+/// Each attempt owns a different path while an interrupted writer is still shutting down.
+private final class ExportFile {
+    let url: URL
+    init(extension ext: String) {
+        url = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).\(ext)")
+    }
+    deinit { try? FileManager.default.removeItem(at: url) }
+}
+
 @MainActor
 final class Exports: ObservableObject {
     static let shared = Exports()
     @Published var status = ExportStatus()
     private var task: Task<Void, Never>?
+
+    func activityChanged(_ active: Bool) {
+        AppActivity.set(active)
+        guard status.busy, status.stage != "saving" else { return }
+        if !active { status.stage = "paused" }
+        else if status.stage == "paused" { status.stage = "restarting" }
+    }
 
     func start(_ request: ExportRequest) {
         if status.busy { return }
@@ -69,7 +85,8 @@ final class Exports: ObservableObject {
                 try await Exporter.run(request) { progress, stage in
                     DispatchQueue.main.async { [weak self] in
                         guard let self, self.status.busy else { return }
-                        self.status = ExportStatus(busy: true, progress: progress, stage: stage)
+                        self.status = ExportStatus(busy: true, progress: progress,
+                            stage: stage == "paused" && AppActivity.active ? "restarting" : stage)
                     }
                 }
                 terminal = ExportStatus(progress: 100, stage: "saved", saved: true)
@@ -94,7 +111,8 @@ final class Exports: ObservableObject {
     private func publish(_ progress: Int?, _ stage: String) {
         guard status.busy, let batch else { return }
         let overall = progress.map { min((batch.completed * 100 + $0) / max(batch.total, 1), 100) }
-        status = ExportStatus(busy: true, progress: overall, stage: stage, batch: batch)
+        status = ExportStatus(busy: true, progress: overall,
+            stage: stage == "paused" && AppActivity.active ? "restarting" : stage, batch: batch)
     }
 
     func startBatch(_ request: BatchRequest) {
@@ -116,7 +134,7 @@ final class Exports: ObservableObject {
                     self.publish(0, "analyzing")
                     do {
                         if source.video != request.videos { throw MediaProblem(request.videos ? "batchVideosOnly" : "batchPhotosOnly") }
-                        let grade = try await ForegroundExport.run(waiting: { self.publish(nil, "paused") }) {
+                        let grade = try await ForegroundExport.run(waiting: { self.publish(nil, AppActivity.active ? "restarting" : "paused") }) {
                             self.publish(0, "analyzing")
                             return try await MediaIO.analyze(source).grade
                         }
@@ -196,22 +214,22 @@ enum Exporter {
         let source = request.source
         let lossless = o.png
         let ext = source.video ? "mp4" : (lossless ? "png" : "jpg")
-        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).\(ext)")
-        defer { try? FileManager.default.removeItem(at: temp) }
-        try await ForegroundExport.run(waiting: { update(nil, "paused") }) {
+        let file = try await ForegroundExport.run(waiting: { update(nil, AppActivity.active ? "restarting" : "paused") }) {
+            let file = ExportFile(extension: ext)
             update(0, "exporting")
             if source.video {
-                try await exportVideo(request, to: temp, update: update)
+                try await exportVideo(request, to: file.url, update: update)
             } else {
-                try await exportPhoto(request, to: temp, lossless: lossless, update: update)
+                try await exportPhoto(request, to: file.url, lossless: lossless, update: update)
             }
+            return file
         }
         try Task.checkCancellation()
         update(90, "saving")
         // Once publication starts, let the short transaction finish and report success, so cancelling at 99%
         // cannot leave a saved file while the UI says "cancelled".
         let name = exportFileName(sourceName: source.name, extension: ext)
-        try await Task.detached { try await PhotoSaver.save(temp, video: source.video, name: name) }.value
+        try await Task.detached { try await PhotoSaver.save(file.url, video: source.video, name: name) }.value
     }
 
     // MARK: Photo
@@ -393,13 +411,16 @@ enum Exporter {
         }
 
         let interrupted = CancelFlag()
+        let completion = ExportCompletion()
+        let cleanup = DispatchQueue(label: "AquaRestore.export.cleanup.\(UUID().uuidString)")
         let observer = NotificationCenter.default.addObserver(
-            forName: Notification.Name("UIApplicationWillResignActiveNotification"), object: nil, queue: nil
+            forName: AppActivity.didBecomeInactive, object: nil, queue: nil
         ) { _ in
             interrupted.set()
             update(nil, "paused")
-            // Stop composition read-ahead too; merely blocking the sample pumps leaves GPU work running.
-            reader.cancelReading()
+            // Cancellation may wait on a frame; do not block the lifecycle callback or the retry on it.
+            completion.resolve(.failure(ExportInterrupted()))
+            cleanup.async { reader.cancelReading(); writer.cancelWriting() }
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         guard AppActivity.active, generation == AppActivity.generation, !interrupted.isSet else { throw ExportInterrupted() }
@@ -460,33 +481,33 @@ enum Exporter {
         watch(0)
 
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                group.notify(queue: .global()) {
-                    finished.set()
-                    NSLog("AquaRestore: video export read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
-                    if flag.isSet {
-                        reader.cancelReading(); writer.cancelWriting()
-                        continuation.resume(throwing: CancellationError())
-                    } else if interrupted.isSet || generation != AppActivity.generation {
-                        reader.cancelReading(); writer.cancelWriting()
-                        continuation.resume(throwing: ExportInterrupted())
-                    } else if failed.isSet || reader.status == .failed {
-                        let error = reader.error ?? writer.error ?? MediaProblem("exportFailed")
-                        reader.cancelReading(); writer.cancelWriting()
-                        continuation.resume(throwing: error)
-                    } else {
-                        writer.finishWriting {
-                            let size = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int) ?? nil
-                            NSLog("AquaRestore: video export writer status \(writer.status.rawValue), file \(size.map(String.init) ?? "missing") bytes, error \(String(describing: writer.error))")
-                            if writer.status == .completed { continuation.resume() }
-                            else { continuation.resume(throwing: writer.error ?? MediaProblem("exportFailed")) }
-                        }
+            group.notify(queue: cleanup) {
+                finished.set()
+                NSLog("AquaRestore: video export read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
+                if flag.isSet {
+                    reader.cancelReading(); writer.cancelWriting()
+                    completion.resolve(.failure(CancellationError()))
+                } else if interrupted.isSet || generation != AppActivity.generation {
+                    reader.cancelReading(); writer.cancelWriting()
+                    completion.resolve(.failure(ExportInterrupted()))
+                } else if failed.isSet || reader.status == .failed {
+                    let error = reader.error ?? writer.error ?? MediaProblem("exportFailed")
+                    reader.cancelReading(); writer.cancelWriting()
+                    completion.resolve(.failure(error))
+                } else {
+                    writer.finishWriting {
+                        let size = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int) ?? nil
+                        NSLog("AquaRestore: video export writer status \(writer.status.rawValue), file \(size.map(String.init) ?? "missing") bytes, error \(String(describing: writer.error))")
+                        if writer.status == .completed { completion.resolve(.success(())) }
+                        else { completion.resolve(.failure(writer.error ?? MediaProblem("exportFailed"))) }
                     }
                 }
             }
+            try await completion.wait()
         } onCancel: {
             flag.set()
-            reader.cancelReading()
+            completion.resolve(.failure(CancellationError()))
+            cleanup.async { reader.cancelReading(); writer.cancelWriting() }
         }
     }
 }

@@ -115,4 +115,50 @@ final class ExportLifecycleTests: XCTestCase {
         }
         XCTAssertEqual(attempts, 1)
     }
+
+    func testInterruptedAttemptDoesNotWaitForPipelineCleanup() async {
+        let completion = ExportCompletion()
+        // No sample queue ever reports completion. The interruption must release the waiter itself.
+        DispatchQueue.global().async { completion.resolve(.failure(ExportInterrupted())) }
+        do {
+            try await completion.wait()
+            XCTFail("Expected interruption")
+        } catch {
+            XCTAssertTrue(error is ExportInterrupted)
+        }
+    }
+
+    func testLatePipelineSuccessCannotOverrideInterruption() async {
+        let completion = ExportCompletion()
+        completion.resolve(.failure(ExportInterrupted()))
+        completion.resolve(.success(()))
+        do {
+            try await completion.wait()
+            XCTFail("Expected the original interruption")
+        } catch {
+            XCTAssertTrue(error is ExportInterrupted)
+        }
+    }
+
+    func testSuccessfulCompletionIgnoresLateInterruption() async throws {
+        let completion = ExportCompletion()
+        completion.resolve(.success(()))
+        completion.resolve(.failure(ExportInterrupted()))
+        try await completion.wait()
+    }
+
+    func testSceneActivityInterruptsAttemptWithoutApplicationNotification() async {
+        let completion = ExportCompletion()
+        let observer = NotificationCenter.default.addObserver(forName: AppActivity.didBecomeInactive,
+            object: nil, queue: nil) { _ in completion.resolve(.failure(ExportInterrupted())) }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        AppActivity.set(false)
+        AppActivity.set(true)
+        do {
+            try await completion.wait()
+            XCTFail("Expected interruption from scene activity")
+        } catch {
+            XCTAssertTrue(error is ExportInterrupted)
+        }
+    }
 }
