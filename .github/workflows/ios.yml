@@ -1,5 +1,9 @@
 name: iOS
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 # The job only reads the repository; keep the automatic GITHUB_TOKEN read-only.
 permissions:
   contents: read
