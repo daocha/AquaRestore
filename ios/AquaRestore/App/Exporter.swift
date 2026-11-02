@@ -52,24 +52,6 @@ final class FrameCounter {
     func add() -> Bool { lock.lock(); defer { lock.unlock() }; value += 1; return value == 1 }
 }
 
-/// This build has no Background GPU Access entitlement, so the export pauses in the background.
-enum AppActivity {
-    private static let lock = NSLock()
-    private static var _active = true
-    static var active: Bool { lock.lock(); defer { lock.unlock() }; return _active }
-    static func set(_ value: Bool) { lock.lock(); _active = value; lock.unlock() }
-
-    private static var observers: [NSObjectProtocol] = []
-    static func observe() {
-        guard observers.isEmpty else { return }
-        let center = NotificationCenter.default
-        observers = [
-            center.addObserver(forName: Notification.Name("UIApplicationWillResignActiveNotification"), object: nil, queue: nil) { _ in set(false) },
-            center.addObserver(forName: Notification.Name("UIApplicationDidBecomeActiveNotification"), object: nil, queue: nil) { _ in set(true) },
-        ]
-    }
-}
-
 @MainActor
 final class Exports: ObservableObject {
     static let shared = Exports()
@@ -131,11 +113,13 @@ final class Exports: ObservableObject {
                     self.batch?.currentName = source.name
                     // Export pauses in the background; wait here too, so nothing starts while the app is away.
                     try await BatchRun.whileInactive { self.publish(nil, "paused") }
-                    if request.videos && index > 0 { try await BatchRun.coolDown { self.publish(nil, "cooling") } }
                     self.publish(0, "analyzing")
                     do {
                         if source.video != request.videos { throw MediaProblem(request.videos ? "batchVideosOnly" : "batchPhotosOnly") }
-                        let grade = try await MediaIO.analyze(source).grade
+                        let grade = try await ForegroundExport.run(waiting: { self.publish(nil, "paused") }) {
+                            self.publish(0, "analyzing")
+                            return try await MediaIO.analyze(source).grade
+                        }
                         try Task.checkCancellation()
                         let options = request.videos ? request.selection.videoOptions(width: source.width, height: source.height,
                                                                                      fps: source.fps, codec: source.codec, hdr: source.isHdr)
@@ -191,15 +175,6 @@ enum BatchRun {
         }
     }
 
-    /// Encoding back to back heats the phone until it throttles; let it cool between videos, for up to ten minutes.
-    static func coolDown(_ waiting: () -> Void) async throws {
-        let until = Date().addingTimeInterval(10 * 60)
-        while ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue && Date() < until {
-            waiting()
-            try await Task.sleep(nanoseconds: 10_000_000_000)
-        }
-    }
-
     static func estimatedBytes(_ source: SourceMedia, _ options: ExportOptions) -> Int64? {
         videoExportPlan(width: source.width, height: source.height, fps: source.fps, sourceBitrate: source.bitrate,
                         audioBitrate: source.audioBitrate, durationMs: source.durationMs, options: options).estimatedBytes
@@ -216,16 +191,20 @@ enum Exporter {
     typealias Update = @Sendable (Int?, String) -> Void
 
     static func run(_ request: ExportRequest, update: @escaping Update) async throws {
+        await MainActor.run { AppActivity.observe() }
         let o = request.options
         let source = request.source
         let lossless = o.png
         let ext = source.video ? "mp4" : (lossless ? "png" : "jpg")
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).\(ext)")
         defer { try? FileManager.default.removeItem(at: temp) }
-        if source.video {
-            try await exportVideo(request, to: temp, update: update)
-        } else {
-            try await exportPhoto(request, to: temp, lossless: lossless, update: update)
+        try await ForegroundExport.run(waiting: { update(nil, "paused") }) {
+            update(0, "exporting")
+            if source.video {
+                try await exportVideo(request, to: temp, update: update)
+            } else {
+                try await exportPhoto(request, to: temp, lossless: lossless, update: update)
+            }
         }
         try Task.checkCancellation()
         update(90, "saving")
@@ -258,6 +237,7 @@ enum Exporter {
     // MARK: Video
 
     static func exportVideo(_ request: ExportRequest, to temp: URL, update: @escaping Update) async throws {
+        let generation = AppActivity.generation
         let source = request.source
         let o = request.options
         let audioMix = request.audio
@@ -412,8 +392,22 @@ enum Exporter {
             audioInput = input
         }
 
+        let interrupted = CancelFlag()
+        let observer = NotificationCenter.default.addObserver(
+            forName: Notification.Name("UIApplicationWillResignActiveNotification"), object: nil, queue: nil
+        ) { _ in
+            interrupted.set()
+            update(nil, "paused")
+            // Stop composition read-ahead too; merely blocking the sample pumps leaves GPU work running.
+            reader.cancelReading()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        guard AppActivity.active, generation == AppActivity.generation, !interrupted.isSet else { throw ExportInterrupted() }
         guard writer.startWriting() else { throw writer.error ?? MediaProblem("exportFailed") }
-        guard reader.startReading() else { throw reader.error ?? MediaProblem("exportFailed") }
+        guard reader.startReading() else {
+            writer.cancelWriting()
+            throw reader.error ?? MediaProblem("exportFailed")
+        }
         writer.startSession(atSourceTime: .zero)
         NSLog("AquaRestore: video export started: \(width)x\(height) hdr=\(source.hdr.rawValue) codec=\(useHevc ? "hevc" : "h264") bitrate=\(bitrate) length=\(composition.duration.seconds)s")
         let started = Date()
@@ -428,19 +422,23 @@ enum Exporter {
         func pump(_ input: AVAssetWriterInput, _ output: AVAssetReaderOutput, label: String, video: Bool) {
             group.enter()
             let queue = DispatchQueue(label: "AquaRestore.export.\(label)")
-            input.requestMediaDataWhenReady(on: queue) {
-                while input.isReadyForMoreMediaData {
-                    while !AppActivity.active && !flag.isSet { Thread.sleep(forTimeInterval: 0.1) }
-                    if flag.isSet || failed.isSet { input.markAsFinished(); group.leave(); return }
-                    guard let sample = output.copyNextSampleBuffer() else { input.markAsFinished(); group.leave(); return }
+            // A dedicated pump can exit even when a cancelled writer stops asking for media data.
+            queue.async {
+                defer { group.leave() }
+                while !flag.isSet && !failed.isSet && !interrupted.isSet {
+                    if writer.status != .writing { failed.set(); break }
+                    guard input.isReadyForMoreMediaData else { Thread.sleep(forTimeInterval: 0.01); continue }
+                    guard let sample = output.copyNextSampleBuffer() else { break }
+                    if flag.isSet || interrupted.isSet { break }
                     let time = CMSampleBufferGetPresentationTimeStamp(sample)
                     if video {
                         if frames.add() { NSLog("AquaRestore: video export read its first frame after \(String(format: "%.1f", Date().timeIntervalSince(started))) s") }
                         update(Int(min(time.seconds / totalSeconds, 1) * 90), "exporting")
                         if let cadence, !cadence.accept(timeUs: Int64((time.seconds * 1_000_000).rounded())) { continue }
                     }
-                    if !input.append(sample) { failed.set(); input.markAsFinished(); group.leave(); return }
+                    if !input.append(sample) { failed.set(); break }
                 }
+                if writer.status == .writing { input.markAsFinished() }
             }
         }
         pump(videoInput, videoOutput, label: "video", video: true)
@@ -450,7 +448,7 @@ enum Exporter {
         // waiting for ever. Time spent in the background does not count.
         func watch(_ waited: Int) {
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-                if frames.count > 0 || flag.isSet || failed.isSet || finished.isSet { return }
+                if frames.count > 0 || flag.isSet || failed.isSet || finished.isSet || interrupted.isSet { return }
                 let next = waited + (AppActivity.active ? 5 : 0)
                 if next >= 30 {
                     NSLog("AquaRestore: video export received no frames in 30 s; stopping")
@@ -469,6 +467,9 @@ enum Exporter {
                     if flag.isSet {
                         reader.cancelReading(); writer.cancelWriting()
                         continuation.resume(throwing: CancellationError())
+                    } else if interrupted.isSet || generation != AppActivity.generation {
+                        reader.cancelReading(); writer.cancelWriting()
+                        continuation.resume(throwing: ExportInterrupted())
                     } else if failed.isSet || reader.status == .failed {
                         let error = reader.error ?? writer.error ?? MediaProblem("exportFailed")
                         reader.cancelReading(); writer.cancelWriting()
@@ -483,7 +484,10 @@ enum Exporter {
                     }
                 }
             }
-        } onCancel: { flag.set() }
+        } onCancel: {
+            flag.set()
+            reader.cancelReading()
+        }
     }
 }
 

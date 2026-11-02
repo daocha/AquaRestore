@@ -16,7 +16,6 @@ struct Strings {
         "saved": ("Saved to your gallery", "已儲存至相簿"),
         "cancelled": ("Export cancelled", "已取消匯出"),
         "preparing": ("Getting your media from Photos…", "正在從相簿取得素材…"),
-        "cooling": ("Letting the phone cool down…", "正在讓手機降溫…"),
         "paused": ("Paused · return to AquaRestore to continue", "已暫停 · 返回 AquaRestore 即可繼續"),
         "batchFinished": ("Batch export finished", "批次匯出已完成"),
         "photoUnreadable": ("Could not read this photo. It may have been deleted, or saved in an unsupported format.", "無法讀取此照片，可能已被刪除，或為不支援的格式。"),

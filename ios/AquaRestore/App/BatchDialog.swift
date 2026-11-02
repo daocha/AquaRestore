@@ -56,8 +56,8 @@ struct BatchExportDialog: View {
 
     /// iOS pauses the export whenever AquaRestore is not on screen, so the batch only runs while it stays open.
     private var keepOpenWarning: some View {
-        MText(s.text("Keep AquaRestore open until the batch finishes. Don't switch apps or lock the screen: iOS pauses the batch while AquaRestore is in the background, and it continues only when you return.",
-                     "批次完成前請保持 AquaRestore 開啟，不要切換 App 或鎖定螢幕：App 在背景時 iOS 會暫停批次，返回後才會繼續。"),
+        MText(s.text("Keep AquaRestore open for uninterrupted exporting. If you switch apps or lock the screen, the current item restarts automatically when you return. Completed items are kept.",
+                     "請保持 AquaRestore 開啟以連續匯出。切換 App 或鎖定螢幕後，目前項目會在返回時自動重新匯出，已完成的項目會保留。"),
               size: 13, weight: .semibold, color: c.error)
             .accessibilityIdentifier("keepOpenWarning")
     }
@@ -144,8 +144,8 @@ struct BatchExportDialog: View {
                           size: 12, color: c.error)
                 }
             }
-            MText(s.text("Long batches take a while and warm the phone. Exporting pauses between videos while it is too hot. Keep it plugged in for large batches.",
-                         "大量影片需要較長時間，手機也會發熱；過熱時會在影片之間暫停。大量匯出時建議接上電源。"), size: 11)
+            MText(s.text("Long batches take a while and warm the phone. Keep it plugged in for large batches.",
+                         "大量影片需要較長時間，手機也會發熱。大量匯出時建議接上電源。"), size: 11)
         } else {
             let bytes = draft.sources.reduce(Int64(0)) { total, source in
                 total + photoEstimatedBytes(width: source.width, height: source.height, options: selection.photoOptions(

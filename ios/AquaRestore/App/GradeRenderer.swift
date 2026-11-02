@@ -371,7 +371,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
         FrameProbe.request(request)
         queue.async {
             self.lock.lock(); let current = self.generation; self.lock.unlock()
-            guard current == mine else { request.finishCancelledRequest(); return }
+            guard current == mine, AppActivity.active else { request.finishCancelledRequest(); return }
             guard let instruction = request.videoCompositionInstruction as? GradeInstruction else {
                 GradeLog.failure("instruction is \(type(of: request.videoCompositionInstruction)), not GradeInstruction")
                 request.finish(with: GradeError.metalUnavailable)
