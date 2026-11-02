@@ -26,6 +26,8 @@ enum AppActivity {
 
 struct ExportInterrupted: Error {}
 
+/// Pause callbacks update the UI directly when the caller is a batch export.
+@MainActor
 enum ForegroundExport {
     /// Only rendering belongs here. Publishing to Photos must happen once, after a successful attempt.
     static func run<Value>(waiting: () -> Void, operation: () async throws -> Value) async throws -> Value {
