@@ -5,7 +5,7 @@ import Metal
 
 /// Thread-safe grade snapshot shared with the render thread. Slider changes only replace the value;
 /// the player and decoder are never rebuilt.
-final class GradeState {
+final class GradeState: @unchecked Sendable {
     private let lock = NSLock()
     private var _grade: Grade
     private var _compare = false
@@ -34,7 +34,7 @@ final class GradeInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let timeRange: CMTimeRange
     let enablePostProcessing = false
     let containsTweening = false
-    let requiredSourceTrackIDs: [NSValue]?
+    var requiredSourceTrackIDs: [NSValue]? { [NSNumber(value: trackID)] }
     let passthroughTrackID = kCMPersistentTrackID_Invalid
     let trackID: CMPersistentTrackID
     let state: GradeState
@@ -48,7 +48,6 @@ final class GradeInstruction: NSObject, AVVideoCompositionInstructionProtocol {
          transform: CGAffineTransform, naturalSize: CGSize) {
         self.timeRange = timeRange
         self.trackID = trackID
-        requiredSourceTrackIDs = [NSNumber(value: trackID)]
         self.state = state
         self.hdr = hdr
         inverse = GradeInstruction.normalized(transform, naturalSize).inverted()
@@ -343,10 +342,10 @@ class GradeCompositor: NSObject, AVVideoCompositing {
     private var generation = 0
     private let lock = NSLock()
 
-    var sourcePixelBufferAttributes: [String: Any]? {
+    var sourcePixelBufferAttributes: [String: any Sendable]? {
         [kCVPixelBufferPixelFormatTypeKey as String: [Self.pixelFormat], kCVPixelBufferMetalCompatibilityKey as String: true]
     }
-    var requiredPixelBufferAttributesForRenderContext: [String: Any] {
+    var requiredPixelBufferAttributesForRenderContext: [String: any Sendable] {
         [kCVPixelBufferPixelFormatTypeKey as String: Self.pixelFormat, kCVPixelBufferMetalCompatibilityKey as String: true]
     }
     var supportsWideColorSourceFrames: Bool { true }
@@ -371,7 +370,10 @@ class GradeCompositor: NSObject, AVVideoCompositing {
         FrameProbe.request(request)
         queue.async {
             self.lock.lock(); let current = self.generation; self.lock.unlock()
-            guard current == mine, AppActivity.active else { request.finishCancelledRequest(); return }
+            guard current == mine else { request.finishCancelledRequest(); return }
+            #if os(iOS)
+            guard AppActivity.active else { request.finishCancelledRequest(); return }
+            #endif
             guard let instruction = request.videoCompositionInstruction as? GradeInstruction else {
                 GradeLog.failure("instruction is \(type(of: request.videoCompositionInstruction)), not GradeInstruction")
                 request.finish(with: GradeError.metalUnavailable)
@@ -411,30 +413,45 @@ final class HdrGradeCompositor: GradeCompositor {
 enum GradeComposition {
     static func make(track: AVAssetTrack, trackID: CMPersistentTrackID, duration: CMTime, state: GradeState,
                      hdr: HdrMode, transform: CGAffineTransform, naturalSize: CGSize,
-                     renderSize: CGSize, frameDuration: CMTime) -> AVMutableVideoComposition {
-        let composition = AVMutableVideoComposition()
-        composition.customVideoCompositorClass = hdr == .sdr ? GradeCompositor.self : HdrGradeCompositor.self
-        composition.renderSize = renderSize
-        composition.frameDuration = frameDuration
+                     renderSize: CGSize, frameDuration: CMTime) -> AVVideoComposition {
+        let compositor: AVVideoCompositing.Type = hdr == .sdr ? GradeCompositor.self : HdrGradeCompositor.self
+        let instruction = GradeInstruction(timeRange: CMTimeRange(start: .zero, duration: duration), trackID: trackID,
+            state: state, hdr: hdr, transform: transform, naturalSize: naturalSize)
+        let primaries = hdr == .sdr ? AVVideoColorPrimaries_ITU_R_709_2 : AVVideoColorPrimaries_ITU_R_2020
+        let matrix = hdr == .sdr ? AVVideoYCbCrMatrix_ITU_R_709_2 : AVVideoYCbCrMatrix_ITU_R_2020
+        let transfer: String
+        switch hdr {
+        case .sdr: transfer = AVVideoTransferFunction_ITU_R_709_2
+        case .hlg: transfer = AVVideoTransferFunction_ITU_R_2100_HLG
+        case .pq: transfer = AVVideoTransferFunction_SMPTE_ST_2084_PQ
+        }
         // Follow actual source sample times, including variable frame rate. frameDuration is only
         // the fallback for empty edits; a Custom fps cap is applied later by FrameCadence.
-        composition.sourceTrackIDForFrameTiming = trackID
-        composition.instructions = [GradeInstruction(timeRange: CMTimeRange(start: .zero, duration: duration), trackID: trackID,
-                                                     state: state, hdr: hdr, transform: transform, naturalSize: naturalSize)]
-        switch hdr {
-        case .sdr:
-            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-            composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-        case .hlg:
-            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
-            composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_2100_HLG
-            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
-        case .pq:
-            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
-            composition.colorTransferFunction = AVVideoTransferFunction_SMPTE_ST_2084_PQ
-            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
+        if #available(iOS 26.0, macOS 26.0, *) {
+            let configuration = AVVideoComposition.Configuration(colorPrimaries: primaries, colorTransferFunction: transfer,
+                colorYCbCrMatrix: matrix, customVideoCompositorClass: compositor, frameDuration: frameDuration,
+                instructions: [instruction], renderSize: renderSize, sourceTrackIDForFrameTiming: trackID)
+            return AVVideoComposition(configuration: configuration)
+        } else {
+            return legacy(compositor: compositor, instruction: instruction, primaries: primaries, transfer: transfer,
+                matrix: matrix, renderSize: renderSize, frameDuration: frameDuration, trackID: trackID)
         }
+    }
+
+    @available(iOS, introduced: 16.0, deprecated: 26.0)
+    @available(macOS, introduced: 13.0, deprecated: 26.0)
+    private static func legacy(compositor: AVVideoCompositing.Type, instruction: GradeInstruction,
+                               primaries: String, transfer: String, matrix: String, renderSize: CGSize,
+                               frameDuration: CMTime, trackID: CMPersistentTrackID) -> AVVideoComposition {
+        let composition = AVMutableVideoComposition()
+        composition.customVideoCompositorClass = compositor
+        composition.renderSize = renderSize
+        composition.frameDuration = frameDuration
+        composition.sourceTrackIDForFrameTiming = trackID
+        composition.instructions = [instruction]
+        composition.colorPrimaries = primaries
+        composition.colorTransferFunction = transfer
+        composition.colorYCbCrMatrix = matrix
         return composition
     }
 }
