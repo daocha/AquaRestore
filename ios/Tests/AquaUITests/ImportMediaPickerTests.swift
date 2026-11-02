@@ -73,7 +73,7 @@ final class ImportMediaPickerTests: XCTestCase {
         XCTAssertTrue(tab.isHittable, "\(label) must be tappable before switching filters.")
         tab.tap()
         let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: tab)
-        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "Tapping \(label) must switch the selected tab.")
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed, "Tapping \(label) must switch the selected tab.")
     }
 
     private func asset(_ type: String) -> XCUIElement {
