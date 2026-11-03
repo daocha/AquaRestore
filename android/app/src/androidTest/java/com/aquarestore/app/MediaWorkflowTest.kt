@@ -34,10 +34,10 @@ class MediaWorkflowTest {
 
     @Before fun launch() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        Exports.status.value = ExportStatus()
+        runBlocking { withContext(Dispatchers.Main) { ComparisonWork.dismiss(); Exports.status.value = ExportStatus() } }
     }
     @After fun clean() {
-        runBlocking { withContext(Dispatchers.Main) { if (Exports.status.value.busy) Exports.cancel(app) } }
+        runBlocking { withContext(Dispatchers.Main) { if (Exports.status.value.busy) Exports.cancel(app); ComparisonWork.dismiss() } }
         scenario.close()
         created.forEach { app.contentResolver.delete(it, null, null) }
         Exports.status.value = ExportStatus()

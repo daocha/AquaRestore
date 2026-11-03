@@ -13,6 +13,7 @@ class Strings(val chinese: Boolean) {
             "exporting" to ("Restoring at export quality…" to "正在以匯出畫質還原…"),
             "encoding" to ("Encoding your image…" to "正在編碼圖片…"),
             "saving" to ("Saving to your gallery…" to "正在儲存至相簿…"),
+            "comparison" to ("Preparing comparison preview…" to "正在準備比較預覽…"),
             "saved" to ("Saved to your gallery" to "已儲存至相簿"),
             "cancelled" to ("Export cancelled" to "已取消匯出"),
             "cooling" to ("Letting the phone cool down…" to "正在讓手機降溫…"),

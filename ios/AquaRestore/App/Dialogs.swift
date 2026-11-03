@@ -9,6 +9,10 @@ struct SettingsDialog: View {
     @Environment(\.strings) private var s
     @Environment(\.palette) private var c
     @ObservedObject private var devTools = DevTools.shared
+    @ObservedObject private var batchAccess = BatchAccess.shared
+    @State private var unlockCode = ""
+    @State private var unlocking = false
+    @State private var unlockError = false
     @State private var versionTaps = 0
     @State private var showLog = false
     @State private var savingFrames = false
@@ -37,6 +41,15 @@ struct SettingsDialog: View {
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("zh", "中文"), ("en", "English")], selected: model.language) { model.preference("language", $0) }
                 MText(s.text("Appearance", "外觀"), weight: .semibold)
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("light", s.text("Light", "淺色")), ("dark", s.text("Dark", "深色"))], selected: model.theme) { model.preference("theme", $0) }
+                if !batchAccess.enabled {
+                    SecureField(s.text("Batch unlock code", "批次功能解鎖碼"), text: $unlockCode)
+                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    M3Button(title: s.text("Unlock batch processing", "解鎖批次處理"), spinner: unlocking) {
+                        unlocking = true
+                        Task { unlockError = !(await batchAccess.unlock(unlockCode)); unlockCode = ""; unlocking = false }
+                    }.disabled(unlocking || unlockCode.isEmpty)
+                    if unlockError { MText(s.text("Incorrect code", "解鎖碼不正確")) }
+                } else { MText(s.text("Batch processing enabled", "已啟用批次處理")) }
                 // Like Android's build number: ten taps on the version unlock the developer tools.
                 MText(DevTools.version, size: 12, color: c.onSurfaceVariant)
                     .contentShape(Rectangle())
@@ -66,8 +79,8 @@ struct SettingsDialog: View {
                         MText(s.text("Open a photo or video to save its analysis input.", "開啟照片或影片後，可儲存用於分析調色的畫面。"),
                               size: 12, color: c.onSurfaceVariant)
                     }
-                    MText(s.text("Saved files are in the Files app: On My iPhone › AquaRestore. Batch restore videos is on the home screen.",
-                                 "儲存的檔案位於「檔案」App：我的 iPhone › AquaRestore。首頁已提供「批次還原影片」。"), size: 12, color: c.onSurfaceVariant)
+                    MText(s.text("Saved files are in the Files app: On My iPhone › AquaRestore.",
+                                 "儲存的檔案位於「檔案」App：我的 iPhone › AquaRestore。"), size: 12, color: c.onSurfaceVariant)
                     if let notice { MText(notice, size: 12, color: c.primary) }
                 }
             }

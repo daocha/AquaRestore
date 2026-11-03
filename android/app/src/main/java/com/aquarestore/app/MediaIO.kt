@@ -450,7 +450,7 @@ object MediaIO {
     suspend fun transform(
         context: Context, source: SourceMedia, output: File, effects: List<Effect>,
         bitrate: Int, mime: String, strict: Boolean, speed: Float = 1f, startMs: Long = 0, endMs: Long = 0,
-        audio: AudioMix = AudioMix(), progress: (Int?) -> Unit,
+        audio: AudioMix = AudioMix(), imageDurationMs: Long = 0, progress: (Int?) -> Unit,
     ): ExportResult = withContext(Dispatchers.Main.immediate) {
         requireHdrEncoder(source, mime)
         val hdrMode = if (source.toneMapped) Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL else Composition.HDR_MODE_KEEP_HDR
@@ -500,7 +500,9 @@ object MediaIO {
                             .apply { if (endMs > 0) setEndPositionMs(endMs) }.build()
                         // Media3 stalls retiming a video-only item, so with a speed change muted sound stays in as silence.
                         val dropOriginal = audio.originalVolume == 0f && speed == 1f
-                        val item = EditedMediaItem.Builder(MediaItem.Builder().setUri(source.uri).setClippingConfiguration(clipping).build())
+                        val item = EditedMediaItem.Builder(MediaItem.Builder().setUri(source.uri).setClippingConfiguration(clipping)
+                            .apply { if (imageDurationMs > 0) { setImageDurationMs(imageDurationMs); setMimeType(source.mime.takeIf { it.startsWith("image/") } ?: "image/jpeg") } }.build())
+                            .apply { if (imageDurationMs > 0) setFrameRate(30) }
                             .setEffects(Effects(gain(audio.originalVolume), effects))
                             .setRemoveAudio(dropOriginal)
                             .setSpeed(if (speed == 1f) androidx.media3.common.audio.SpeedProvider.DEFAULT else object : androidx.media3.common.audio.SpeedProvider {

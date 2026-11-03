@@ -20,6 +20,9 @@ struct ExportStatus: Equatable {
     var saved = false
     var error: String?
     var batch: BatchExportStatus?
+    var comparisons: [ShareMedia] = []
+    var comparisonUnavailable = false
+    var comparisonsBusy = false
 }
 
 /// Photos or videos already copied out of the Photos library, each graded automatically and exported whole.
@@ -66,6 +69,7 @@ final class Exports: ObservableObject {
     static let shared = Exports()
     @Published var status = ExportStatus()
     private var task: Task<Void, Never>?
+    @Published var resultActionBusy = false
 
     func activityChanged(_ active: Bool) {
         AppActivity.set(active)
@@ -76,11 +80,13 @@ final class Exports: ObservableObject {
 
     func start(_ request: ExportRequest) {
         if status.busy { return }
+        ComparisonWork.reset(); ShareMediaMaker.remove(status.comparisons)
         batch = nil
         status = ExportStatus(busy: true)
         Platform.keepScreenAwake(true)
         task = Task { [weak self] in
             var terminal = ExportStatus(error: "exportFailed")
+            let comparison = ComparisonWork.submit(request)
             do {
                 try await Exporter.run(request) { progress, stage in
                     DispatchQueue.main.async { [weak self] in
@@ -89,6 +95,7 @@ final class Exports: ObservableObject {
                             stage: stage == "paused" && AppActivity.active ? "restarting" : stage)
                     }
                 }
+                ComparisonWork.accept(comparison)
                 terminal = ExportStatus(progress: 100, stage: "saved", saved: true)
             } catch is CancellationError {
                 terminal = ExportStatus(stage: "cancelled")
@@ -98,7 +105,8 @@ final class Exports: ObservableObject {
             }
             Platform.keepScreenAwake(false)
             self?.task = nil
-            self?.status = terminal
+            if !terminal.saved { ComparisonWork.reject(comparison) }
+            ComparisonWork.finish(terminal)
         }
     }
 
@@ -117,6 +125,7 @@ final class Exports: ObservableObject {
 
     func startBatch(_ request: BatchRequest) {
         if status.busy { request.folders.forEach { try? FileManager.default.removeItem(at: $0) }; return }
+        ComparisonWork.reset(); ShareMediaMaker.remove(status.comparisons)
         // The player starts watching for this too, but a batch starts from the home screen, without a player.
         AppActivity.observe()
         batch = BatchExportStatus(total: request.total, failures: request.failures, videos: request.videos)
@@ -132,6 +141,7 @@ final class Exports: ObservableObject {
                     // Export pauses in the background; wait here too, so nothing starts while the app is away.
                     try await BatchRun.whileInactive { self.publish(nil, "paused") }
                     self.publish(0, "analyzing")
+                    var comparison: ComparisonWork.Entry?
                     do {
                         if source.video != request.videos { throw MediaProblem(request.videos ? "batchVideosOnly" : "batchPhotosOnly") }
                         let grade = try await ForegroundExport.run(waiting: { self.publish(nil, AppActivity.active ? "restarting" : "paused") }) {
@@ -146,14 +156,19 @@ final class Exports: ObservableObject {
                         if request.videos, let size = BatchRun.estimatedBytes(source, options),
                            let free = BatchRun.freeSpace, free < batchVideoSpace([size]) { throw MediaProblem("storageFull") }
                         self.batchItem = index
-                        try await Exporter.run(ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)) { progress, stage in
+                        let item = ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)
+                        comparison = ComparisonWork.submit(item)
+                        try await Exporter.run(item) { progress, stage in
                             DispatchQueue.main.async { if self.batchItem == index { self.publish(progress, stage) } }
                         }
                         self.batchItem = -1
                         self.batch?.saved += 1
+                        ComparisonWork.accept(comparison)
                     } catch is CancellationError {
+                        ComparisonWork.reject(comparison)
                         throw CancellationError()
                     } catch {
+                        ComparisonWork.reject(comparison)
                         self.batchItem = -1
                         NSLog("AquaRestore: batch item failed: \(error)")
                         self.batch?.failures.append(BatchFailure(name: source.name, error: (error as? MediaProblem)?.key ?? "exportFailed"))
@@ -174,12 +189,21 @@ final class Exports: ObservableObject {
             self.batch?.currentName = nil
             terminal.batch = self.batch
             self.batch = nil
-            self.status = terminal
+            ComparisonWork.finish(terminal)
         }
     }
 
     func cancel() { task?.cancel() }
-    func dismissResult() { status = ExportStatus() }
+    func dismissResult() {
+        guard !resultActionBusy else { return }
+        ComparisonWork.dismiss()
+        ShareMediaMaker.remove(status.comparisons)
+        status = ExportStatus()
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !status.busy { RatingReminder.requestIfEligible() }
+        }
+    }
 }
 
 /// Runs on the main actor with the batch, so its `waiting` callbacks can update the export status directly.
@@ -230,6 +254,8 @@ enum Exporter {
         // cannot leave a saved file while the UI says "cancelled".
         let name = exportFileName(sourceName: source.name, extension: ext)
         try await Task.detached { try await PhotoSaver.save(file.url, video: source.video, name: name) }.value
+        await MainActor.run { RatingReminder.saved(video: source.video) }
+
     }
 
     // MARK: Photo
@@ -254,7 +280,7 @@ enum Exporter {
 
     // MARK: Video
 
-    static func exportVideo(_ request: ExportRequest, to temp: URL, update: @escaping Update) async throws {
+    static func exportVideo(_ request: ExportRequest, to temp: URL, comparison: Bool = false, update: @escaping Update) async throws {
         let generation = AppActivity.generation
         let source = request.source
         let o = request.options
@@ -267,7 +293,7 @@ enum Exporter {
 
         let asset = AVURLAsset(url: source.url)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else { throw MediaProblem("unsupported") }
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let audioTracks = comparison ? [] : try await asset.loadTracks(withMediaType: .audio)
         let (natural, transform) = try await videoTrack.load(.naturalSize, .preferredTransform)
         let assetDuration = try await asset.load(.duration)
 
@@ -316,12 +342,12 @@ enum Exporter {
         // Video: graded by the same GPU compositor as the preview, at the output size.
         let edge = o.original ? 0 : o.longEdge
         let (width, height) = ExportSizing.dimensions(source.width, source.height, edge, even: true)
-        let effectiveFps = source.fps * min(o.speed, 1)
-        let fpsLimit: Float = !o.original && o.fps > 0 ? min(Float(o.fps), source.fps) : source.fps
-        let frameDuration = CMTime(value: 1000, timescale: CMTimeScale(max(1, (effectiveFps * 1000).rounded())))
+        let effectiveFps = source.fps * (comparison ? o.speed : min(o.speed, 1))
+        let fpsLimit: Float = comparison ? 30 : (!o.original && o.fps > 0 ? min(Float(o.fps), source.fps) : source.fps)
+        let frameDuration = CMTime(value: 1000, timescale: CMTimeScale(max(1, (min(effectiveFps, comparison ? 30 : effectiveFps) * 1000).rounded())))
         let videoComposition = GradeComposition.make(track: compVideo, trackID: compVideo.trackID, duration: composition.duration,
             state: GradeState(request.grade), hdr: source.hdr, transform: transform, naturalSize: natural,
-            renderSize: CGSize(width: width, height: height), frameDuration: frameDuration)
+            renderSize: CGSize(width: width, height: height), frameDuration: frameDuration, comparison: comparison)
         // Speeding up keeps the source frame rate by dropping frames; a lower cap drops more, never invents any.
         let cadence: FrameCadence? = fpsLimit < source.fps * o.speed ? FrameCadence(fps: fpsLimit) : nil
 

@@ -35,10 +35,11 @@ class EditorUiTest {
         ui.runOnUiThread {
             model = ViewModelProvider(ui.activity)[EditorModel::class.java]
             model.preference("language", "en"); model.preference("theme", "light")
-            Exports.status.value = ExportStatus()
+            ComparisonWork.dismiss(); Exports.status.value = ExportStatus()
         }
     }
     @After fun cleanup() {
+        ui.runOnUiThread { ComparisonWork.dismiss() }
         Exports.status.value.uri?.let { uris += it }
         Exports.status.value.batch?.saved?.let { uris += it }
         uris.forEach { ui.activity.contentResolver.delete(it, null, null) }
@@ -325,30 +326,73 @@ class EditorUiTest {
             assertNull(model.source.value)
         }
     }
-    @Test fun batchVideosShowsOnlyWithDeveloperTools() {
-        val context = ui.activity
-        // Without it the picker asks Android for access, and the permission screen covers the app.
-        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_VIDEO" else "android.permission.READ_EXTERNAL_STORAGE"
-        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission")
-            .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
-        // Settings turns the tools on and off; the home screen looks again when it closes.
-        fun visitSettings(devTools: Boolean) {
-            ui.onNodeWithContentDescription("Settings").performClick()
-            if (devTools) ui.onNodeWithText("Developer tools").performScrollTo().assertIsDisplayed()
-            else ui.onNodeWithText("Developer tools").assertDoesNotExist()
-            ui.onNodeWithText("Done").performClick()
+    @Test fun comparisonPreviewSwipesDownloadsAndCleansCache() {
+        val input = File(ui.activity.cacheDir, "comparison-ui-test.png")
+        val bitmap = Bitmap.createBitmap(160, 240, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.rgb(70, 110, 150))
+        input.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val source = SourceMedia(Uri.fromFile(input), input.name, false, 160, 240)
+        val previews = kotlinx.coroutines.runBlocking {
+            ShareMediaMaker.make(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false))
         }
-        DevTools.disable(context)
-        visitSettings(false)
-        ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
-        ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
         try {
-            DevTools.enable(context)
-            visitSettings(true)
+            assertEquals(2, previews.size)
+            ui.runOnUiThread { Exports.status.value = ExportStatus(stage = "saved", comparisons = previews, uri = source.uri) }
+            ui.onNodeWithText("Share").assertIsDisplayed()
+            ui.onNodeWithText("Download").assertIsDisplayed()
+            ui.onNodeWithTag("comparisonPager").performTouchInput { swipeLeft() }
+            ui.onNodeWithContentDescription("Original and restored").assertIsDisplayed()
+            ui.onNodeWithText("Download").performClick()
+            ui.waitUntil(10_000) { previews[1].saved != null }
+            previews[1].saved?.let { uris += it }
+            ui.onNodeWithText("Done").performClick()
+            ui.runOnIdle { assertTrue(previews.none { it.file.exists() }) }
+        } finally {
+            previews.forEach { it.file.delete() }; input.delete()
+            ui.runOnUiThread { Exports.status.value = ExportStatus() }
+        }
+    }
+    @Test fun primaryResultAppearsWhileComparisonRunsAndDismissCancelsIt() {
+        val input = File(ui.activity.cacheDir, "comparison-parallel-test.png")
+        val bitmap = Bitmap.createBitmap(160, 240, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.BLUE)
+        input.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val source = SourceMedia(Uri.fromFile(input), input.name, false, 160, 240)
+        var entry: ComparisonWork.Entry? = null
+        try {
+            ui.runOnUiThread {
+                ComparisonWork.reset()
+                entry = ComparisonWork.submit(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false))
+                ComparisonWork.accept(entry)
+                ComparisonWork.finish(ExportStatus(stage = "saved", uri = source.uri))
+                assertFalse(Exports.status.value.busy)
+                assertTrue(Exports.status.value.comparisonsBusy)
+            }
+            ui.onNodeWithText("Done").assertIsDisplayed().performClick()
+            ui.waitUntil(10_000) { entry!!.done }
+            ui.runOnIdle {
+                assertFalse(Exports.status.value.comparisonsBusy)
+                assertTrue(Exports.status.value.comparisons.isEmpty())
+                assertTrue(entry!!.assets.none { it.file.exists() })
+            }
+        } finally { ComparisonWork.dismiss(); input.delete(); Exports.status.value = ExportStatus() }
+    }
+    @Test fun batchAccessPersistsIndependentlyOfDeveloperTools() {
+        val context = ui.activity
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        val previous = prefs.getBoolean("batchUnlocked", false)
+        prefs.edit().putBoolean("batchUnlocked", true).commit()
+        DevTools.disable(context)
+        try {
+            ui.activityRule.scenario.recreate()
+            ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
             ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
-            ui.onNodeWithText("Batch restore videos").performClick()
-            ui.onNodeWithText("Choose videos").assertIsDisplayed()
-        } finally { DevTools.disable(context) }
+            ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Batch processing enabled").assertExists()
+            ui.onNodeWithText("Developer tools").assertDoesNotExist()
+            ui.onNodeWithText("Done").performClick()
+            ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
+        } finally { prefs.edit().putBoolean("batchUnlocked", previous).commit() }
     }
     @Test fun languageAndThemeChangeOnScreenAndSurviveRecreation() {
         ui.onNodeWithContentDescription("Settings").performClick()

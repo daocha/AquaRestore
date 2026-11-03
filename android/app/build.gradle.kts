@@ -1,6 +1,7 @@
 import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.BuiltArtifactsLoader
 import java.security.MessageDigest
+import java.security.SecureRandom
 
 plugins {
     id("com.android.application")
@@ -19,10 +20,17 @@ val devUpdateHost = devSetting("AQUARESTORE_DEV_UPDATE_HOST")?.takeIf(String::is
 val devUpdatePort = (devSetting("AQUARESTORE_DEV_UPDATE_PORT") ?: "8765").also {
     require(it.toIntOrNull() in 1..65535) { "AQUARESTORE_DEV_UPDATE_PORT must be a port number" }
 }
+val batchCode = devSetting("AQUARESTORE_BATCH_UNLOCK_CODE").orEmpty()
+val batchSalt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+val batchVerifier = if (batchCode.isEmpty()) "" else javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    .generateSecret(javax.crypto.spec.PBEKeySpec(batchCode.toCharArray(), batchSalt, 120_000, 256)).encoded
+    .joinToString("") { "%02x".format(it) }
 android {
     namespace = "com.aquarestore.app"
     compileSdk = 36
     defaultConfig {
+        buildConfigField("String", "BATCH_SALT", "\"${batchSalt.joinToString("") { "%02x".format(it) }}\"")
+        buildConfigField("String", "BATCH_VERIFIER", "\"$batchVerifier\"")
         applicationId = "com.aquarestore.app"
         minSdk = 29
         targetSdk = 36
@@ -148,6 +156,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.google.android.play:app-update:2.1.0")
+    implementation("com.google.android.play:review:2.0.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("androidx.media3:media3-exoplayer:1.9.3")
     implementation("androidx.media3:media3-ui:1.9.3")

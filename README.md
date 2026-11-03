@@ -55,6 +55,12 @@ For Original video, Android keeps the source codec; iOS keeps AVC or HEVC codec 
 - **Android:** output is saved to `Movies/AquaRestore` or `Pictures/AquaRestore`. It is written to a temporary file first and then published with MediaStore's pending mechanism; failed or cancelled exports clean up their partial files, and the source is never overwritten. Export continues in the background with a notification, using a foreground service and a wake lock. Work does not resume automatically if the system kills the app or the device restarts, and Android's limits on long-running background services still apply.
 - **iOS:** output is saved to the Photos library with add-only access; the app never reads your library. This iOS 16+ build pauses export while it is not in the foreground and keeps the screen awake while it runs. iOS 26+ can support continued GPU processing on eligible devices with a Background GPU Access entitlement; that capability is not configured for this build.
 
+### Comparison previews
+
+After export, swipe through cached before/after previews: a six-second reveal and an uncropped collage for photos, or a centered excerpt up to ten seconds for videos. Batches preview up to two successful items. Comparisons run on background workers alongside export, capped at 720p and 30 fps without upscaling. The saved result appears immediately; previews can finish afterward, and dismissing the result cancels unfinished preview work. Previews use the final adjustments and include a small AquaRestore credit. Download saves the selected preview to the gallery; Share saves it first and opens system sharing. Dismissing the result removes the cached previews, and startup removes leftovers. Ordinary exports remain unchanged.
+
+Store builds can request a rating once after five successfully saved videos or ten photos. Only local counters and a request flag are stored; the app cannot tell whether a rating was submitted. GitHub APK and TestFlight builds do not request public store ratings.
+
 ### Batch restore photos
 
 Choose **Batch restore photos** on the home screen to restore photos without opening the editor; videos are not accepted. Choose Recommended, Original or Custom export settings once, and each photo receives its own default intelligent restoration automatically. Recommended adapts to each photo's dimensions and format. Batches show an estimated total size, from each photo's resolution, format and quality, and process one photo at a time to limit memory use on midrange phones. Progress and cancellation are available; completed photos are kept if cancelled, and unreadable photos are reported while the remaining photos continue.
@@ -64,14 +70,14 @@ Choose **Batch restore photos** on the home screen to restore photos without ope
 
 ### Batch restore videos
 
-**Batch restore videos** is experimental and available only with the hidden [developer tools](#developer-tools) turned on. Its button then appears on the home screen below the photo batch. Each video is restored automatically and exported whole with its own audio (no trim, speed or music), one video at a time. Recommended caps output at 1080p and 30 fps. Before starting, the dialog shows the total length, the estimated size and the free space needed. Before each video the export checks free space, and between videos it waits while the phone is severely hot.
+**Batch restore videos** is experimental. When batch processing is enabled, its button appears on the home screen below the photo batch. Each video is restored automatically and exported whole with its own audio (no trim, speed or music), one video at a time. Recommended caps output at 1080p and 30 fps. Before starting, the dialog shows the total length, the estimated size and the free space needed. Before each video the export checks free space, and between videos it waits while the phone is severely hot.
 
 - **Android:** up to 20 videos per batch, with background export. A video that this phone can analyze only after decoding it in software is reported as failed; open it in the editor instead.
 - **iOS:** up to 5 videos per batch, selected in the system picker. Keep AquaRestore open and do not switch apps or lock the screen, as the batch dialog and progress remind you. Leaving the app pauses the batch until you return.
 
 ## Developer tools
 
-On both platforms, tap the version number in Settings ten times to unlock the developer tools: the log viewer, Save logs, Save analysis frames and batch video restoration. They stay on until the next app update, or until switched off in Settings.
+On both platforms, tap the version number in Settings ten times to unlock the developer tools: the log viewer, Save logs and Save analysis frames. They stay on until the next app update, or until switched off in Settings.
 
 - **Android:** saved files go to `Download/AquaRestore-analysis`.
 - **iOS:** saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`.

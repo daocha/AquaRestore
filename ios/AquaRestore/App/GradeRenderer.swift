@@ -43,6 +43,8 @@ final class GradeInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     let inverse: CGAffineTransform
     let naturalSize: CGSize
     let displaySize: CGSize
+    var comparisonDuration: Double?
+    var comparisonMark: CGImage?
 
     init(timeRange: CMTimeRange, trackID: CMPersistentTrackID, state: GradeState, hdr: HdrMode,
          transform: CGAffineTransform, naturalSize: CGSize) {
@@ -398,6 +400,12 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 return
             }
             grader.render(instruction, source: source, output: output, time: request.compositionTime.seconds) { ok in
+                #if os(iOS)
+                if ok, let duration = instruction.comparisonDuration {
+                    ComparisonFrame.finish(request, instruction: instruction, source: source, graded: output, duration: duration, grader: grader)
+                    return
+                }
+                #endif
                 if ok { request.finish(withComposedVideoFrame: output) } else { request.finish(with: GradeError.textureFailed) }
             }
         }
@@ -413,10 +421,17 @@ final class HdrGradeCompositor: GradeCompositor {
 enum GradeComposition {
     static func make(track: AVAssetTrack, trackID: CMPersistentTrackID, duration: CMTime, state: GradeState,
                      hdr: HdrMode, transform: CGAffineTransform, naturalSize: CGSize,
-                     renderSize: CGSize, frameDuration: CMTime) -> AVVideoComposition {
+                     renderSize: CGSize, frameDuration: CMTime, comparison: Bool = false) -> AVVideoComposition {
+        let timingTrack = comparison ? kCMPersistentTrackID_Invalid : trackID
         let compositor: AVVideoCompositing.Type = hdr == .sdr ? GradeCompositor.self : HdrGradeCompositor.self
         let instruction = GradeInstruction(timeRange: CMTimeRange(start: .zero, duration: duration), trackID: trackID,
             state: state, hdr: hdr, transform: transform, naturalSize: naturalSize)
+        #if os(iOS)
+        if comparison {
+            instruction.comparisonDuration = duration.seconds
+            instruction.comparisonMark = ShareMediaMaker.brandingImage(width: Int(renderSize.width), height: Int(renderSize.height))
+        }
+        #endif
         let primaries = hdr == .sdr ? AVVideoColorPrimaries_ITU_R_709_2 : AVVideoColorPrimaries_ITU_R_2020
         let matrix = hdr == .sdr ? AVVideoYCbCrMatrix_ITU_R_709_2 : AVVideoYCbCrMatrix_ITU_R_2020
         let transfer: String
@@ -430,11 +445,11 @@ enum GradeComposition {
         if #available(iOS 26.0, macOS 26.0, *) {
             let configuration = AVVideoComposition.Configuration(colorPrimaries: primaries, colorTransferFunction: transfer,
                 colorYCbCrMatrix: matrix, customVideoCompositorClass: compositor, frameDuration: frameDuration,
-                instructions: [instruction], renderSize: renderSize, sourceTrackIDForFrameTiming: trackID)
+                instructions: [instruction], renderSize: renderSize, sourceTrackIDForFrameTiming: timingTrack)
             return AVVideoComposition(configuration: configuration)
         } else {
             return legacy(compositor: compositor, instruction: instruction, primaries: primaries, transfer: transfer,
-                matrix: matrix, renderSize: renderSize, frameDuration: frameDuration, trackID: trackID)
+                matrix: matrix, renderSize: renderSize, frameDuration: frameDuration, trackID: timingTrack)
         }
     }
 

@@ -66,3 +66,23 @@ jobs:
           name: ios-test-results
           path: ios/build/AppTests.xcresult
           if-no-files-found: ignore
+
+  compile-stub:
+    name: Compile app and tests with public core
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Use the basic stub core
+        run: scripts/use-core-stub.sh
+      - name: Generate the Xcode project
+        run: brew install xcodegen && xcodegen generate
+        working-directory: ios
+      - name: Compile the app and test bundles
+        run: |
+          xcodebuild build-for-testing -project AquaRestore.xcodeproj -scheme AquaRestore \
+            -configuration Debug -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/stub CODE_SIGNING_ALLOWED=NO
+        working-directory: ios

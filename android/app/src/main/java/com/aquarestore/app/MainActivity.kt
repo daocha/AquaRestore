@@ -202,8 +202,8 @@ private fun Editor(model: EditorModel, s: Strings) {
     var batchLibrary by rememberSaveable { mutableStateOf(false) }
     var batchVideoLibrary by rememberSaveable { mutableStateOf(false) }
     // Batch videos is a developer tool for now. Settings turns the tools on and off, so look again when it closes.
-    var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
-    LaunchedEffect(settings) { if (!settings) devTools = DevTools.enabled(context) }
+    var batchAccess by remember { mutableStateOf(BatchAccess.enabled(context)) }
+    LaunchedEffect(settings) { if (!settings) batchAccess = BatchAccess.enabled(context) }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
     val compare = remember { MutableInteractionSource() }
@@ -302,7 +302,7 @@ private fun Editor(model: EditorModel, s: Strings) {
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
                 Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true },
-                    onBatchVideos = if (devTools) { { batchVideoLibrary = true } } else null)
+                    batchEnabled = batchAccess, onBatchVideos = if (batchAccess) { { batchVideoLibrary = true } } else null)
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -426,11 +426,26 @@ private fun Editor(model: EditorModel, s: Strings) {
         title = { Text(s.text("Unable to continue", "無法完成操作")) }, text = { Text(s[error!!]) },
         confirmButton = { TextButton(onClick = { model.error.value = null }) { Text(s.text("OK", "知道了")) } })
     if (!export.busy && (export.uri != null || export.error != null || export.stage == "cancelled" || export.batch != null)) {
-        fun dismissResult() { Exports.status.value = ExportStatus() }
+        var resultWorking by remember { mutableStateOf(false) }
+        fun dismissResult() {
+            if (resultWorking) return
+            ComparisonWork.dismiss()
+            export.comparisons.forEach { it.file.delete() }
+            Exports.status.value = ExportStatus()
+            (context as? android.app.Activity)?.let { RatingReminder.requestIfEligible(it) }
+        }
         AlertDialog(onDismissRequest = ::dismissResult,
             title = { Text(if (export.error != null) s.text("Export failed", "匯出失敗") else s[export.stage]) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (export.comparisonsBusy) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
+                            Text(s.text("Your export is saved. Preparing comparison previews…", "作品已儲存，正在準備比較預覽…"))
+                        }
+                    }
+                    if (export.comparisons.isNotEmpty()) SharePreview(export.comparisons, s) { resultWorking = it }
+                    if (export.comparisonUnavailable) Text(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。"))
                     export.error?.let { Text(s[it]) }
                     val batch = export.batch
                     if (batch != null) {
@@ -441,8 +456,8 @@ private fun Editor(model: EditorModel, s: Strings) {
                         else s.text("No unfinished file was added to your gallery.", "相簿不會留下未完成的檔案。"))
                 }
             },
-            confirmButton = { TextButton(onClick = ::dismissResult) { Text(s.text("Done", "完成")) } },
-            dismissButton = { if (export.uri != null) TextButton(onClick = { openExport(); dismissResult() }) { Text(s.text("Open", "開啟")) } })
+            confirmButton = { TextButton(onClick = ::dismissResult, enabled = !resultWorking) { Text(s.text("Done", "完成")) } },
+            dismissButton = { if (export.uri != null) TextButton(onClick = { openExport(); dismissResult() }, enabled = !resultWorking) { Text(s.text("Open", "開啟")) } })
     }
     if (settings) SettingsDialog(model, s, updateUi, { updates?.check(true) }, { updates?.update() }) { settings = false }
     if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false },
@@ -501,7 +516,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit, onBatchVideos: (() -> Unit)? = null) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit, batchEnabled: Boolean = true, onBatchVideos: (() -> Unit)? = null) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -511,18 +526,20 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, o
     Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
     }
-    OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
-        Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
-        Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
+    if (batchEnabled) {
+        OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
+            Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
+        }
+        Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
-        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (onBatchVideos != null) {
         OutlinedButton(onClick = onBatchVideos, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
             Icon(Icons.Rounded.VideoLibrary, null); Spacer(Modifier.width(10.dp))
             Text(s.text("Batch restore videos", "批次還原影片"), fontSize = 16.sp)
         }
-        Text(s.text("Developer tools · up to $MAX_BATCH_VIDEOS videos", "開發者工具 · 最多 $MAX_BATCH_VIDEOS 段影片"),
+        Text(s.text("Up to $MAX_BATCH_VIDEOS videos", "最多 $MAX_BATCH_VIDEOS 段影片"),
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Panel {
@@ -1272,6 +1289,10 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
     val theme by model.theme.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
+    var unlocked by remember { mutableStateOf(BatchAccess.enabled(context)) }
+    var unlockCode by remember { mutableStateOf("") }
+    var unlocking by remember { mutableStateOf(false) }
+    var unlockError by remember { mutableStateOf(false) }
     var versionTaps by remember { mutableIntStateOf(0) }
     var showLog by remember { mutableStateOf(false) }
     val source by model.source.collectAsStateWithLifecycle()
@@ -1293,6 +1314,19 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             Choices(listOf("system" to s.text("System", "跟隨系統"), "zh" to "中文", "en" to "English"), language) { model.preference("language", it) }
             Text(s.text("Appearance", "外觀"), fontWeight = FontWeight.SemiBold)
             Choices(listOf("system" to s.text("System", "跟隨系統"), "light" to s.text("Light", "淺色"), "dark" to s.text("Dark", "深色")), theme) { model.preference("theme", it) }
+            if (!unlocked) {
+                OutlinedTextField(unlockCode, { unlockCode = it; unlockError = false },
+                    label = { Text(s.text("Batch unlock code", "批次功能解鎖碼")) }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = unlockError)
+                Button(onClick = { unlocking = true; scope.launch {
+                    unlocked = BatchAccess.unlock(context, unlockCode)
+                    unlockError = !unlocked; unlockCode = ""; unlocking = false
+                } }, enabled = !unlocking && unlockCode.isNotEmpty()) { Text(s.text("Unlock batch processing", "解鎖批次處理")) }
+                if (unlockError) Text(s.text("Incorrect code", "解鎖碼不正確"))
+            } else Text(s.text("Batch processing enabled", "已啟用批次處理"))
+            if (BuildConfig.UPDATE_CHANNEL == "play") TextButton(onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")))
+            }) { Text(s.text("Rate AquaRestore", "為 AquaRestore 評分")) }
             if (update != null) {
                 HorizontalDivider()
                 Text(s.text("Updates", "更新"), fontWeight = FontWeight.SemiBold)

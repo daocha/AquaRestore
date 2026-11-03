@@ -56,7 +56,7 @@ final class PlayerController: ObservableObject {
                 guard let self else { return }
                 self.loopBack(self.model.trim.lowerBound, reason: "the song section moved")
             },
-            Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
+            Exports.shared.$status.map { $0.busy || $0.comparisonsBusy }.removeDuplicates().sink { [weak self] busy in
                 guard let self else { return }
                 self.exporting = busy
                 if busy { self.pause() } else if self.model.playbackWanted && self.appActive { self.play() }
