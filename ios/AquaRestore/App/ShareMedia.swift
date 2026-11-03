@@ -154,10 +154,12 @@ enum ShareMediaMaker {
                 let image = try frame(Int64(index) * 1000 / 24, Double(index) / Double(max(1, count - 1)))
                 var pixel: CVPixelBuffer?
                 guard let pool = adapter.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixel) == kCVReturnSuccess, let pixel else { throw MediaProblem("memory") }
-                CVPixelBufferLockBaseAddress(pixel, []); defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
-                guard let cg = image.cgImage, let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height,
-                    bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { throw MediaProblem("exportFailed") }
-                context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+                do {
+                    CVPixelBufferLockBaseAddress(pixel, []); defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
+                    guard let cg = image.cgImage, let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height,
+                        bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { throw MediaProblem("exportFailed") }
+                    context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+                }
                 guard adapter.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 24)) else { throw writer.error ?? MediaProblem("exportFailed") }
             }
         }
