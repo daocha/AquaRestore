@@ -124,7 +124,8 @@ class EditorUiTest {
         // Change the accessible rows while backgrounded without changing permission flags.
         // This also covers selected-media reselection, where the same flags can expose different files.
         ui.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
-        resolver.delete(removed, null, null)
+        assertEquals(1, resolver.delete(removed, null, null))
+        uris.remove(removed)
         addPhoto(newName)
         ui.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
 
