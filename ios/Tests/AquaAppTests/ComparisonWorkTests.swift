@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import SwiftUI
+import CoreImage
 @testable import AquaRestore
 
 final class ComparisonWorkTests: XCTestCase {
@@ -39,4 +40,16 @@ final class ComparisonWorkTests: XCTestCase {
         XCTAssertEqual(idle.width, saving.width, accuracy: 0.5)
         XCTAssertEqual(idle.height, saving.height, accuracy: 0.5)
     }
+    func testOriginalFrameTransformFitsRotatedSource() {
+        let source = CIImage(color: .red).cropped(to: CGRect(x: 0, y: 0, width: 640, height: 360))
+        let rotation = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
+        let instruction = GradeInstruction(timeRange: .zero, trackID: 1, state: GradeState(.neutral), hdr: .sdr,
+                                           transform: rotation, naturalSize: CGSize(width: 640, height: 360))
+        let image = ComparisonFrame.originalImage(source, instruction: instruction, size: CGSize(width: 180, height: 320))
+        XCTAssertEqual(image.extent.minX, 0, accuracy: 0.01)
+        XCTAssertEqual(image.extent.minY, 0, accuracy: 0.01)
+        XCTAssertEqual(image.extent.width, 180, accuracy: 0.01)
+        XCTAssertEqual(image.extent.height, 320, accuracy: 0.01)
+    }
+
 }

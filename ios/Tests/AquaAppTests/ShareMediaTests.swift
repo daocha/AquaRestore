@@ -10,6 +10,8 @@ final class ShareMediaTests: XCTestCase {
             let photo = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { context in
                 UIColor(red: 0.25, green: 0.45, blue: 0.65, alpha: 1).setFill()
                 context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                UIColor(red: 0.8, green: 0.2, blue: 0.3, alpha: 1).setFill()
+                context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height / 2))
             }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-test-\(UUID().uuidString).png")
             try XCTUnwrap(photo.pngData()).write(to: url)
@@ -25,6 +27,12 @@ final class ShareMediaTests: XCTestCase {
             let output = try await MediaIO.inspect(items[0].url)
             XCTAssertEqual(output.width, width); XCTAssertEqual(output.height, height)
             XCTAssertTrue(abs(output.durationMs - 6000) <= 50)
+            let frames = AVAssetImageGenerator(asset: AVURLAsset(url: items[0].url))
+            frames.appliesPreferredTrackTransform = true
+            let first = try XCTUnwrap(PixelImage(frames.copyCGImage(at: .zero, actualTime: nil)))
+            let top = first.pixels[(first.height / 4) * first.width + first.width / 4]
+            XCTAssertGreaterThan(Int((top >> 16) & 255), Int(top & 255) + 40)
+            XCTAssertLessThanOrEqual(output.fps, 30.1)
         }
     }
     func testVideoComparisonUsesNativePipelineAndFinalTrim() async throws {
