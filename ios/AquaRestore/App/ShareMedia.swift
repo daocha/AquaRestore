@@ -16,7 +16,7 @@ enum ShareMediaMaker {
     static func make(_ request: ExportRequest) async -> [ShareMedia] {
         guard request.source.width >= 2, request.source.height >= 2 else { return [] }
         let flag = CancelFlag()
-        let worker = Task.detached(priority: .utility) {
+        let worker = Task<[ShareMedia], Never>.detached(priority: .utility) {
                 var result: [ShareMedia] = []
                 var pending: URL?
                 do {
