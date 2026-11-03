@@ -5,7 +5,7 @@ import AVFoundation
 
 final class ShareMediaTests: XCTestCase {
     func testPhotoComparisonOrientationDurationAndResolution() async throws {
-        for (width, height) in [(160,240), (240,160), (200,200)] {
+        for (width, height) in [(160,240), (240,160), (200,200), (800,80)] {
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
             let photo = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { context in
                 UIColor(red: 0.25, green: 0.45, blue: 0.65, alpha: 1).setFill()

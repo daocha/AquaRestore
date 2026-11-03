@@ -98,7 +98,7 @@ enum ShareMediaMaker {
         let side = before.size.height > before.size.width
         let rawW = before.size.width * (side ? 2 : 1), rawH = before.size.height * (side ? 1 : 2)
         let width = side ? max(rawW, rawH) : rawW, height = side ? rawH : max(rawH, rawW + 1)
-        let scale = min(1, 2560 / max(width, height)); let w = width * scale, h = height * scale
+        let scale = min(1, 2560 / max(width, height)); let w = floor(width * scale), h = floor(height * scale)
         return render(CGSize(width: w, height: h)) { _ in
             let first = CGRect(x: 0, y: 0, width: side ? w/2 : w, height: side ? h : h/2)
             let second = CGRect(x: side ? w/2 : 0, y: side ? 0 : h/2, width: first.width, height: first.height)
