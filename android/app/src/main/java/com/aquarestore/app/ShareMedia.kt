@@ -84,8 +84,8 @@ object ShareMediaMaker {
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = size; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(size * .15f, 0f, 1f, Color.BLACK) }
         c.drawText(text, x, y, p)
     }
-    private fun brand(context: Context, c: Canvas, w: Int, h: Int) {
-        val size = max(8f, min(w, h) * .035f)
+    private fun brand(context: Context, c: Canvas, w: Int, h: Int, scale: Float = 1f) {
+        val size = max(8f, min(w, h) * .035f) * scale
         val left = w * .025f; val bottom = h - size * .5f
         val logo = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)!!
         logo.setBounds(left.toInt(), (bottom - size).toInt(), (left + size).toInt(), bottom.toInt()); logo.draw(c)
@@ -101,7 +101,7 @@ object ShareMediaMaker {
         val end = if (source.video) minOf(source.durationMs, start + (length * request.options.speed).toLong()) else 0L
         val file = destination(context, "mp4")
         val mark = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        brand(context, Canvas(mark), w, h)
+        brand(context, Canvas(mark), w, h, scale = 2f)
         try {
             val effects = MediaIO.resizeEffect(source, maxOf(w, h)) + listOf<androidx.media3.common.Effect>(
                 FrameRateCap(30f), ComparisonEffect(request.grade, length * 1000),

@@ -155,7 +155,7 @@ enum ShareMediaMaker {
     static func brandingImage(width: Int, height: Int) -> CGImage? {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
         return UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
-            brand(width: CGFloat(width), height: CGFloat(height))
+            brand(width: CGFloat(width), height: CGFloat(height), scale: 2)
         }.cgImage
     }
 
@@ -168,8 +168,8 @@ enum ShareMediaMaker {
         let shadow = NSShadow(); shadow.shadowColor = UIColor.black; shadow.shadowBlurRadius = size * 0.15
         (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: size), .foregroundColor: UIColor.white, .shadow: shadow])
     }
-    private static func brand(width: CGFloat, height: CGFloat) {
-        let size = max(8, min(width, height) * 0.035)
+    private static func brand(width: CGFloat, height: CGFloat, scale: CGFloat = 1) {
+        let size = max(8, min(width, height) * 0.035) * scale
         let x = width * 0.025, y = height - size * 1.5
         UIImage(named: "ShareLogo")?.draw(in: CGRect(x: x, y: y, width: size, height: size))
         label("AquaRestore", x: x + size * 1.25, y: y + size * 0.1, size: size * 0.7)
