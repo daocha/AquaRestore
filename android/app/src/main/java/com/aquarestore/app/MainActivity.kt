@@ -1351,9 +1351,9 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                             s.text("Saved $saved frames to Download/${DevTools.FOLDER}/frames", "已儲存 $saved 張畫面至 Download/${DevTools.FOLDER}/frames")
                         else s.text("Could not save the frames", "無法儲存畫面"), android.widget.Toast.LENGTH_LONG).show()
                     }
-                }, enabled = source?.video == true && !savingFrames) { Text(s.text("Save analysis frames", "儲存分析畫面")) }
-                if (source?.video != true) Text(s.text("Open a video to save the six frames its grade is analyzed from.",
-                    "開啟影片後，可儲存用於分析調色的六張畫面。"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }, enabled = source != null && !savingFrames) { Text(s.text("Save analysis frames", "儲存分析畫面")) }
+                if (source == null) Text(s.text("Open a photo or video to save its analysis input.",
+                    "開啟照片或影片後，可儲存用於分析調色的畫面。"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })

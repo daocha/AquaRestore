@@ -61,9 +61,9 @@ struct SettingsDialog: View {
                         Task { notice = await DevLog.save().map { s.text("Saved to \($0)", "已儲存至 \($0)") } ?? s.text("Could not save the log", "無法儲存日誌") }
                     }
                     M3Button(title: s.text("Save analysis frames", "儲存分析畫面"), style: .outlined, spinner: savingFrames) { saveFrames() }
-                        .disabled(model.source?.video != true || savingFrames)
-                    if model.source?.video != true {
-                        MText(s.text("Open a video to save the six frames its grade is analyzed from.", "開啟影片後，可儲存用於分析調色的六張畫面。"),
+                        .disabled(model.source == nil || savingFrames)
+                    if model.source == nil {
+                        MText(s.text("Open a photo or video to save its analysis input.", "開啟照片或影片後，可儲存用於分析調色的畫面。"),
                               size: 12, color: c.onSurfaceVariant)
                     }
                     MText(s.text("Saved files are in the Files app: On My iPhone › AquaRestore. Batch restore videos is on the home screen.",
@@ -75,7 +75,7 @@ struct SettingsDialog: View {
     }
 
     private func saveFrames() {
-        guard let media = model.source, media.video else { return }
+        guard let media = model.source else { return }
         savingFrames = true
         Task {
             let saved = (try? await MediaIO.saveAnalysisFrames(media)) ?? 0
