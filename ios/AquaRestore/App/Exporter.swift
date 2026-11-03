@@ -252,7 +252,10 @@ enum Exporter {
         guard comparison else { return [] }
         update(99, "comparison")
         // Publication has completed. A preview failure or cancellation cannot undo that success.
-        return await ShareMediaMaker.make(request, restored: file.url)
+        let previews = await ShareMediaMaker.make(request, restored: file.url)
+        // Keep the temporary export alive until all comparison frames have been read.
+        withExtendedLifetime(file) {}
+        return previews
     }
 
     // MARK: Photo
