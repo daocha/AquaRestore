@@ -23,10 +23,7 @@ struct SharePreview: View {
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .frame(height: 250).disabled(working)
-            HStack {
-                M3TextButton(title: s.text("Download", "下載")) { save(share: false) }.disabled(working)
-                M3Button(title: s.text("Share", "分享"), spinner: working) { save(share: true) }.disabled(working)
-            }
+            ComparisonActions(working: working, download: { save(share: false) }, share: { save(share: true) })
             if let notice { MText(notice, size: 12) }
         }
         .sheet(item: $sharing, onDismiss: { Exports.shared.resultActionBusy = false }) { item in
@@ -82,4 +79,20 @@ private struct ActivityShare: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: [url], applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+struct ComparisonActions: View {
+    let working: Bool
+    let download: () -> Void
+    let share: () -> Void
+    @Environment(\.strings) private var s
+    var body: some View {
+        HStack {
+            M3TextButton(title: s.text("Download", "下載"), action: download)
+                .fixedSize(horizontal: true, vertical: false).disabled(working)
+            M3Button(title: s.text("Share", "分享"), action: share)
+                .fixedSize(horizontal: true, vertical: false).disabled(working)
+            CircularProgress(size: 16, stroke: 2, color: .gray).opacity(working ? 1 : 0).frame(width: 20)
+        }
+    }
 }

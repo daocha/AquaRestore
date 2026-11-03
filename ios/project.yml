@@ -72,6 +72,7 @@ targets:
       - path: Tests/AquaCoreTests
         excludes: ["Tuning"]
       - path: Tests/AquaAppTests
+      - path: ../android/app/src/androidTest/assets/audit-video.mp4
       - path: ../core/ios/Tests
     dependencies:
       - target: AquaRestore

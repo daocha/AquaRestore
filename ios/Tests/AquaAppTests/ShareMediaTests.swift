@@ -14,7 +14,7 @@ final class ShareMediaTests: XCTestCase {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-test-\(UUID().uuidString).png")
             try XCTUnwrap(photo.pngData()).write(to: url)
             let source = SourceMedia(url: url, name: url.lastPathComponent, video: false, width: width, height: height)
-            let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: ExportOptions(), chinese: false), restored: url)
+            let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: ExportOptions(), chinese: false))
             defer { ShareMediaMaker.remove(items); try? FileManager.default.removeItem(at: url) }
             XCTAssertEqual(items.count, 2)
             guard items.count == 2 else { continue }
@@ -27,4 +27,25 @@ final class ShareMediaTests: XCTestCase {
             XCTAssertTrue(abs(output.durationMs - 6000) <= 50)
         }
     }
+    func testVideoComparisonUsesNativePipelineAndFinalTrim() async throws {
+        AppActivity.set(true)
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "audit-video", withExtension: "mp4"))
+        let source = try await MediaIO.inspect(url)
+        let start = source.durationMs / 4, end = source.durationMs * 3 / 4
+        let options = ExportOptions(original: false, speed: 2, startMs: start, endMs: end)
+        let began = Date()
+        let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: options, chinese: false))
+        NSLog("AquaRestoreTest: sequential video comparison %.2f s", Date().timeIntervalSince(began))
+        defer { ShareMediaMaker.remove(items) }
+        XCTAssertEqual(items.count, 1)
+        guard let item = items.first else { return }
+        XCTAssertTrue(item.video)
+        let output = try await MediaIO.inspect(item.url)
+        let expected = SharingPlan.clip((end - start) / 2).length
+        XCTAssertTrue(abs(output.durationMs - expected) <= 100)
+        XCTAssertLessThanOrEqual(output.fps, 30.1)
+        let size = SharingPlan.videoSize(source.width, source.height)
+        XCTAssertEqual(output.width, size.0); XCTAssertEqual(output.height, size.1)
+    }
+
 }

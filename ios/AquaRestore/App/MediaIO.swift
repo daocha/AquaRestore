@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct MediaProblem: Error { let key: String; init(_ key: String) { self.key = key } }
 
 struct SourceMedia: Equatable {
-    let url: URL
+    var url: URL
     let name: String
     let video: Bool
     let width: Int

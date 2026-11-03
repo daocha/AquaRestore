@@ -302,6 +302,10 @@ struct EditorView: View {
             M3Dialog(title: export.error != nil ? s.text("Export failed", "匯出失敗") : s[export.stage], dismiss: { exports.dismissResult() }) {
                 ScrollIfNeeded(maxHeight: max(100, screenHeight - 220)) {
                     VStack(alignment: .leading, spacing: 12) {
+                        if export.comparisonsBusy {
+                            HStack { CircularProgress(size: 20, stroke: 2, color: c.primary)
+                                MText(s.text("Your export is saved. Preparing comparison previews…", "作品已儲存，正在準備比較預覽…")) }
+                        }
                         if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
                         if export.comparisonUnavailable { MText(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。")) }
                         if let batch = export.batch {

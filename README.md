@@ -57,7 +57,7 @@ For Original video, Android keeps the source codec; iOS keeps AVC or HEVC codec 
 
 ### Comparison previews
 
-After export, swipe through cached before/after previews: a six-second reveal and an uncropped collage for photos, or a centered excerpt up to ten seconds for videos. Batches preview up to two successful items. Previews use the final adjustments and include a small AquaRestore credit. Download saves the selected preview to the gallery; Share saves it first and opens system sharing. Dismissing the result removes the cached previews, and startup removes leftovers. Ordinary exports remain unchanged.
+After export, swipe through cached before/after previews: a six-second reveal and an uncropped collage for photos, or a centered excerpt up to six seconds for videos. Batches preview up to two successful items. Previews use the final adjustments and include a small AquaRestore credit. Download saves the selected preview to the gallery; Share saves it first and opens system sharing. Dismissing the result removes the cached previews, and startup removes leftovers. Ordinary exports remain unchanged.
 
 Store builds can request a rating once after five successfully saved videos or ten photos. Only local counters and a request flag are stored; the app cannot tell whether a rating was submitted. GitHub APK and TestFlight builds do not request public store ratings.
 

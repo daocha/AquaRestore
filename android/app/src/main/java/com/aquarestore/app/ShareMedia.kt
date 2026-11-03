@@ -17,10 +17,13 @@ data class ShareMedia(val file: File, val video: Boolean, var saved: Uri? = null
 
 object ShareMediaMaker {
     private fun destination(context: Context, ext: String) = File(File(context.cacheDir, "share-previews").apply { mkdirs() }, "${UUID.randomUUID()}.$ext")
-    suspend fun make(context: Context, request: ExportRequest, restored: Uri): List<ShareMedia> = withContext(Dispatchers.Default) {
+    suspend fun make(context: Context, request: ExportRequest): List<ShareMedia> = withContext(Dispatchers.Default) {
         val result = mutableListOf<ShareMedia>()
+        var parallelMovie: Deferred<List<ShareMedia>>? = null
         try {
             if (!request.source.video) {
+                val movie = async { video(context, request) }
+                parallelMovie = movie
                 val o = ExportRecommendation.photo(request.source.width, request.source.height, request.source.mime)
                 val original = MediaIO.bitmap(context, request.source.uri, if (o.original) 0 else o.longEdge)
                 try {
@@ -33,37 +36,23 @@ object ShareMediaMaker {
                             try { file.outputStream().use { check(collage.compress(if (o.png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, o.quality, it)) }; result += ShareMedia(file, false) }
                             catch (e: Exception) { file.delete(); throw e }
                         } finally { collage.recycle() }
-                        val (w, h) = SharingPlan.videoSize(original.width, original.height)
-                        val file = destination(context, "mp4")
-                        try {
-                            encode(file, w, h, 6_000) { _, fraction -> reveal(context, original, after, w, h, fraction) }
-                            result.add(0, ShareMedia(file, true))
-                        } catch (e: Exception) { file.delete(); throw e }
+                        result.addAll(0, movie.await())
                     } finally { after.recycle() }
                 } finally { original.recycle() }
             } else {
-                MediaMetadataRetriever().use { before -> MediaMetadataRetriever().use { after ->
-                    before.setDataSource(context, request.source.uri); after.setDataSource(context, restored)
-                    val duration = after.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: error("Missing duration")
-                    val (start, length) = SharingPlan.clip(duration)
-                    val output = MediaIO.inspect(context, restored)
-                    val (w, h) = SharingPlan.videoSize(min(request.source.width, output.width), min(request.source.height, output.height))
-                    val file = destination(context, "mp4")
-                    try {
-                        encode(file, w, h, length) { ms, fraction ->
-                            val t = start + ms
-                            val b = before.getScaledFrameAtTime((request.options.startMs + (t * request.options.speed).toLong()) * 1000,
-                                MediaMetadataRetriever.OPTION_CLOSEST, w, h) ?: error("Missing original frame")
-                            val a = after.getScaledFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST, w, h) ?: run { b.recycle(); error("Missing restored frame") }
-                            try { reveal(context, b, a, w, h, fraction) } finally { b.recycle(); a.recycle() }
-                        }
-                        result += ShareMedia(file, true)
-                    } catch (e: Exception) { file.delete(); throw e }
-                } }
+                result += video(context, request)
             }
         } catch (e: CancellationException) { result.forEach { it.file.delete() }; throw e }
         catch (e: Exception) { android.util.Log.w("AquaRestore", "Comparison preview unavailable", e) }
         catch (_: OutOfMemoryError) { android.util.Log.w("AquaRestore", "Comparison preview needs too much memory") }
+        finally {
+            parallelMovie?.let { movie ->
+                if (result.none { it.video }) {
+                    movie.cancel()
+                    withContext(NonCancellable) { runCatching { movie.await() }.getOrDefault(emptyList()).forEach { it.file.delete() } }
+                }
+            }
+        }
         result
     }
 
@@ -91,18 +80,6 @@ object ShareMediaMaker {
         val w = bitmap.width * scale; val h = bitmap.height * scale
         canvas.drawBitmap(bitmap, null, RectF(rect.centerX() - w/2, rect.centerY() - h/2, rect.centerX() + w/2, rect.centerY() + h/2), Paint(Paint.FILTER_BITMAP_FLAG))
     }
-    private fun reveal(context: Context, before: Bitmap, after: Bitmap, w: Int, h: Int, fraction: Float): Bitmap {
-        val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val c = Canvas(image)
-        c.drawColor(Color.BLACK); val bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()); fit(c, before, bounds)
-        val reveal = ((fraction - .25f) / .5f).coerceIn(0f, 1f)
-        c.save(); c.clipRect(0f, 0f, w * reveal, h.toFloat()); fit(c, after, bounds); c.restore()
-        if (reveal > 0 && reveal < 1) c.drawLine(w * reveal, 0f, w * reveal, h.toFloat(), Paint().apply { color = Color.WHITE; strokeWidth = max(1f, w / 400f) })
-        val size = min(w, h) * .04f
-        if (reveal < 1) label(c, "Original", w * .025f, h * .07f, size)
-        if (reveal > .3f) label(c, "Restored", w * .025f, h * .14f, size)
-        brand(context, c, w, h)
-        return image
-    }
     private fun label(c: Canvas, text: String, x: Float, y: Float, size: Float) {
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = size; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(size * .15f, 0f, 1f, Color.BLACK) }
         c.drawText(text, x, y, p)
@@ -115,60 +92,32 @@ object ShareMediaMaker {
         label(c, "AquaRestore", left + size * 1.25f, bottom - size * .1f, size * .7f)
     }
 
-    private suspend fun encode(file: File, w: Int, h: Int, duration: Long, frame: (Long, Float) -> Bitmap) {
-        require(duration > 0)
-        val codec = MediaCodec.createEncoderByType("video/avc")
-        val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var started = false; var track = -1
+    private suspend fun video(context: Context, request: ExportRequest): List<ShareMedia> {
+        val source = request.source
+        val duration = if (source.video) (request.options.trimmedMs(source.durationMs) / request.options.speed).toLong() else 6000L
+        val (offset, length) = if (source.video) SharingPlan.clip(duration) else 0L to duration
+        val (w, h) = SharingPlan.videoSize(source.width, source.height)
+        val start = if (source.video) request.options.startMs + (offset * request.options.speed).toLong() else 0L
+        val end = if (source.video) minOf(source.durationMs, start + (length * request.options.speed).toLong()) else 0L
+        val file = destination(context, "mp4")
+        val mark = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        brand(context, Canvas(mark), w, h)
         try {
-            codec.configure(MediaFormat.createVideoFormat("video/avc", w, h).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-                setInteger(MediaFormat.KEY_BIT_RATE, max(500_000, w * h * 4))
-                setInteger(MediaFormat.KEY_FRAME_RATE, 24); setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            codec.start()
-            val count = max(1, (duration * 24 / 1000).toInt()); var input = 0; var eos = false
-            val deadline = android.os.SystemClock.elapsedRealtime() + 60_000
-            val info = MediaCodec.BufferInfo(); val pixels = IntArray(w * h)
-            while (!eos) {
-                currentCoroutineContext().ensureActive()
-                check(android.os.SystemClock.elapsedRealtime() < deadline) { "Comparison encoder timed out" }
-                if (input <= count) {
-                    val index = codec.dequeueInputBuffer(10_000)
-                    if (index >= 0) {
-                        if (input == count) codec.queueInputBuffer(index, 0, 0, duration * 1000, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        else {
-                            val bitmap = frame(input * 1000L / 24, input.toFloat() / max(1, count - 1))
-                            try { bitmap.getPixels(pixels, 0, w, 0, 0, w, h) } finally { bitmap.recycle() }
-                            val image = codec.getInputImage(index) ?: error("No encoder image")
-                            val planes = image.planes
-                            for (y in 0 until h) for (x in 0 until w) {
-                                val rgb = pixels[y*w+x]; val r = (rgb shr 16) and 255; val g = (rgb shr 8) and 255; val b = rgb and 255
-                                planes[0].buffer.put(y * planes[0].rowStride + x * planes[0].pixelStride, (((66*r+129*g+25*b+128) shr 8)+16).coerceIn(0,255).toByte())
-                                if (x % 2 == 0 && y % 2 == 0) {
-                                    planes[1].buffer.put(y/2 * planes[1].rowStride + x/2 * planes[1].pixelStride, (((-38*r-74*g+112*b+128) shr 8)+128).coerceIn(0,255).toByte())
-                                    planes[2].buffer.put(y/2 * planes[2].rowStride + x/2 * planes[2].pixelStride, (((112*r-94*g-18*b+128) shr 8)+128).coerceIn(0,255).toByte())
-                                }
-                            }
-                            codec.queueInputBuffer(index, 0, w*h*3/2, input * 1_000_000L / 24, 0)
-                        }
-                        input++
-                    }
-                }
-                var out = codec.dequeueOutputBuffer(info, 10_000)
-                if (out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { track = muxer.addTrack(codec.outputFormat); muxer.start(); started = true }
-                while (out >= 0) {
-                    if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
-                        check(started); val bytes = codec.getOutputBuffer(out)!!; bytes.position(info.offset); bytes.limit(info.offset + info.size); muxer.writeSampleData(track, bytes, info)
-                    }
-                    eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    codec.releaseOutputBuffer(out, false); out = codec.dequeueOutputBuffer(info, 0)
-                }
+            val effects = MediaIO.resizeEffect(source, maxOf(w, h)) + listOf<androidx.media3.common.Effect>(
+                FrameRateCap(30f), ComparisonEffect(request.grade, length * 1000),
+                androidx.media3.effect.OverlayEffect(java.util.ArrayList<androidx.media3.effect.TextureOverlay>().apply {
+                    add(androidx.media3.effect.BitmapOverlay.createStaticBitmapOverlay(mark)) })
+            )
+            withTimeout(60_000) {
+                MediaIO.transform(context, source, file, effects,
+                    maxOf(500_000, w * h * 4), if (source.keepsHdr) "video/hevc" else "video/avc", true,
+                    speed = if (source.video) request.options.speed else 1f, startMs = start, endMs = end,
+                    audio = AudioMix(originalVolume = 0f), imageDurationMs = if (source.video) 0 else 6000) { }
             }
-        } finally {
-            runCatching { codec.stop() }; codec.release()
-            try { if (started) muxer.stop() } finally { muxer.release() }
-        }
+            return listOf(ShareMedia(file, true))
+        } catch (e: CancellationException) { file.delete(); throw e }
+        catch (e: Exception) { file.delete(); android.util.Log.w("AquaRestore", "Comparison video unavailable", e); return emptyList() }
+        finally { mark.recycle() }
     }
 
     suspend fun save(context: Context, media: ShareMedia): Uri = withContext(Dispatchers.IO) {

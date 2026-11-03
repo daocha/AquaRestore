@@ -9,7 +9,7 @@ object SharingPlan {
         return max(2, (width * scale).toInt() / 2 * 2) to max(2, (height * scale).toInt() / 2 * 2)
     }
     fun clip(durationMs: Long): Pair<Long, Long> {
-        val length = min(10_000L, durationMs)
+        val length = min(6_000L, durationMs)
         return (durationMs - length) / 2 to length
     }
     fun eligible(videos: Int, photos: Int) = videos >= 5 || photos >= 10

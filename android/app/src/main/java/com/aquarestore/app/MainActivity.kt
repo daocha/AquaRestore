@@ -429,6 +429,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         var resultWorking by remember { mutableStateOf(false) }
         fun dismissResult() {
             if (resultWorking) return
+            ComparisonWork.dismiss()
             export.comparisons.forEach { it.file.delete() }
             Exports.status.value = ExportStatus()
             (context as? android.app.Activity)?.let { RatingReminder.requestIfEligible(it) }
@@ -437,6 +438,12 @@ private fun Editor(model: EditorModel, s: Strings) {
             title = { Text(if (export.error != null) s.text("Export failed", "匯出失敗") else s[export.stage]) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (export.comparisonsBusy) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
+                            Text(s.text("Your export is saved. Preparing comparison previews…", "作品已儲存，正在準備比較預覽…"))
+                        }
+                    }
                     if (export.comparisons.isNotEmpty()) SharePreview(export.comparisons, s) { resultWorking = it }
                     if (export.comparisonUnavailable) Text(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。"))
                     export.error?.let { Text(s[it]) }

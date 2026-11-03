@@ -332,7 +332,7 @@ class EditorUiTest {
         input.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
         val source = SourceMedia(Uri.fromFile(input), input.name, false, 160, 240)
         val previews = kotlinx.coroutines.runBlocking {
-            ShareMediaMaker.make(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false), source.uri)
+            ShareMediaMaker.make(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false))
         }
         try {
             assertEquals(2, previews.size)
@@ -350,6 +350,31 @@ class EditorUiTest {
             previews.forEach { it.file.delete() }; input.delete()
             ui.runOnUiThread { Exports.status.value = ExportStatus() }
         }
+    }
+    @Test fun primaryResultAppearsWhileComparisonRunsAndDismissCancelsIt() {
+        val input = File(ui.activity.cacheDir, "comparison-parallel-test.png")
+        val bitmap = Bitmap.createBitmap(160, 240, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.BLUE)
+        input.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val source = SourceMedia(Uri.fromFile(input), input.name, false, 160, 240)
+        var entry: ComparisonWork.Entry? = null
+        try {
+            ui.runOnUiThread {
+                ComparisonWork.reset()
+                entry = ComparisonWork.submit(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false))
+                ComparisonWork.accept(entry)
+                ComparisonWork.finish(ExportStatus(stage = "saved", uri = source.uri))
+                assertFalse(Exports.status.value.busy)
+                assertTrue(Exports.status.value.comparisonsBusy)
+            }
+            ui.onNodeWithText("Done").assertIsDisplayed().performClick()
+            ui.waitUntil(10_000) { entry!!.done }
+            ui.runOnIdle {
+                assertFalse(Exports.status.value.comparisonsBusy)
+                assertTrue(Exports.status.value.comparisons.isEmpty())
+                assertTrue(entry!!.assets.none { it.file.exists() })
+            }
+        } finally { ComparisonWork.dismiss(); input.delete(); Exports.status.value = ExportStatus() }
     }
     @Test fun batchAccessPersistsIndependentlyOfDeveloperTools() {
         val context = ui.activity

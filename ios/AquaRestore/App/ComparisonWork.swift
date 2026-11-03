@@ -1,0 +1,63 @@
+import Foundation
+
+@MainActor
+enum ComparisonWork {
+    final class Entry {
+        var accepted = false
+        var rejected = false
+        var done = false
+        var assets: [ShareMedia] = []
+        var task: Task<Void, Never>?
+    }
+    private final class Session {
+        var entries: [Entry] = []
+        var terminal: ExportStatus?
+    }
+    private static var session: Session?
+    private static var previousWorker: Task<Void, Never>?
+    static func reset() { dismiss(); session = Session() }
+    static func dismiss() {
+        let old = session; session = nil
+        old?.entries.forEach { $0.task?.cancel(); ShareMediaMaker.remove($0.assets) }
+    }
+    static func submit(_ request: ExportRequest) -> Entry? {
+        guard let owner = session, owner.entries.filter({ !$0.rejected }).count < 2 else { return nil }
+        let entry = Entry(); owner.entries.append(entry)
+        // A hard link keeps batch imports alive without copying a potentially large video.
+        let url = ShareMediaMaker.root.appendingPathComponent("source-\(UUID().uuidString).\(request.source.url.pathExtension)")
+        do {
+            try FileManager.default.createDirectory(at: ShareMediaMaker.root, withIntermediateDirectories: true)
+            try FileManager.default.linkItem(at: request.source.url, to: url)
+        } catch { entry.done = true; return entry }
+        var source = request.source; source.url = url
+        let input = ExportRequest(source: source, grade: request.grade, options: request.options, chinese: request.chinese)
+        let predecessor = previousWorker
+        let task = Task {
+            defer { try? FileManager.default.removeItem(at: url) }
+            await predecessor?.value
+            if !Task.isCancelled { entry.assets = await ShareMediaMaker.make(input) }
+            entry.done = true
+            if session !== owner || entry.rejected { ShareMediaMaker.remove(entry.assets) }
+            else { refresh(owner) }
+        }
+        entry.task = task; previousWorker = task
+        return entry
+    }
+    static func accept(_ entry: Entry?) { entry?.accepted = true }
+    static func reject(_ entry: Entry?) {
+        entry?.rejected = true; entry?.task?.cancel()
+        if let entry { ShareMediaMaker.remove(entry.assets) }
+    }
+    static func finish(_ terminal: ExportStatus) {
+        guard let owner = session else { Exports.shared.status = terminal; return }
+        owner.terminal = terminal; refresh(owner)
+    }
+    private static func refresh(_ owner: Session) {
+        guard session === owner, var terminal = owner.terminal else { return }
+        let entries = owner.entries.filter { $0.accepted && !$0.rejected }
+        terminal.comparisons = entries.flatMap(\.assets)
+        terminal.comparisonsBusy = entries.contains { !$0.done }
+        terminal.comparisonUnavailable = entries.contains { $0.done && ($0.assets.isEmpty || ($0.assets.count == 1 && !$0.assets[0].video)) }
+        Exports.shared.status = terminal
+    }
+}
