@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -32,7 +33,7 @@ fun SharePreview(items: List<ShareMedia>, s: Strings, busyChanged: (Boolean) -> 
     var working by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth().height(230.dp), userScrollEnabled = !working) { page ->
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth().height(230.dp).testTag("comparisonPager"), userScrollEnabled = !working) { page ->
             val item = items[page]
             if (item.video) {
                 val player = remember(item.file) { ExoPlayer.Builder(context).build().apply {

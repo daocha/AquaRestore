@@ -21,6 +21,7 @@ struct ExportStatus: Equatable {
     var error: String?
     var batch: BatchExportStatus?
     var comparisons: [ShareMedia] = []
+    var comparisonUnavailable = false
 }
 
 /// Photos or videos already copied out of the Photos library, each graded automatically and exported whole.
@@ -93,7 +94,7 @@ final class Exports: ObservableObject {
                             stage: stage == "paused" && AppActivity.active ? "restarting" : stage)
                     }
                 }
-                terminal = ExportStatus(progress: 100, stage: "saved", saved: true, comparisons: previews)
+                terminal = ExportStatus(progress: 100, stage: "saved", saved: true, comparisons: previews, comparisonUnavailable: previews.count < (request.source.video ? 1 : 2))
             } catch is CancellationError {
                 terminal = ExportStatus(stage: "cancelled")
             } catch {
@@ -178,6 +179,7 @@ final class Exports: ObservableObject {
             self.batchItem = -1
             self.task = nil
             self.batch?.currentName = nil
+            terminal.comparisonUnavailable = self.comparisons.count < min(2, self.batch?.saved ?? 0) * (request.videos ? 1 : 2)
             terminal.comparisons = self.comparisons
             self.comparisons = []
             terminal.batch = self.batch

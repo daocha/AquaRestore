@@ -301,24 +301,25 @@ struct EditorView: View {
         if !export.busy && (export.saved || export.error != nil || export.stage == "cancelled" || export.batch != nil) {
             M3Dialog(title: export.error != nil ? s.text("Export failed", "匯出失敗") : s[export.stage], dismiss: { exports.dismissResult() }) {
                 ScrollIfNeeded(maxHeight: max(100, screenHeight - 220)) {
-                VStack(alignment: .leading, spacing: 12) {
-                if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
-                if let batch = export.batch {
-                    ScrollIfNeeded(maxHeight: 320) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            MText(batch.resultText(s))
-                            ForEach(batch.failures.indices, id: \.self) { i in
-                                MText("\(batch.failures[i].name)\n\(s[batch.failures[i].error])", size: 12)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
+                        if export.comparisonUnavailable { MText(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。")) }
+                        if let batch = export.batch {
+                            ScrollIfNeeded(maxHeight: 320) {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    MText(batch.resultText(s))
+                                    ForEach(batch.failures.indices, id: \.self) { i in
+                                        MText("\(batch.failures[i].name)\n\(s[batch.failures[i].error])", size: 12)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                        } else {
+                            MText(export.error.map { s[$0] } ?? (export.saved
+                                ? s.text("Find your restored media in Photos.", "還原作品已儲存至相簿。")
+                                : s.text("No unfinished file was added to your Photos library.", "相簿不會留下未完成的檔案。")))
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                } else {
-                    MText(export.error.map { s[$0] } ?? (export.saved
-                        ? s.text("Find your restored media in Photos.", "還原作品已儲存至相簿。")
-                        : s.text("No unfinished file was added to your Photos library.", "相簿不會留下未完成的檔案。")))
-                }
-                }
                 }
             } buttons: {
                 if export.saved {

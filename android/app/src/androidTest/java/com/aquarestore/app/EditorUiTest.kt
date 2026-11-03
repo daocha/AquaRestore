@@ -325,6 +325,32 @@ class EditorUiTest {
             assertNull(model.source.value)
         }
     }
+    @Test fun comparisonPreviewSwipesDownloadsAndCleansCache() {
+        val input = File(ui.activity.cacheDir, "comparison-ui-test.png")
+        val bitmap = Bitmap.createBitmap(160, 240, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.rgb(70, 110, 150))
+        input.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val source = SourceMedia(Uri.fromFile(input), input.name, false, 160, 240)
+        val previews = kotlinx.coroutines.runBlocking {
+            ShareMediaMaker.make(ui.activity, ExportRequest(source, Grade.Neutral, ExportOptions(), false), source.uri)
+        }
+        try {
+            assertEquals(2, previews.size)
+            ui.runOnUiThread { Exports.status.value = ExportStatus(stage = "saved", comparisons = previews, uri = source.uri) }
+            ui.onNodeWithText("Share").assertIsDisplayed()
+            ui.onNodeWithText("Download").assertIsDisplayed()
+            ui.onNodeWithTag("comparisonPager").performTouchInput { swipeLeft() }
+            ui.onNodeWithContentDescription("Original and restored").assertIsDisplayed()
+            ui.onNodeWithText("Download").performClick()
+            ui.waitUntil(10_000) { previews[1].saved != null }
+            previews[1].saved?.let { uris += it }
+            ui.onNodeWithText("Done").performClick()
+            ui.runOnIdle { assertTrue(previews.none { it.file.exists() }) }
+        } finally {
+            previews.forEach { it.file.delete() }; input.delete()
+            ui.runOnUiThread { Exports.status.value = ExportStatus() }
+        }
+    }
     @Test fun batchAccessPersistsIndependentlyOfDeveloperTools() {
         val context = ui.activity
         val prefs = context.getSharedPreferences("localFeatures", 0)
