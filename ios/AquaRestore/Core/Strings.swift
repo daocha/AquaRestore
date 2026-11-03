@@ -13,6 +13,7 @@ struct Strings {
         "exporting": ("Restoring at export quality…", "正在以匯出畫質還原…"),
         "encoding": ("Encoding your image…", "正在編碼圖片…"),
         "saving": ("Saving to your gallery…", "正在儲存至相簿…"),
+        "comparison": ("Preparing comparison preview…", "正在準備比較預覽…"),
         "saved": ("Saved to your gallery", "已儲存至相簿"),
         "cancelled": ("Export cancelled", "已取消匯出"),
         "preparing": ("Getting your media from Photos…", "正在從相簿取得素材…"),

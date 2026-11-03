@@ -23,9 +23,11 @@ struct EditorView: View {
     @ObservedObject var model: EditorModel
     @ObservedObject private var exports = Exports.shared
     @ObservedObject private var devTools = DevTools.shared
+    @ObservedObject private var batchAccess = BatchAccess.shared
     @Environment(\.palette) private var c
     @Environment(\.strings) private var s
     @Environment(\.compact) private var compact
+    @Environment(\.screenHeight) private var screenHeight
 
     @State private var settings = false
     @State private var showExport = false
@@ -219,17 +221,18 @@ struct EditorView: View {
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
             .accessibilityIdentifier("importMedia")
             .disabled(busy)
+        if batchAccess.enabled {
         M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
             .disabled(busy)
         MText(s.text("Up to \(BatchLimits.photos) photos · automatic restoration · keep the app open", "最多 \(BatchLimits.photos) 張照片 · 自動智慧還原 · 請保持 App 開啟"),
               size: 12, color: c.onSurfaceVariant)
-        // Batch videos is a developer tool for now, as on Android: ten taps on the version in Settings.
-        if devTools.enabled {
+        }
+        if batchAccess.enabled {
             M3Button(title: s.text("Batch restore videos", "批次還原影片"), icon: .videoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                      height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: true) }
                 .disabled(busy)
-            MText(s.text("Developer tools · up to \(BatchLimits.videos) videos · keep the app open", "開發者工具 · 最多 \(BatchLimits.videos) 段影片 · 請保持 App 開啟"),
+            MText(s.text("Up to \(BatchLimits.videos) videos · keep the app open", "最多 \(BatchLimits.videos) 段影片 · 請保持 App 開啟"),
                   size: 12, color: c.onSurfaceVariant)
         }
         Panel {
@@ -297,6 +300,9 @@ struct EditorView: View {
         }
         if !export.busy && (export.saved || export.error != nil || export.stage == "cancelled" || export.batch != nil) {
             M3Dialog(title: export.error != nil ? s.text("Export failed", "匯出失敗") : s[export.stage], dismiss: { exports.dismissResult() }) {
+                ScrollIfNeeded(maxHeight: max(100, screenHeight - 220)) {
+                VStack(alignment: .leading, spacing: 12) {
+                if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
                 if let batch = export.batch {
                     ScrollIfNeeded(maxHeight: 320) {
                         VStack(alignment: .leading, spacing: 12) {
@@ -312,11 +318,13 @@ struct EditorView: View {
                         ? s.text("Find your restored media in Photos.", "還原作品已儲存至相簿。")
                         : s.text("No unfinished file was added to your Photos library.", "相簿不會留下未完成的檔案。")))
                 }
+                }
+                }
             } buttons: {
                 if export.saved {
-                    M3TextButton(title: s.text("Open", "開啟")) { Platform.openPhotos(); exports.dismissResult() }
+                    M3TextButton(title: s.text("Open", "開啟")) { Platform.openPhotos(); exports.dismissResult() }.disabled(exports.resultActionBusy)
                 }
-                M3TextButton(title: s.text("Done", "完成")) { exports.dismissResult() }
+                M3TextButton(title: s.text("Done", "完成")) { exports.dismissResult() }.disabled(exports.resultActionBusy)
             }
         }
         if settings { SettingsDialog(model: model) { settings = false } }

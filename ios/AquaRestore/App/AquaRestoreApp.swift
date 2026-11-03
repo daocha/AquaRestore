@@ -4,6 +4,7 @@ import SwiftUI
 struct AquaRestoreApp: App {
     @StateObject private var model = EditorModel()
     @Environment(\.scenePhase) private var scenePhase
+    init() { ShareMediaMaker.cleanup() }
     var body: some Scene {
         WindowGroup {
             RootView(model: model)

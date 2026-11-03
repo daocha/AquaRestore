@@ -26,8 +26,13 @@ targets:
         excludes: ["Core/Tuning"]
       - path: ../core/ios/Core
       - path: ../core/ios/App
+    preBuildScripts:
+      - name: Prepare local features
+        script: 'python3 "$SRCROOT/../scripts/prepare-ios-features.py"'
+        basedOnDependencyAnalysis: false
     settings:
       base:
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app
         PRODUCT_NAME: AquaRestore
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

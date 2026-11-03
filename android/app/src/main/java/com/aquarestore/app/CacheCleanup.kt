@@ -14,6 +14,7 @@ object CacheCleanup {
     fun onProcessStart(context: Context) {
         if (done) return
         done = true
+        File(context.cacheDir, "share-previews").deleteRecursively()
         context.cacheDir.listFiles { file -> file.isFile && (file.name.startsWith("preview-") || file.name.startsWith("export-")) }
             ?.forEach(File::delete)
         // An APK waiting for the install permission is kept; AppUpdates installs it on resume.

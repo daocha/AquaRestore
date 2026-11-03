@@ -20,6 +20,7 @@ struct ExportStatus: Equatable {
     var saved = false
     var error: String?
     var batch: BatchExportStatus?
+    var comparisons: [ShareMedia] = []
 }
 
 /// Photos or videos already copied out of the Photos library, each graded automatically and exported whole.
@@ -66,6 +67,8 @@ final class Exports: ObservableObject {
     static let shared = Exports()
     @Published var status = ExportStatus()
     private var task: Task<Void, Never>?
+    @Published var resultActionBusy = false
+    private var comparisons: [ShareMedia] = []
 
     func activityChanged(_ active: Bool) {
         AppActivity.set(active)
@@ -76,20 +79,21 @@ final class Exports: ObservableObject {
 
     func start(_ request: ExportRequest) {
         if status.busy { return }
+        ShareMediaMaker.remove(status.comparisons); comparisons = []
         batch = nil
         status = ExportStatus(busy: true)
         Platform.keepScreenAwake(true)
         task = Task { [weak self] in
             var terminal = ExportStatus(error: "exportFailed")
             do {
-                try await Exporter.run(request) { progress, stage in
+                let previews = try await Exporter.run(request) { progress, stage in
                     DispatchQueue.main.async { [weak self] in
                         guard let self, self.status.busy else { return }
                         self.status = ExportStatus(busy: true, progress: progress,
                             stage: stage == "paused" && AppActivity.active ? "restarting" : stage)
                     }
                 }
-                terminal = ExportStatus(progress: 100, stage: "saved", saved: true)
+                terminal = ExportStatus(progress: 100, stage: "saved", saved: true, comparisons: previews)
             } catch is CancellationError {
                 terminal = ExportStatus(stage: "cancelled")
             } catch {
@@ -117,6 +121,7 @@ final class Exports: ObservableObject {
 
     func startBatch(_ request: BatchRequest) {
         if status.busy { request.folders.forEach { try? FileManager.default.removeItem(at: $0) }; return }
+        ShareMediaMaker.remove(status.comparisons); comparisons = []
         // The player starts watching for this too, but a batch starts from the home screen, without a player.
         AppActivity.observe()
         batch = BatchExportStatus(total: request.total, failures: request.failures, videos: request.videos)
@@ -146,11 +151,12 @@ final class Exports: ObservableObject {
                         if request.videos, let size = BatchRun.estimatedBytes(source, options),
                            let free = BatchRun.freeSpace, free < batchVideoSpace([size]) { throw MediaProblem("storageFull") }
                         self.batchItem = index
-                        try await Exporter.run(ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)) { progress, stage in
+                        let previews = try await Exporter.run(ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese), comparison: (self.batch?.saved ?? 0) < 2) { progress, stage in
                             DispatchQueue.main.async { if self.batchItem == index { self.publish(progress, stage) } }
                         }
                         self.batchItem = -1
                         self.batch?.saved += 1
+                        self.comparisons += previews
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
@@ -172,6 +178,8 @@ final class Exports: ObservableObject {
             self.batchItem = -1
             self.task = nil
             self.batch?.currentName = nil
+            terminal.comparisons = self.comparisons
+            self.comparisons = []
             terminal.batch = self.batch
             self.batch = nil
             self.status = terminal
@@ -179,7 +187,15 @@ final class Exports: ObservableObject {
     }
 
     func cancel() { task?.cancel() }
-    func dismissResult() { status = ExportStatus() }
+    func dismissResult() {
+        guard !resultActionBusy else { return }
+        ShareMediaMaker.remove(status.comparisons)
+        status = ExportStatus()
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !status.busy { RatingReminder.requestIfEligible() }
+        }
+    }
 }
 
 /// Runs on the main actor with the batch, so its `waiting` callbacks can update the export status directly.
@@ -208,7 +224,7 @@ enum BatchRun {
 enum Exporter {
     typealias Update = @Sendable (Int?, String) -> Void
 
-    static func run(_ request: ExportRequest, update: @escaping Update) async throws {
+    static func run(_ request: ExportRequest, comparison: Bool = true, update: @escaping Update) async throws -> [ShareMedia] {
         await MainActor.run { AppActivity.observe() }
         let o = request.options
         let source = request.source
@@ -230,6 +246,11 @@ enum Exporter {
         // cannot leave a saved file while the UI says "cancelled".
         let name = exportFileName(sourceName: source.name, extension: ext)
         try await Task.detached { try await PhotoSaver.save(file.url, video: source.video, name: name) }.value
+        await MainActor.run { RatingReminder.saved(video: source.video) }
+        guard comparison else { return [] }
+        update(99, "comparison")
+        // Publication has completed. A preview failure or cancellation cannot undo that success.
+        return await ShareMediaMaker.make(request, restored: file.url)
     }
 
     // MARK: Photo

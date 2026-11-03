@@ -22,7 +22,7 @@ data class ExportRequest(val source: SourceMedia, val grade: Grade, val options:
     val audio: AudioMix = AudioMix()) : ExportWork
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
     val stage: String = "exporting", val uri: Uri? = null, val error: String? = null,
-    val batch: BatchExportStatus? = null)
+    val batch: BatchExportStatus? = null, val comparisons: List<ShareMedia> = emptyList())
 
 const val EXPORT_RESULT_NOTIFICATION = 8
 
@@ -55,6 +55,7 @@ object Exports {
     internal var request: ExportWork? = null
     fun start(context: Context, request: ExportWork) {
         if (status.value.busy) return
+        status.value.comparisons.forEach { it.file.delete() }
         this.request = request
         val batch = request.batchStatus()
         status.value = ExportStatus(busy = true, batch = batch)
@@ -74,6 +75,8 @@ class ExportService : Service() {
     private var lastNotification = 0L
     private var chinese = false
     private var batch: BatchExportStatus? = null
+    private val comparisons = mutableListOf<ShareMedia>()
+    private var previewedItems = 0
     /** Android ended the export because the service used up its daily foreground time, not the user. */
     private var timedOut = false
     override fun onBind(intent: Intent?): IBinder? = null
@@ -91,6 +94,7 @@ class ExportService : Service() {
         val request = Exports.request ?: run { stopSelf(); return START_NOT_STICKY }
         chinese = request.chinese
         batch = request.batchStatus()
+        comparisons.clear(); previewedItems = 0
         timedOut = false
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("exports", "AquaRestore", NotificationManager.IMPORTANCE_LOW))
@@ -130,7 +134,7 @@ class ExportService : Service() {
                 // Sent before the status changes; the system still shows it a moment later, asynchronously.
                 if (!Exports.appVisible) try { notifyResult(terminal.copy(batch = batch)) }
                     catch (e: Exception) { android.util.Log.w("AquaRestore", "Could not post the export result", e) }
-                Exports.status.value = terminal.copy(batch = batch)
+                Exports.status.value = terminal.copy(batch = batch, comparisons = comparisons.toList())
             }
         }
         return START_NOT_STICKY
@@ -331,13 +335,22 @@ class ExportService : Service() {
             }
             // Once publication starts, finish the short transaction and report success. Otherwise
             // cancelling at 99% could leave a saved file while the UI incorrectly says "cancelled".
-            return withContext(NonCancellable) {
+            val result = withContext(NonCancellable) {
                 withContext(Dispatchers.IO) {
                     check(contentResolver.update(savedUri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) == 1)
                 }
                 published = true
+                RatingReminder.saved(this@ExportService, source.video)
                 savedUri
             }
+            if (previewedItems < 2) {
+                previewedItems++
+                try {
+                    update(99, "comparison")
+                    comparisons += ShareMediaMaker.make(this, request, savedUri)
+                } catch (_: CancellationException) { /* The primary export is already saved. */ }
+            }
+            return result
         } finally {
             temp.delete()
             if (!published) pending?.let { withContext(NonCancellable + Dispatchers.IO) { contentResolver.delete(it, null, null) } }
