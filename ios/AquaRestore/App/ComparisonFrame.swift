@@ -4,7 +4,7 @@ import UIKit
 
 /// Composes decoded textures directly; no per-frame seeking, bitmap extraction or CPU pixel copies.
 enum ComparisonFrame {
-    private static let context = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
+    private static let context = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: false, .workingColorSpace: NSNull()])
     private static let queue = DispatchQueue(label: "AquaRestore.comparison.compose", qos: .utility)
 
     static func originalImage(_ image: CIImage, instruction: GradeInstruction, size: CGSize) -> CIImage {
@@ -39,17 +39,26 @@ enum ComparisonFrame {
     private static func compose(_ request: AVAsynchronousVideoCompositionRequest, instruction: GradeInstruction,
                                 original: CIImage, graded: CVPixelBuffer, output: CVPixelBuffer, duration: Double) {
         queue.async {
-            let width = CGFloat(CVPixelBufferGetWidth(output)), height = CGFloat(CVPixelBufferGetHeight(output))
-            let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            let progress = min(1, max(0, (request.compositionTime.seconds / max(duration, 0.001) - 0.25) / 0.5))
-            let split = width * CGFloat(progress)
-            var image = CIImage(cvPixelBuffer: graded).cropped(to: CGRect(x: 0, y: 0, width: split, height: height)).composited(over: original)
-            if progress > 0 && progress < 1 {
-                image = CIImage(color: .white).cropped(to: CGRect(x: split, y: 0, width: max(1, width/400), height: height)).composited(over: image)
-            }
-            if let mark = instruction.comparisonMark { image = CIImage(cgImage: mark).composited(over: image) }
-            context.render(image, to: output, bounds: bounds, colorSpace: nil)
+            renderReveal(original: original, graded: CIImage(cvPixelBuffer: graded),
+                         mark: instruction.comparisonMark.map { CIImage(cgImage: $0) },
+                         fraction: request.compositionTime.seconds / max(duration, 0.001), to: output)
             request.finish(withComposedVideoFrame: output)
         }
     }
+    static func renderImage(_ image: CIImage, to output: CVPixelBuffer) {
+        let bounds = CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(output), height: CVPixelBufferGetHeight(output))
+        context.render(image, to: output, bounds: bounds, colorSpace: nil)
+    }
+    static func renderReveal(original: CIImage, graded: CIImage, mark: CIImage?, fraction: Double, to output: CVPixelBuffer) {
+        let width = CGFloat(CVPixelBufferGetWidth(output)), height = CGFloat(CVPixelBufferGetHeight(output))
+        let progress = min(1, max(0, (fraction - 0.25) / 0.5))
+        let split = width * CGFloat(progress)
+        var image = graded.cropped(to: CGRect(x: 0, y: 0, width: split, height: height)).composited(over: original)
+        if progress > 0 && progress < 1 {
+            image = CIImage(color: .white).cropped(to: CGRect(x: split, y: 0, width: max(1, width/400), height: height)).composited(over: image)
+        }
+        if let mark { image = mark.composited(over: image) }
+        renderImage(image, to: output)
+    }
+
 }

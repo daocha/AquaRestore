@@ -52,4 +52,20 @@ final class ComparisonWorkTests: XCTestCase {
         XCTAssertEqual(image.extent.height, 320, accuracy: 0.01)
     }
 
+    @MainActor
+    func testVideoCanBePreviewedBeforeCollageFinishes() {
+        let entry = ComparisonWork.Entry()
+        let movie = ShareMedia(url: URL(fileURLWithPath: "/tmp/reveal.mp4"), video: true)
+        let collage = ShareMedia(url: URL(fileURLWithPath: "/tmp/collage.jpg"), video: false)
+        entry.assets = [movie]
+        XCTAssertFalse(entry.done)
+        XCTAssertEqual(entry.previewAssets, [movie])
+        entry.assets.append(collage)
+        XCTAssertEqual(entry.previewAssets, [movie, collage])
+        entry.assets = [collage]
+        XCTAssertTrue(entry.previewAssets.isEmpty)
+        entry.done = true
+        XCTAssertEqual(entry.previewAssets, [collage])
+    }
+
 }

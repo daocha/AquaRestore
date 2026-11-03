@@ -1,5 +1,6 @@
 import AVFoundation
 import UIKit
+import CoreImage
 
 struct ShareMedia: Equatable, Identifiable {
     let id = UUID()
@@ -13,39 +14,15 @@ enum ShareMediaMaker {
     static func cleanup() { _ = processCleanup }
     static func remove(_ items: [ShareMedia]) { items.forEach { try? FileManager.default.removeItem(at: $0.url) } }
 
-    static func make(_ request: ExportRequest) async -> [ShareMedia] {
+    static func make(_ request: ExportRequest, onAsset: (@Sendable (ShareMedia) -> Void)? = nil) async -> [ShareMedia] {
         guard request.source.width >= 2, request.source.height >= 2 else { return [] }
+        if !request.source.video { return await makePhoto(request, onAsset: onAsset) }
         let flag = CancelFlag()
         let worker = Task<[ShareMedia], Never>.detached(priority: .utility) {
                 var result: [ShareMedia] = []
                 var pending: URL?
                 do {
                     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                    if !request.source.video {
-                        let o = ExportRecommendation.photo(width: request.source.width, height: request.source.height,
-                                                           pngSource: request.source.url.pathExtension.lowercased() == "png")
-                        let before = try MediaIO.bitmap(request.source.url, edge: o.original ? 0 : o.longEdge)
-                        let after = try MediaIO.gradeBitmap(before, request.grade, cancelled: { flag.isSet })
-                        guard let b = before.cgImage, let a = after.cgImage else { throw MediaProblem("photoUnreadable") }
-                        let first = UIImage(cgImage: b), second = UIImage(cgImage: a)
-                        let collageURL = root.appendingPathComponent("\(UUID().uuidString).\(o.png ? "png" : "jpg")")
-                        pending = collageURL
-                        let image = collage(first, second)
-                        guard let data = o.png ? image.pngData() : image.jpegData(compressionQuality: CGFloat(o.quality) / 100) else { throw MediaProblem("exportFailed") }
-                        try data.write(to: collageURL)
-                        result.append(ShareMedia(url: collageURL, video: false)); pending = nil
-                        let (w, h) = SharingPlan.videoSize(b.width, b.height)
-                        let url = root.appendingPathComponent("\(UUID().uuidString).mp4"); pending = url
-                        // Scale stills and rasterize branding once, then draw straight into pooled encoder buffers.
-                        let size = CGSize(width: w, height: h)
-                        let videoBefore = render(size) { _ in draw(first, in: CGRect(origin: .zero, size: size)) }
-                        let videoAfter = render(size) { _ in draw(second, in: CGRect(origin: .zero, size: size)) }
-                        let mark = brandingImage(width: w, height: h).map { UIImage(cgImage: $0) }
-                        try await encode(url, width: w, height: h, duration: 6000, flag: flag) { context, fraction in
-                            drawReveal(videoBefore, videoAfter, mark: mark, width: w, height: h, fraction: fraction, context: context)
-                        }
-                        result.insert(ShareMedia(url: url, video: true), at: 0); pending = nil
-                    } else {
                         let source = request.source
                         let total = Int64(Double(request.options.trimmedMs(source.durationMs)) / Double(request.options.speed))
                         let (offset, length) = SharingPlan.clip(total)
@@ -61,7 +38,6 @@ enum ShareMediaMaker {
                             try await Exporter.exportVideo(preview, to: url, comparison: true) { _, _ in }
                         }
                         result.append(ShareMedia(url: url, video: true)); pending = nil
-                    }
                 } catch {
                     if let pending { try? FileManager.default.removeItem(at: pending) }
                     if flag.isSet { remove(result); return [] }
@@ -75,6 +51,94 @@ enum ShareMediaMaker {
         }
         defer { deadline.cancel() }
         return await withTaskCancellationHandler { await worker.value } onCancel: { flag.set(); worker.cancel() }
+    }
+
+    private static func makePhoto(_ request: ExportRequest, onAsset: (@Sendable (ShareMedia) -> Void)?) async -> [ShareMedia] {
+        let flag = CancelFlag()
+        do { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) } catch { return [] }
+        let movie = Task<[ShareMedia], Never>.detached(priority: .userInitiated) {
+            do {
+                let item = try await photoVideo(request, flag: flag)
+                guard !flag.isSet else { remove([item]); return [] }
+                onAsset?(item)
+                return [item]
+            } catch { NSLog("AquaRestore: photo comparison video unavailable: \(error)"); return [] }
+        }
+        let still = Task<[ShareMedia], Never>.detached(priority: .utility) {
+            do {
+                let item = try photoCollage(request, flag: flag)
+                guard !flag.isSet else { remove([item]); return [] }
+                onAsset?(item)
+                return [item]
+            } catch { NSLog("AquaRestore: comparison collage unavailable: \(error)"); return [] }
+        }
+        let deadline = Task<Void, Never>.detached {
+            do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+            flag.set(); movie.cancel(); still.cancel()
+        }
+        defer { deadline.cancel() }
+        return await withTaskCancellationHandler {
+            let video = await movie.value, photo = await still.value
+            let assets = video + photo
+            if Task.isCancelled { remove(assets); return [] }
+            return assets
+        } onCancel: { flag.set(); movie.cancel(); still.cancel() }
+    }
+
+    private static func photoCollage(_ request: ExportRequest, flag: CancelFlag) throws -> ShareMedia {
+        let o = ExportRecommendation.photo(width: request.source.width, height: request.source.height,
+                                           pngSource: request.source.url.pathExtension.lowercased() == "png")
+        let before = try MediaIO.bitmap(request.source.url, edge: o.original ? 0 : o.longEdge)
+        let after = try MediaIO.gradeBitmap(before, request.grade, cancelled: { flag.isSet })
+        guard let b = before.cgImage, let a = after.cgImage else { throw MediaProblem("photoUnreadable") }
+        let image = collage(UIImage(cgImage: b), UIImage(cgImage: a))
+        guard let data = o.png ? image.pngData() : image.jpegData(compressionQuality: CGFloat(o.quality) / 100) else { throw MediaProblem("exportFailed") }
+        let url = root.appendingPathComponent("\(UUID().uuidString).\(o.png ? "png" : "jpg")")
+        do { try data.write(to: url) } catch { try? FileManager.default.removeItem(at: url); throw error }
+        return ShareMedia(url: url, video: false)
+    }
+
+    private static func pixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let attributes: [String: Any] = [kCVPixelBufferMetalCompatibilityKey as String: true,
+                                        kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()]
+        guard CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &buffer) == kCVReturnSuccess,
+              let buffer else { throw MediaProblem("memory") }
+        return buffer
+    }
+
+    private static func photoVideo(_ request: ExportRequest, flag: CancelFlag) async throws -> ShareMedia {
+        let (w, h) = SharingPlan.videoSize(request.source.width, request.source.height)
+        let bitmap = try MediaIO.bitmap(request.source.url, edge: max(w, h))
+        guard let cg = bitmap.cgImage, let grader = MetalGrader.shared else { throw MediaProblem("exportFailed") }
+        let before = try pixelBuffer(width: w, height: h), after = try pixelBuffer(width: w, height: h)
+        let size = CGSize(width: w, height: h)
+        let image = CIImage(cgImage: cg)
+        let scale = min(CGFloat(w) / image.extent.width, CGFloat(h) / image.extent.height)
+        let fitted = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let offset = CGAffineTransform(translationX: (CGFloat(w) - fitted.extent.width)/2, y: (CGFloat(h) - fitted.extent.height)/2)
+        let background = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        ComparisonFrame.renderImage(fitted.transformed(by: offset).composited(over: background), to: before)
+        let instruction = GradeInstruction(timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 6, timescale: 1)),
+            trackID: 1, state: GradeState(request.grade), hdr: .sdr, transform: .identity, naturalSize: size)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            grader.render(instruction, source: before, output: after) { ok in
+                if ok { continuation.resume() } else { continuation.resume(throwing: MediaProblem("exportFailed")) }
+            }
+        }
+        if flag.isSet { throw CancellationError() }
+        let original = CIImage(cvPixelBuffer: before), restored = CIImage(cvPixelBuffer: after)
+        let mark = brandingImage(width: w, height: h).map { CIImage(cgImage: $0) }
+        let url = root.appendingPathComponent("\(UUID().uuidString).mp4")
+        var complete = false
+        defer { if !complete { try? FileManager.default.removeItem(at: url) } }
+        let began = Date()
+        try await encode(url, width: w, height: h, duration: 6000, flag: flag) { pixel, fraction in
+            ComparisonFrame.renderReveal(original: original, graded: restored, mark: mark, fraction: fraction, to: pixel)
+        }
+        NSLog("AquaRestore: GPU photo reveal generated in %.3f s", Date().timeIntervalSince(began))
+        complete = true
+        return ShareMedia(url: url, video: true)
     }
 
     static func brandingImage(width: Int, height: Int) -> CGImage? {
@@ -120,31 +184,19 @@ enum ShareMediaMaker {
             brand(width: w, height: h)
         }
     }
-    private static func drawReveal(_ before: UIImage, _ after: UIImage, mark: UIImage?, width: Int, height: Int,
-                                   fraction: Double, context: CGContext) {
-        let w = CGFloat(width), h = CGFloat(height), progress = CGFloat(min(1, max(0, (fraction - 0.25) / 0.5)))
-        let rect = CGRect(x: 0, y: 0, width: w, height: h)
-        before.draw(in: rect)
-        context.saveGState(); context.clip(to: CGRect(x: 0, y: 0, width: w * progress, height: h)); after.draw(in: rect); context.restoreGState()
-        if progress > 0 && progress < 1 {
-            context.setStrokeColor(UIColor.white.cgColor); context.setLineWidth(max(1, w/400))
-            context.move(to: CGPoint(x: w * progress, y: 0)); context.addLine(to: CGPoint(x: w * progress, y: h)); context.strokePath()
-        }
-        mark?.draw(in: rect)
-    }
-
     private static func encode(_ url: URL, width: Int, height: Int, duration: Int64, flag: CancelFlag,
-                               frame: (CGContext, Double) throws -> Void) async throws {
+                               frame: (CVPixelBuffer, Double) throws -> Void) async throws {
         guard duration > 0 else { throw MediaProblem("exportFailed") }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         defer { if writer.status == .writing { writer.cancelWriting() } }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width, AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: max(500_000, width * height * 4)]])
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: max(500_000, width * height * 4), AVVideoExpectedSourceFrameRateKey: 30, AVVideoAllowFrameReorderingKey: false]])
         let adapter = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
-            kCVPixelBufferCGImageCompatibilityKey as String: true, kCVPixelBufferCGBitmapContextCompatibilityKey as String: true])
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()])
         guard writer.canAdd(input) else { throw MediaProblem("exportFailed") }
         writer.add(input); guard writer.startWriting() else { throw writer.error ?? MediaProblem("exportFailed") }
         writer.startSession(atSourceTime: .zero)
@@ -162,14 +214,7 @@ enum ShareMediaMaker {
             try autoreleasepool {
                 var pixel: CVPixelBuffer?
                 guard let pool = adapter.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixel) == kCVReturnSuccess, let pixel else { throw MediaProblem("memory") }
-                do {
-                    CVPixelBufferLockBaseAddress(pixel, []); defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
-                    guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height,
-                        bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { throw MediaProblem("exportFailed") }
-                    context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
-                    UIGraphicsPushContext(context); defer { UIGraphicsPopContext() }
-                    try frame(context, Double(index) / Double(max(1, count - 1)))
-                }
+                try frame(pixel, Double(index) / Double(max(1, count - 1)))
                 guard adapter.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)) else { throw writer.error ?? MediaProblem("exportFailed") }
             }
         }
