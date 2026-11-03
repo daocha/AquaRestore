@@ -19,6 +19,7 @@ enum ComparisonWork {
     static func dismiss() {
         let old = session; session = nil
         old?.entries.forEach { $0.task?.cancel(); ShareMediaMaker.remove($0.assets) }
+        if !Exports.shared.status.busy { Platform.keepScreenAwake(false) }
     }
     static func submit(_ request: ExportRequest) -> Entry? {
         guard let owner = session, owner.entries.filter({ !$0.rejected }).count < 2 else { return nil }
@@ -58,6 +59,7 @@ enum ComparisonWork {
         terminal.comparisons = entries.flatMap(\.assets)
         terminal.comparisonsBusy = entries.contains { !$0.done }
         terminal.comparisonUnavailable = entries.contains { $0.done && ($0.assets.isEmpty || ($0.assets.count == 1 && !$0.assets[0].video)) }
+        Platform.keepScreenAwake(terminal.busy || terminal.comparisonsBusy)
         Exports.shared.status = terminal
     }
 }

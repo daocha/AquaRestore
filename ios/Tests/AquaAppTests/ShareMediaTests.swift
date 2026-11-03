@@ -29,7 +29,8 @@ final class ShareMediaTests: XCTestCase {
             XCTAssertTrue(abs(output.durationMs - 6000) <= 50)
             let frames = AVAssetImageGenerator(asset: AVURLAsset(url: items[0].url))
             frames.appliesPreferredTrackTransform = true
-            let first = try XCTUnwrap(PixelImage(frames.copyCGImage(at: .zero, actualTime: nil)))
+            let firstFrame = try frames.copyCGImage(at: .zero, actualTime: nil)
+            let first = try XCTUnwrap(PixelImage(firstFrame))
             let top = first.pixels[(first.height / 4) * first.width + first.width / 4]
             XCTAssertGreaterThan(Int((top >> 16) & 255), Int(top & 255) + 40)
             XCTAssertLessThanOrEqual(output.fps, 30.1)

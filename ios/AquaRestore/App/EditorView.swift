@@ -304,7 +304,7 @@ struct EditorView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         if export.comparisonsBusy {
                             HStack { CircularProgress(size: 20, stroke: 2, color: c.primary)
-                                MText(s.text("Your export is saved. Preparing comparison previews…", "作品已儲存，正在準備比較預覽…")) }
+                                MText(s.text("Your export is saved. Keep AquaRestore open while comparison previews finish.", "作品已儲存，請保持 AquaRestore 開啟，等待比較預覽完成。")) }
                         }
                         if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
                         if export.comparisonUnavailable { MText(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。")) }
