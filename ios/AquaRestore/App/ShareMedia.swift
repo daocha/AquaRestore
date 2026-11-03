@@ -213,6 +213,8 @@ enum ShareMediaMaker {
         writer.startSession(atSourceTime: .zero)
         let deadline = Date().addingTimeInterval(60)
         let count = max(1, Int(duration * 30 / 1000))
+        var originalHold: CVPixelBuffer?
+        var restoredHold: CVPixelBuffer?
         for index in 0..<count {
             while !input.isReadyForMoreMediaData {
                 if flag.isSet { throw CancellationError() }
@@ -223,9 +225,20 @@ enum ShareMediaMaker {
             if flag.isSet { throw CancellationError() }
             guard Date() < deadline else { throw MediaProblem("exportFailed") }
             try autoreleasepool {
-                var pixel: CVPixelBuffer?
-                guard let pool = adapter.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixel) == kCVReturnSuccess, let pixel else { throw MediaProblem("memory") }
-                try frame(pixel, Double(index) / Double(max(1, count - 1)))
+                let fraction = Double(index) / Double(max(1, count - 1))
+                let held = fraction <= 0.25 ? originalHold : (fraction >= 0.75 ? restoredHold : nil)
+                let pixel: CVPixelBuffer
+                if let held { pixel = held }
+                else {
+                    var allocated: CVPixelBuffer?
+                    guard let pool = adapter.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &allocated) == kCVReturnSuccess,
+                          let allocated else { throw MediaProblem("memory") }
+                    pixel = allocated
+                    try frame(pixel, fraction)
+                    // The hold sections are immutable. Reuse their surfaces without redrawing or copying them.
+                    if fraction <= 0.25 { originalHold = pixel }
+                    if fraction >= 0.75 { restoredHold = pixel }
+                }
                 guard adapter.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)) else { throw writer.error ?? MediaProblem("exportFailed") }
             }
         }
