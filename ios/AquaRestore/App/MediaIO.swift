@@ -160,7 +160,7 @@ enum MediaIO {
         var described: [String] = []
         if source.video {
             try await videoFrames(source) { ms, image in
-                guard let pixels = PixelImage(image) else { return }
+                guard let pixels = PixelImage.videoAnalysis(image, hdr: source.isHdr) else { return }
                 frames.append(pixels.pixels)
                 #if DEBUG
                 described.append("at \(ms)ms " + describe(pixels))
@@ -203,7 +203,7 @@ enum MediaIO {
             let file = folder.appendingPathComponent("\(stem)-frame-\(index).png")
             try? FileManager.default.removeItem(at: file)
             // The 8-bit sRGB pixels the analysis reads, not the decoder's image, which may be HDR or Display P3.
-            guard let image = PixelImage(decoded)?.cgImage,
+            guard let image = PixelImage.videoAnalysis(decoded, hdr: source.isHdr)?.cgImage,
                   let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
             CGImageDestinationAddImage(destination, image, nil)
             if CGImageDestinationFinalize(destination) {
