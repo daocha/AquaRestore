@@ -342,8 +342,8 @@ enum Exporter {
         // Video: graded by the same GPU compositor as the preview, at the output size.
         let edge = o.original ? 0 : o.longEdge
         let (width, height) = ExportSizing.dimensions(source.width, source.height, edge, even: true)
-        let effectiveFps = source.fps * min(o.speed, 1)
-        let fpsLimit: Float = !o.original && o.fps > 0 ? min(Float(o.fps), source.fps) : source.fps
+        let effectiveFps = source.fps * (comparison ? o.speed : min(o.speed, 1))
+        let fpsLimit: Float = comparison ? 30 : (!o.original && o.fps > 0 ? min(Float(o.fps), source.fps) : source.fps)
         let frameDuration = CMTime(value: 1000, timescale: CMTimeScale(max(1, (min(effectiveFps, comparison ? 30 : effectiveFps) * 1000).rounded())))
         let videoComposition = GradeComposition.make(track: compVideo, trackID: compVideo.trackID, duration: composition.duration,
             state: GradeState(request.grade), hdr: source.hdr, transform: transform, naturalSize: natural,

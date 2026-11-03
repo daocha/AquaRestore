@@ -41,7 +41,7 @@ final class ShareMediaTests: XCTestCase {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "audit-video", withExtension: "mp4"))
         let source = try await MediaIO.inspect(url)
         let start = source.durationMs / 4, end = source.durationMs * 3 / 4
-        let options = ExportOptions(original: false, speed: 2, startMs: start, endMs: end)
+        let options = ExportOptions(original: false, longEdge: 160, fps: 10, speed: 2, startMs: start, endMs: end)
         let began = Date()
         let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: options, chinese: false))
         NSLog("AquaRestoreTest: sequential video comparison %.2f s", Date().timeIntervalSince(began))
@@ -53,6 +53,7 @@ final class ShareMediaTests: XCTestCase {
         let expected = SharingPlan.clip((end - start) / 2).length
         XCTAssertTrue(abs(output.durationMs - expected) <= 100)
         XCTAssertLessThanOrEqual(output.fps, 30.1)
+        if source.fps >= 24 { XCTAssertGreaterThan(output.fps, 20) }
         let size = SharingPlan.videoSize(source.width, source.height)
         XCTAssertEqual(output.width, size.0); XCTAssertEqual(output.height, size.1)
     }

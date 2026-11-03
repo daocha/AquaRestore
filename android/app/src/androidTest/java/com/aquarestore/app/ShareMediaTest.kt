@@ -71,7 +71,7 @@ class ShareMediaTest {
             val source = MediaIO.inspect(context, uri)
             val start = source.durationMs / 4
             val end = source.durationMs * 3 / 4
-            val request = ExportRequest(source, Grade.Neutral, ExportOptions(original = false, speed = 2f, startMs = start, endMs = end), false)
+            val request = ExportRequest(source, Grade.Neutral, ExportOptions(original = false, longEdge = 160, fps = 10, speed = 2f, startMs = start, endMs = end), false)
             val began = android.os.SystemClock.elapsedRealtime()
             items = ShareMediaMaker.make(context, request)
             android.util.Log.i("AquaRestoreTest", "Sequential comparison: ${android.os.SystemClock.elapsedRealtime() - began} ms")
@@ -87,6 +87,13 @@ class ShareMediaTest {
             try {
                 extractor.setDataSource(items.single().file.path)
                 val index = (0 until extractor.trackCount).first { extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)!!.startsWith("video/") }
+                val format = extractor.getTrackFormat(index)
+                val rotation = if (format.containsKey(android.media.MediaFormat.KEY_ROTATION)) format.getInteger(android.media.MediaFormat.KEY_ROTATION) else 0
+                val w = format.getInteger(android.media.MediaFormat.KEY_WIDTH)
+                val h = format.getInteger(android.media.MediaFormat.KEY_HEIGHT)
+                val size = SharingPlan.videoSize(source.width, source.height)
+                assertEquals(size.first, if (rotation in listOf(90, 270)) h else w)
+                assertEquals(size.second, if (rotation in listOf(90, 270)) w else h)
                 extractor.selectTrack(index)
                 var frames = 0
                 var last = 0L

@@ -35,10 +35,11 @@ class EditorUiTest {
         ui.runOnUiThread {
             model = ViewModelProvider(ui.activity)[EditorModel::class.java]
             model.preference("language", "en"); model.preference("theme", "light")
-            Exports.status.value = ExportStatus()
+            ComparisonWork.dismiss(); Exports.status.value = ExportStatus()
         }
     }
     @After fun cleanup() {
+        ui.runOnUiThread { ComparisonWork.dismiss() }
         Exports.status.value.uri?.let { uris += it }
         Exports.status.value.batch?.saved?.let { uris += it }
         uris.forEach { ui.activity.contentResolver.delete(it, null, null) }
