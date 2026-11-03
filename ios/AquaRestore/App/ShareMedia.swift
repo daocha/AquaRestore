@@ -139,14 +139,17 @@ enum ShareMediaMaker {
         guard writer.canAdd(input) else { throw MediaProblem("exportFailed") }
         writer.add(input); guard writer.startWriting() else { throw writer.error ?? MediaProblem("exportFailed") }
         writer.startSession(atSourceTime: .zero)
+        let deadline = Date().addingTimeInterval(60)
         let count = max(1, Int(duration * 24 / 1000))
         for index in 0..<count {
             while !input.isReadyForMoreMediaData {
                 if flag.isSet { throw CancellationError() }
+                guard Date() < deadline else { throw MediaProblem("exportFailed") }
                 guard writer.status == .writing else { throw writer.error ?? MediaProblem("exportFailed") }
                 try await Task.sleep(nanoseconds: 5_000_000)
             }
             if flag.isSet { throw CancellationError() }
+            guard Date() < deadline else { throw MediaProblem("exportFailed") }
             try autoreleasepool {
                 let image = try frame(Int64(index) * 1000 / 24, Double(index) / Double(max(1, count - 1)))
                 var pixel: CVPixelBuffer?
@@ -159,7 +162,13 @@ enum ShareMediaMaker {
             }
         }
         input.markAsFinished(); writer.endSession(atSourceTime: CMTime(value: duration, timescale: 1000))
-        await writer.finishWriting()
+        let finished = CancelFlag()
+        writer.finishWriting { finished.set() }
+        while !finished.isSet {
+            if flag.isSet { throw CancellationError() }
+            guard Date() < deadline else { throw MediaProblem("exportFailed") }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
         guard writer.status == .completed else { throw writer.error ?? MediaProblem("exportFailed") }
     }
 }

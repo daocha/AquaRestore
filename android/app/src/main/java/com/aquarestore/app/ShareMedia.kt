@@ -128,9 +128,11 @@ object ShareMediaMaker {
             }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
             val count = max(1, (duration * 24 / 1000).toInt()); var input = 0; var eos = false
+            val deadline = android.os.SystemClock.elapsedRealtime() + 60_000
             val info = MediaCodec.BufferInfo(); val pixels = IntArray(w * h)
             while (!eos) {
                 currentCoroutineContext().ensureActive()
+                check(android.os.SystemClock.elapsedRealtime() < deadline) { "Comparison encoder timed out" }
                 if (input <= count) {
                     val index = codec.dequeueInputBuffer(10_000)
                     if (index >= 0) {
