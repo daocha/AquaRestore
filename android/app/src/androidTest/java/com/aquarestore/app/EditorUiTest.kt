@@ -11,6 +11,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
 import androidx.test.platform.app.InstrumentationRegistry
@@ -82,6 +83,55 @@ class EditorUiTest {
         ui.onNodeWithText("Import video or photo").performScrollTo().performClick()
         ui.onNodeWithText("Library").assertIsSelected()
         ui.onNodeWithText("$videoAlbum · 1").assertExists()
+        ui.onNodeWithContentDescription("Close").performClick()
+    }
+    @Test fun libraryResumeRefreshesFilesAndDropsUnavailableBatchSelections() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"
+        automation.executeShellCommand("pm grant ${ui.activity.packageName} $permission").use { fd ->
+            java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() }
+        }
+        val resolver = ui.activity.contentResolver
+        val suffix = System.nanoTime()
+        val album = "Pictures/Resume-$suffix"
+        fun addPhoto(name: String): Uri {
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, album)
+            })!!
+            uris += uri
+            val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+            resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+            return uri
+        }
+        val removedName = "removed-$suffix.png"
+        val keptName = "kept-$suffix.png"
+        val newName = "new-$suffix.png"
+        val removed = addPhoto(removedName)
+        addPhoto(keptName)
+        ui.runOnUiThread {
+            ui.activity.getSharedPreferences("preferences", 0).edit()
+                .putString("library_photos_section", "albums").putString("library_photos_album", album).apply()
+        }
+        ui.onNodeWithText("Batch restore photos").performScrollTo().performClick()
+        ui.waitUntil(15_000) { ui.onAllNodesWithText(removedName).fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText(removedName).performClick()
+        ui.onNodeWithText(keptName).performClick()
+        ui.onNodeWithText("Continue (2)").assertIsEnabled()
+
+        // Change the accessible rows while backgrounded without changing permission flags.
+        // This also covers selected-media reselection, where the same flags can expose different files.
+        ui.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        resolver.delete(removed, null, null)
+        addPhoto(newName)
+        ui.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+
+        ui.waitUntil(15_000) { ui.onAllNodesWithText(newName).fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText(removedName).assertDoesNotExist()
+        ui.onNodeWithText(keptName).assertIsSelected()
+        ui.onNodeWithText("Continue (1)").assertIsEnabled()
         ui.onNodeWithContentDescription("Close").performClick()
     }
     @Test fun batchLongPressDragSelectsDeselectsAndScrollsTo100PhotoLimit() {
