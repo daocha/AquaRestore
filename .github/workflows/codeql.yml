@@ -26,7 +26,8 @@ jobs:
           - { language: actions, build-mode: none, os: ubuntu-latest }
           - { language: python, build-mode: none, os: ubuntu-latest }
           - { language: java-kotlin, build-mode: manual, os: ubuntu-latest }
-          - { language: swift, build-mode: autobuild, os: macos-latest }
+          # Avoid the macOS ARM capacity queue that can cancel jobs before a runner starts.
+          - { language: swift, build-mode: autobuild, os: macos-15-intel }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Use the basic stub core

@@ -47,6 +47,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -147,6 +150,18 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
     // Save the request attempt, not the permission grant: recreating the picker must not prompt again.
     var requestedOnOpen by rememberSaveable(audioOnly, photosOnly, videosOnly) { mutableStateOf(false) }
     var libraryRevision by remember { mutableIntStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, permissions) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                access = libraryAccess(context, permissions)
+                // The selected files can change even when the permission flags do not.
+                libraryRevision++
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = libraryAccess(context, permissions)
         // Adding selected files may leave the permission flags unchanged, but the library must be queried again.
@@ -158,12 +173,23 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
             if (access.requestOnOpen) permission.launch(permissions)
         }
     }
-    val libraryItems = produceState<List<LibraryItem>?>(null, access.allowed, libraryRevision, permissions) {
-        value = if (access.allowed) withContext(Dispatchers.IO) { runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList()) }
-            else emptyList()
+    // A new query starts with no cached rows, so revoked files cannot be selected during refresh.
+    val libraryItems = key(access.allowed, libraryRevision, permissions) {
+        produceState<List<LibraryItem>?>(null) {
+            value = if (access.allowed) withContext(Dispatchers.IO) {
+                runCatching { loadLibrary(context, audioOnly, photosOnly, videosOnly) }.getOrDefault(emptyList())
+            } else emptyList()
+        }
     }
     // Capture one value for derived data and the separately composed dialog.
     val items = libraryItems.value
+    val accessibleChosen = items?.let { rows ->
+        val available = rows.mapTo(HashSet()) { it.uri.toString() }
+        chosen.filter { it in available }
+    }.orEmpty()
+    LaunchedEffect(items) {
+        if (items != null) chosen = ArrayList(accessibleChosen)
+    }
     // Opens where it was last left, separately for media and music.
     val prefs = remember { context.getSharedPreferences("preferences", 0) }
     val key = if (audioOnly) "library_music_" else if (photosOnly) "library_photos_" else if (videosOnly) "library_videos_" else "library_media_"
@@ -230,7 +256,7 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                     Text(if (videosOnly) s.text("Hold a video, then drag to select or deselect more.", "長按影片後滑動，即可選取或取消選取多段影片。")
                         else s.text("Hold a photo, then drag to select or deselect more.", "長按照片後滑動，即可選取或取消選取多張照片。"),
                         style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = { onChoosePhotos?.invoke(chosen.map(Uri::parse)) }, enabled = chosen.isNotEmpty(),
+                    Button(onClick = { onChoosePhotos?.invoke(accessibleChosen.map(Uri::parse)) }, enabled = accessibleChosen.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()) { Text(s.text("Continue (${chosen.size})", "繼續（${chosen.size}）")) }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -280,7 +306,9 @@ fun MediaLibrary(s: Strings, audioOnly: Boolean = false, photosOnly: Boolean = f
                     }
                     filteredItems == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     filteredItems.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
+                        Text(if (!access.full) s.text("No accessible files found. Use Manage access to allow more photos or videos.",
+                            "找不到可存取的檔案。請使用「管理存取權限」允許更多照片或影片。")
+                            else if (audioOnly) s.text("No audio files found", "找不到音訊檔案")
                             else if (photosOnly || mediaTab == "photos") s.text("No photos found", "找不到照片")
                             else if (videosOnly || mediaTab == "videos") s.text("No videos found", "找不到影片")
                             else s.text("No videos or photos found", "找不到影片或照片"))
