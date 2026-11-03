@@ -18,7 +18,7 @@ import java.io.File
 class ShareMediaTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     @Test fun photoComparisonsEncodeAndSaveWithoutUpscaling() = runBlocking {
-        for ((width, height) in listOf(160 to 240, 240 to 160, 200 to 200)) {
+        for ((width, height) in listOf(160 to 240, 240 to 160, 200 to 200, 319 to 239, 1600 to 900)) {
             val input = File(context.cacheDir, "comparison-test.png")
             val source = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             source.eraseColor(Color.rgb(70, 110, 150))
@@ -34,8 +34,8 @@ class ShareMediaTest {
                     retriever.setDataSource(items[0].file.path)
                     val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong()
                     assertTrue("Duration: $duration", duration in 5950..6050)
-                    assertEquals(width, retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt())
-                    assertEquals(height, retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt())
+                    assertEquals(SharingPlan.videoSize(width, height).first, retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt())
+                    assertEquals(SharingPlan.videoSize(width, height).second, retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt())
                 }
                 val first = ShareMediaMaker.save(context, items[0])
                 try { assertEquals(first, ShareMediaMaker.save(context, items[0])) }

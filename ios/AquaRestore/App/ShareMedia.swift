@@ -29,10 +29,10 @@ enum ShareMediaMaker {
                         let after = try MediaIO.gradeBitmap(before, request.grade, cancelled: { flag.isSet })
                         guard let b = before.cgImage, let a = after.cgImage else { throw MediaProblem("photoUnreadable") }
                         let first = UIImage(cgImage: b), second = UIImage(cgImage: a)
-                        let collageURL = root.appendingPathComponent("\(UUID().uuidString).jpg")
+                        let collageURL = root.appendingPathComponent("\(UUID().uuidString).\(o.png ? "png" : "jpg")")
                         pending = collageURL
                         let image = collage(first, second)
-                        guard let data = image.jpegData(compressionQuality: CGFloat(o.quality) / 100) else { throw MediaProblem("exportFailed") }
+                        guard let data = o.png ? image.pngData() : image.jpegData(compressionQuality: CGFloat(o.quality) / 100) else { throw MediaProblem("exportFailed") }
                         try data.write(to: collageURL)
                         result.append(ShareMedia(url: collageURL, video: false)); pending = nil
                         let (w, h) = SharingPlan.videoSize(b.width, b.height)

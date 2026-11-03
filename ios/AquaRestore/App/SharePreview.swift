@@ -39,7 +39,7 @@ struct SharePreview: View {
         Task {
             do {
                 if !saved.contains(item.id) {
-                    try await PhotoSaver.save(item.url, video: item.video, name: "AquaRestore_Comparison.\(item.video ? "mp4" : "jpg")")
+                    try await PhotoSaver.save(item.url, video: item.video, name: "AquaRestore_Comparison.\(item.url.pathExtension)")
                     saved.insert(item.id)
                 }
                 if share { sharing = item }

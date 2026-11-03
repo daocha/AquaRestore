@@ -519,12 +519,12 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, o
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
     }
     if (batchEnabled) {
-    OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
-        Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
-        Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
-    }
-    Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
-        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
+            Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
+        }
+        Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (onBatchVideos != null) {
         OutlinedButton(onClick = onBatchVideos, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {

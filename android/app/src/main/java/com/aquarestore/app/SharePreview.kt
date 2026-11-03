@@ -70,7 +70,7 @@ fun SharePreview(items: List<ShareMedia>, s: Strings, busyChanged: (Boolean) -> 
                         val item = items[pager.currentPage]
                         val uri = ShareMediaMaker.save(context, item)
                         if (share) context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                            type = if (item.video) "video/mp4" else "image/jpeg"
+                            type = item.mime
                             putExtra(Intent.EXTRA_STREAM, uri); clipData = ClipData.newRawUri("AquaRestore", uri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }, null))

@@ -325,30 +325,22 @@ class EditorUiTest {
             assertNull(model.source.value)
         }
     }
-    @Test fun batchVideosShowsOnlyWithDeveloperTools() {
+    @Test fun batchAccessPersistsIndependentlyOfDeveloperTools() {
         val context = ui.activity
-        // Without it the picker asks Android for access, and the permission screen covers the app.
-        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_VIDEO" else "android.permission.READ_EXTERNAL_STORAGE"
-        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission")
-            .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
-        // Settings turns the tools on and off; the home screen looks again when it closes.
-        fun visitSettings(devTools: Boolean) {
-            ui.onNodeWithContentDescription("Settings").performClick()
-            if (devTools) ui.onNodeWithText("Developer tools").performScrollTo().assertIsDisplayed()
-            else ui.onNodeWithText("Developer tools").assertDoesNotExist()
-            ui.onNodeWithText("Done").performClick()
-        }
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        val previous = prefs.getBoolean("batchUnlocked", false)
+        prefs.edit().putBoolean("batchUnlocked", true).commit()
         DevTools.disable(context)
-        visitSettings(false)
-        ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
-        ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
         try {
-            DevTools.enable(context)
-            visitSettings(true)
+            ui.activityRule.scenario.recreate()
+            ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
             ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
-            ui.onNodeWithText("Batch restore videos").performClick()
-            ui.onNodeWithText("Choose videos").assertIsDisplayed()
-        } finally { DevTools.disable(context) }
+            ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Batch processing enabled").assertExists()
+            ui.onNodeWithText("Developer tools").assertDoesNotExist()
+            ui.onNodeWithText("Done").performClick()
+            ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
+        } finally { prefs.edit().putBoolean("batchUnlocked", previous).commit() }
     }
     @Test fun languageAndThemeChangeOnScreenAndSurviveRecreation() {
         ui.onNodeWithContentDescription("Settings").performClick()

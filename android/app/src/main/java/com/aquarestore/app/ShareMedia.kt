@@ -11,7 +11,9 @@ import java.io.File
 import java.util.UUID
 import kotlin.math.*
 
-data class ShareMedia(val file: File, val video: Boolean, var saved: Uri? = null)
+data class ShareMedia(val file: File, val video: Boolean, var saved: Uri? = null) {
+    val mime: String get() = if (video) "video/mp4" else if (file.extension == "png") "image/png" else "image/jpeg"
+}
 
 object ShareMediaMaker {
     private fun destination(context: Context, ext: String) = File(File(context.cacheDir, "share-previews").apply { mkdirs() }, "${UUID.randomUUID()}.$ext")
@@ -27,8 +29,8 @@ object ShareMediaMaker {
                         MediaIO.gradeBitmap(after, request.grade)
                         val collage = collage(context, original, after)
                         try {
-                            val file = destination(context, "jpg")
-                            try { file.outputStream().use { check(collage.compress(Bitmap.CompressFormat.JPEG, o.quality, it)) }; result += ShareMedia(file, false) }
+                            val file = destination(context, if (o.png) "png" else "jpg")
+                            try { file.outputStream().use { check(collage.compress(if (o.png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, o.quality, it)) }; result += ShareMedia(file, false) }
                             catch (e: Exception) { file.delete(); throw e }
                         } finally { collage.recycle() }
                         val (w, h) = SharingPlan.videoSize(original.width, original.height)
@@ -171,7 +173,7 @@ object ShareMediaMaker {
         media.saved?.let { return@withContext it }
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "AquaRestore_Comparison_${media.file.name}")
-            put(MediaStore.MediaColumns.MIME_TYPE, if (media.video) "video/mp4" else "image/jpeg")
+            put(MediaStore.MediaColumns.MIME_TYPE, media.mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, if (media.video) "Movies/AquaRestore" else "Pictures/AquaRestore")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }

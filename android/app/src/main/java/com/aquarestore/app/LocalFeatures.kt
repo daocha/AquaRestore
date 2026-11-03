@@ -12,13 +12,16 @@ object BatchAccess {
         context.getSharedPreferences("localFeatures", 0).getBoolean("batchUnlocked", false)
     suspend fun unlock(context: Context, code: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
         if (enabled(context)) return@withContext true
-        val salt = BuildConfig.BATCH_SALT.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val spec = PBEKeySpec(code.toCharArray(), salt, 120_000, 256)
-        val actual = try { SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded } finally { spec.clearPassword() }
-        val expected = BuildConfig.BATCH_VERIFIER.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val valid = MessageDigest.isEqual(actual, expected)
+        val valid = verify(code, BuildConfig.BATCH_SALT, BuildConfig.BATCH_VERIFIER)
         if (valid) context.getSharedPreferences("localFeatures", 0).edit().putBoolean("batchUnlocked", true).commit()
         valid
+    }
+    internal fun verify(code: String, saltHex: String, verifierHex: String): Boolean {
+        val salt = saltHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val spec = PBEKeySpec(code.toCharArray(), salt, 120_000, 256)
+        val actual = try { SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded } finally { spec.clearPassword() }
+        val expected = verifierHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        return MessageDigest.isEqual(actual, expected)
     }
 }
 

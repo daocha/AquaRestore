@@ -14,21 +14,23 @@ final class BatchAccess: ObservableObject {
     }
     func unlock(_ code: String) async -> Bool {
         if enabled { return true }
-        let salt = Self.bytes(config["salt", default: ""])
-        let expected = Self.bytes(config["verifier", default: ""])
-        let valid = await Task.detached {
-            var result = [UInt8](repeating: 0, count: 32)
-            let password = Array(code.utf8)
-            let status = password.withUnsafeBytes { p in salt.withUnsafeBytes { s in
-                CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), p.bindMemory(to: Int8.self).baseAddress, password.count,
-                                    s.bindMemory(to: UInt8.self).baseAddress, salt.count,
-                                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), 120_000, &result, 32)
-            } }
-            guard status == kCCSuccess, expected.count == result.count else { return false }
-            return zip(expected, result).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
-        }.value
+        let salt = config["salt", default: ""]
+        let expected = config["verifier", default: ""]
+        let valid = await Task.detached { Self.verify(code, saltHex: salt, verifierHex: expected) }.value
         if valid { UserDefaults.standard.set(true, forKey: "batchUnlocked"); enabled = true }
         return valid
+    }
+    nonisolated static func verify(_ code: String, saltHex: String, verifierHex: String) -> Bool {
+        let salt = bytes(saltHex), expected = bytes(verifierHex)
+        var result = [UInt8](repeating: 0, count: 32)
+        let password = Array(code.utf8)
+        let status = password.withUnsafeBytes { p in salt.withUnsafeBytes { s in
+            CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), p.bindMemory(to: Int8.self).baseAddress, password.count,
+                                s.bindMemory(to: UInt8.self).baseAddress, salt.count,
+                                CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), 120_000, &result, 32)
+        } }
+        guard status == kCCSuccess, expected.count == result.count else { return false }
+        return zip(expected, result).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
     nonisolated private static func bytes(_ hex: String) -> [UInt8] {
         stride(from: 0, to: hex.count, by: 2).compactMap { i in
