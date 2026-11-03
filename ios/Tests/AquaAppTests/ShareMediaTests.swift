@@ -58,4 +58,51 @@ final class ShareMediaTests: XCTestCase {
         XCTAssertEqual(output.width, size.0); XCTAssertEqual(output.height, size.1)
     }
 
+    func testFullLength720pComparisonTimingAndResolution() async throws {
+        AppActivity.set(true)
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "audit-video", withExtension: "mp4"))
+        let asset = AVURLAsset(url: fixture)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let original = try XCTUnwrap(tracks.first)
+        let segment = try await asset.load(.duration)
+        let composition = AVMutableComposition()
+        let track = try XCTUnwrap(composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
+        for index in 0..<8 {
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: segment), of: original,
+                                      at: CMTimeMultiply(segment, multiplier: Int32(index)))
+        }
+        let natural = try await original.load(.naturalSize)
+        let transform = try await original.load(.preferredTransform)
+        let display = GradeInstruction.displaySize(natural, transform)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layer.setTransform(GradeInstruction.normalized(transform, natural)
+            .concatenating(CGAffineTransform(scaleX: 1920 / display.width, y: 1080 / display.height)), at: .zero)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
+        instruction.layerInstructions = [layer]
+        let video = AVMutableVideoComposition()
+        video.renderSize = CGSize(width: 1920, height: 1080)
+        video.frameDuration = CMTime(value: 1, timescale: 30)
+        video.instructions = [instruction]
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-1080p-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080))
+        exporter.outputURL = sourceURL; exporter.outputFileType = .mp4; exporter.videoComposition = video
+        await withCheckedContinuation { continuation in exporter.exportAsynchronously { continuation.resume() } }
+        guard exporter.status == .completed else { throw exporter.error ?? MediaProblem("exportFailed") }
+        let source = try await MediaIO.inspect(sourceURL)
+        let options = ExportOptions(original: false, longEdge: 160, fps: 10)
+        let began = Date()
+        let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: options, chinese: false))
+        let elapsed = Date().timeIntervalSince(began)
+        defer { ShareMediaMaker.remove(items) }
+        let item = try XCTUnwrap(items.first)
+        let output = try await MediaIO.inspect(item.url)
+        NSLog("AquaRestoreTest: full comparison %lld ms at %dx%d %.1f fps generated in %.3f s", output.durationMs, output.width, output.height, output.fps, elapsed)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(output.width, 1280); XCTAssertEqual(output.height, 720)
+        XCTAssertTrue(abs(output.durationMs - SharingPlan.clip(source.durationMs).length) <= 100)
+        XCTAssertGreaterThan(output.fps, 29); XCTAssertLessThanOrEqual(output.fps, 30.1)
+    }
+
 }
