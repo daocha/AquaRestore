@@ -53,12 +53,23 @@ enum ShareMediaMaker {
         return await withTaskCancellationHandler { await worker.value } onCancel: { flag.set(); worker.cancel() }
     }
 
+    private final class PhotoVideoAttempt {
+        let asset: ShareMedia
+        var keep = false
+        init(_ asset: ShareMedia) { self.asset = asset }
+        deinit { if !keep { ShareMediaMaker.remove([asset]) } }
+    }
+
     private static func makePhoto(_ request: ExportRequest, onAsset: (@Sendable (ShareMedia) -> Void)?) async -> [ShareMedia] {
         let flag = CancelFlag()
         do { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) } catch { return [] }
         let movie = Task<[ShareMedia], Never>.detached(priority: .userInitiated) {
             do {
-                let item = try await photoVideo(request, flag: flag)
+                let output = try await ForegroundExport.run(waiting: {}) {
+                    PhotoVideoAttempt(try await photoVideo(request, flag: flag))
+                }
+                output.keep = true
+                let item = output.asset
                 guard !flag.isSet else { remove([item]); return [] }
                 onAsset?(item)
                 return [item]
