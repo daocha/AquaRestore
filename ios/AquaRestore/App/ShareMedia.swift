@@ -36,8 +36,13 @@ enum ShareMediaMaker {
                         result.append(ShareMedia(url: collageURL, video: false)); pending = nil
                         let (w, h) = SharingPlan.videoSize(b.width, b.height)
                         let url = root.appendingPathComponent("\(UUID().uuidString).mp4"); pending = url
-                        try await encode(url, width: w, height: h, duration: 6000, flag: flag) { _, fraction in
-                            reveal(first, second, width: w, height: h, fraction: fraction)
+                        // Scale stills and rasterize branding once, then draw straight into pooled encoder buffers.
+                        let size = CGSize(width: w, height: h)
+                        let videoBefore = render(size) { _ in draw(first, in: CGRect(origin: .zero, size: size)) }
+                        let videoAfter = render(size) { _ in draw(second, in: CGRect(origin: .zero, size: size)) }
+                        let mark = brandingImage(width: w, height: h).map { UIImage(cgImage: $0) }
+                        try await encode(url, width: w, height: h, duration: 6000, flag: flag) { context, fraction in
+                            drawReveal(videoBefore, videoAfter, mark: mark, width: w, height: h, fraction: fraction, context: context)
                         }
                         result.insert(ShareMedia(url: url, video: true), at: 0); pending = nil
                     } else {
@@ -115,24 +120,21 @@ enum ShareMediaMaker {
             brand(width: w, height: h)
         }
     }
-    private static func reveal(_ before: UIImage, _ after: UIImage, width: Int, height: Int, fraction: Double) -> UIImage {
+    private static func drawReveal(_ before: UIImage, _ after: UIImage, mark: UIImage?, width: Int, height: Int,
+                                   fraction: Double, context: CGContext) {
         let w = CGFloat(width), h = CGFloat(height), progress = CGFloat(min(1, max(0, (fraction - 0.25) / 0.5)))
-        return render(CGSize(width: w, height: h)) { context in
-            let rect = CGRect(x: 0, y: 0, width: w, height: h)
-            draw(before, in: rect)
-            context.saveGState(); context.clip(to: CGRect(x: 0, y: 0, width: w * progress, height: h)); draw(after, in: rect); context.restoreGState()
-            if progress > 0 && progress < 1 {
-                context.setStrokeColor(UIColor.white.cgColor); context.setLineWidth(max(1, w/400))
-                context.move(to: CGPoint(x: w * progress, y: 0)); context.addLine(to: CGPoint(x: w * progress, y: h)); context.strokePath()
-            }
-            let size = min(w,h) * 0.04
-            if progress < 1 { label("Original", x: w * 0.025, y: h * 0.025, size: size) }
-            if progress > 0.3 { label("Restored", x: w * 0.025, y: h * 0.10, size: size) }
-            brand(width: w, height: h)
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        before.draw(in: rect)
+        context.saveGState(); context.clip(to: CGRect(x: 0, y: 0, width: w * progress, height: h)); after.draw(in: rect); context.restoreGState()
+        if progress > 0 && progress < 1 {
+            context.setStrokeColor(UIColor.white.cgColor); context.setLineWidth(max(1, w/400))
+            context.move(to: CGPoint(x: w * progress, y: 0)); context.addLine(to: CGPoint(x: w * progress, y: h)); context.strokePath()
         }
+        mark?.draw(in: rect)
     }
+
     private static func encode(_ url: URL, width: Int, height: Int, duration: Int64, flag: CancelFlag,
-                               frame: (Int64, Double) throws -> UIImage) async throws {
+                               frame: (CGContext, Double) throws -> Void) async throws {
         guard duration > 0 else { throw MediaProblem("exportFailed") }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         defer { if writer.status == .writing { writer.cancelWriting() } }
@@ -158,14 +160,15 @@ enum ShareMediaMaker {
             if flag.isSet { throw CancellationError() }
             guard Date() < deadline else { throw MediaProblem("exportFailed") }
             try autoreleasepool {
-                let image = try frame(Int64(index) * 1000 / 30, Double(index) / Double(max(1, count - 1)))
                 var pixel: CVPixelBuffer?
                 guard let pool = adapter.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixel) == kCVReturnSuccess, let pixel else { throw MediaProblem("memory") }
                 do {
                     CVPixelBufferLockBaseAddress(pixel, []); defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
-                    guard let cg = image.cgImage, let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height,
+                    guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height,
                         bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { throw MediaProblem("exportFailed") }
-                    context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+                    context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
+                    UIGraphicsPushContext(context); defer { UIGraphicsPopContext() }
+                    try frame(context, Double(index) / Double(max(1, count - 1)))
                 }
                 guard adapter.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)) else { throw writer.error ?? MediaProblem("exportFailed") }
             }
