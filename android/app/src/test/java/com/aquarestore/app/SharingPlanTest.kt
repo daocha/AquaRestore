@@ -12,9 +12,9 @@ class SharingPlanTest {
         assertEquals(1280 to 128, SharingPlan.videoSize(4000, 400))
     }
     @Test fun clipsAreCenteredAndBounded() {
-        assertEquals(27_000L to 6_000L, SharingPlan.clip(60_000))
+        assertEquals(25_000L to 10_000L, SharingPlan.clip(60_000))
         assertEquals(0L to 3000L, SharingPlan.clip(3000))
-        assertEquals(2_000L to 6_000L, SharingPlan.clip(10_000))
+        assertEquals(0L to 10_000L, SharingPlan.clip(10_000))
     }
     @Test fun eitherSuccessfulExportThresholdQualifies() {
         assertFalse(SharingPlan.eligible(4, 9))
