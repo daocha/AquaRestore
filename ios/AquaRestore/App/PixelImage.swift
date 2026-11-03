@@ -33,6 +33,19 @@ final class PixelImage {
         self.init(width: w, height: h, pixels: pixels)
     }
 
+    /// Decode an analysis thumbnail while preserving SDR Rec.709 code values.
+    static func videoAnalysis(_ image: CGImage, hdr: Bool) -> PixelImage? {
+        var rec709 = image.colorSpace?.name == CGColorSpace.itur_709
+        if #available(iOS 18.0, macOS 15.0, *) {
+            rec709 = rec709 || image.colorSpace?.name == CGColorSpace.coreMedia709
+        }
+        if !hdr && rec709 {
+            guard let encoded = image.copy(colorSpace: space) else { return nil }
+            return PixelImage(encoded)
+        }
+        return PixelImage(image)
+    }
+
     var cgImage: CGImage? {
         var encoded = Data(count: pixels.count * MemoryLayout<UInt32>.stride)
         encoded.withUnsafeMutableBytes { bytes in

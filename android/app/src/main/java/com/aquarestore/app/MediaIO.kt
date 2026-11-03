@@ -207,23 +207,39 @@ object MediaIO {
         }
     }
 
-    /**
-     * Saves a video's analysis frames, exactly as analyzed, to Download/AquaRestore-analysis/frames as
-     * NN-frame-i.png (for a clip named NN-original.mp4), replacing earlier ones, so a sample's frames can be
-     * taken from the phone. Returns how many were saved.
-     */
+    /** Saves the exact photo analysis input or six video analysis frames as lossless PNGs. */
     suspend fun saveAnalysisFrames(context: Context, source: SourceMedia): Int = withContext(Dispatchers.IO) {
         val stem = source.name.substringBeforeLast('.').removeSuffix("-original")
-        var index = 0
         var saved = 0
-        videoFrames(context, source) { _, frame ->
-            index++
+        fun save(name: String, frame: Bitmap) {
             val path = runCatching {
-                DevTools.saveDownload(context, "frames", "$stem-frame-$index.png", "image/png") {
+                DevTools.saveDownload(context, "frames", name, "image/png") {
                     check(frame.compress(Bitmap.CompressFormat.PNG, 100, it))
                 }
             }.onFailure { android.util.Log.w("AquaRestore", "Analysis frame not saved", it) }.getOrNull()
             if (path != null) { saved++; android.util.Log.i("AquaRestore", "Analysis frame saved: $path") }
+        }
+        if (source.video) {
+            var index = 0
+            videoFrames(context, source) { _, frame -> save("$stem-frame-${++index}.png", frame) }
+        } else {
+            val frame = bitmap(context, source.uri, 192)
+            try { save("$stem-photo-analysis.png", frame) } finally { frame.recycle() }
+            // Record the source identity separately from the decoded analysis input.
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            var bytes = 0L
+            context.contentResolver.openInputStream(source.uri)!!.use { input ->
+                val block = ByteArray(65536)
+                while (true) {
+                    val count = input.read(block)
+                    if (count < 0) break
+                    digest.update(block, 0, count); bytes += count
+                }
+            }
+            val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+            DevTools.saveDownload(context, "frames", "$stem-photo-source.txt", "text/plain") {
+                it.write("name=${source.name}\nsize=${source.width}x${source.height}\nbytes=$bytes\nsha256=$hash\n".toByteArray())
+            }
         }
         saved
     }

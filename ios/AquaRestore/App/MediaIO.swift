@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -160,7 +161,7 @@ enum MediaIO {
         var described: [String] = []
         if source.video {
             try await videoFrames(source) { ms, image in
-                guard let pixels = PixelImage(image) else { return }
+                guard let pixels = PixelImage.videoAnalysis(image, hdr: source.isHdr) else { return }
                 frames.append(pixels.pixels)
                 #if DEBUG
                 described.append("at \(ms)ms " + describe(pixels))
@@ -190,28 +191,40 @@ enum MediaIO {
         return analysis
     }
 
-    /// Saves a video's analysis frames, exactly as analyzed, to Documents/frames as NN-frame-i.png (for a clip
-    /// named NN-original.mp4), replacing earlier ones, so a sample's frames can be taken from the phone with the
-    /// Files app. Returns how many were saved.
+    /// Saves the exact photo analysis input or six video analysis frames as lossless PNGs.
     static func saveAnalysisFrames(_ source: SourceMedia) async throws -> Int {
         var stem = (source.name as NSString).deletingPathExtension
         if stem.hasSuffix("-original") { stem = String(stem.dropLast("-original".count)) }
         let folder = try DevFiles.folder("frames")
-        var index = 0, saved = 0
-        try await videoFrames(source) { _, decoded in
-            index += 1
-            let file = folder.appendingPathComponent("\(stem)-frame-\(index).png")
-            try? FileManager.default.removeItem(at: file)
-            // The 8-bit sRGB pixels the analysis reads, not the decoder's image, which may be HDR or Display P3.
-            guard let image = PixelImage(decoded)?.cgImage,
-                  let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+        var saved = 0
+        func save(_ pixels: PixelImage, name: String) throws {
+            let file = folder.appendingPathComponent(name)
+            guard let image = pixels.cgImage,
+                  let destination = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil)
+            else { throw MediaProblem("exportFailed") }
             CGImageDestinationAddImage(destination, image, nil)
-            if CGImageDestinationFinalize(destination) {
-                saved += 1
-                NSLog("AquaRestore: Analysis frame saved: \(DevFiles.shown(file))")
-            } else {
-                NSLog("AquaRestore: Analysis frame not saved: \(file.lastPathComponent)")
+            guard CGImageDestinationFinalize(destination) else { throw MediaProblem("exportFailed") }
+            saved += 1
+            NSLog("AquaRestore: Analysis frame saved: \(DevFiles.shown(file))")
+        }
+        if source.video {
+            var index = 0
+            try await videoFrames(source) { _, decoded in
+                index += 1
+                guard let pixels = PixelImage.videoAnalysis(decoded, hdr: source.isHdr) else { return }
+                try save(pixels, name: "\(stem)-frame-\(index).png")
             }
+        } else {
+            try save(bitmap(source.url, edge: 192), name: "\(stem)-photo-analysis.png")
+            let handle = try FileHandle(forReadingFrom: source.url)
+            defer { try? handle.close() }
+            var digest = SHA256(), bytes = 0
+            while let block = try handle.read(upToCount: 65536), !block.isEmpty {
+                digest.update(data: block); bytes += block.count
+            }
+            let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
+            let info = "name=\(source.name)\nsize=\(source.width)x\(source.height)\nbytes=\(bytes)\nsha256=\(hash)\n"
+            try info.write(to: folder.appendingPathComponent("\(stem)-photo-source.txt"), atomically: true, encoding: .utf8)
         }
         return saved
     }
