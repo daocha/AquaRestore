@@ -328,7 +328,7 @@ enum MediaIO {
     static func livePreview(_ source: SourceMedia) async -> (LivePreview, Double?) {
         if LivePreview.withinLimit(width: source.width, height: source.height, fps: source.fps) { return (.full, nil) }
         let measured = await measureDecodeFps(source)
-        let hasRoom = LivePreview.hasRoom(width: source.width, height: source.height)
+        let hasRoom = LivePreview.hasRoom(width: source.width, height: source.height, availableMemory: AppLog.availableMemory)
         return (LivePreview.decide(fps: source.fps, measuredDecodeFps: measured, hasRoom: hasRoom), measured)
     }
 

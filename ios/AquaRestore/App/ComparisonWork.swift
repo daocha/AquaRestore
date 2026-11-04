@@ -43,7 +43,7 @@ enum ComparisonWork {
             defer { try? FileManager.default.removeItem(at: url) }
             await predecessor?.value
             // A rejected or dismissed entry is cancelled while it waits.
-            let waits = heavy && LivePreview.comparisonWaits(width: input.source.width, height: input.source.height)
+            let waits = heavy && LivePreview.comparisonWaits(width: input.source.width, height: input.source.height, availableMemory: AppLog.availableMemory)
             if heavy { NSLog("AquaRestore: comparison \(waits ? "waits for the export" : "runs alongside the export")\(AppLog.memory)") }
             while waits && !entry.accepted && !Task.isCancelled { try? await Task.sleep(nanoseconds: 200_000_000) }
             if !Task.isCancelled {

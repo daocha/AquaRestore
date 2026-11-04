@@ -16,13 +16,13 @@ enum LivePreview: Equatable {
     /// rather than which model it is, so later iPhones need no changes. On an iPhone SE 3 with 4 GB, a full-size preview of
     /// 3840x3360 at 60 fps did not play smoothly and crashed with an export and comparison running. The figures are
     /// estimates, meant to exclude 4 GB phones. Zero, where the system reports nothing, counts as no room.
-    static func hasRoom(width: Int, height: Int, availableMemory: UInt64 = AppLog.availableMemory) -> Bool {
+    static func hasRoom(width: Int, height: Int, availableMemory: UInt64) -> Bool {
         availableMemory >= max(2_500 * 1_048_576, UInt64(width) * UInt64(height) * 200)
     }
 
     /// Whether a comparison of a video heavier than 4K60 waits for its export to succeed. Up to a 3840px long edge it runs
     /// alongside the export, so the result is not held up. Larger frames need the room for a second decoder.
-    static func comparisonWaits(width: Int, height: Int, availableMemory: UInt64 = AppLog.availableMemory) -> Bool {
+    static func comparisonWaits(width: Int, height: Int, availableMemory: UInt64) -> Bool {
         max(width, height) > 3840 && !hasRoom(width: width, height: height, availableMemory: availableMemory)
     }
 
