@@ -271,6 +271,10 @@ class EditorUiTest {
         pick(names.first())
         pick(names.last())
         ui.activityRule.scenario.recreate()
+        // The recreated picker reloads accessible media on IO before enabling Continue.
+        ui.waitUntil(15_000) {
+            ui.onAllNodes(hasText("Continue ($selectionCount)") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
         ui.onNodeWithText("Continue ($selectionCount)").performClick()
         ui.onNodeWithText("Export $selectionCount photos").assertIsDisplayed()
         fun estimate(): String {

@@ -22,7 +22,7 @@ final class PhotoAnalysisCaptureTests: XCTestCase {
         CGImageDestinationAddImage(destination, image, nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         let source = try await MediaIO.inspect(sourceURL)
-        let expected = try MediaIO.bitmap(sourceURL, edge: 192)
+        let expected = try MediaIO.bitmap(sourceURL, edge: MediaIO.analysisEdge)
         let count = try await MediaIO.saveAnalysisFrames(source)
         XCTAssertEqual(count, 1)
         let savedSource = try XCTUnwrap(CGImageSourceCreateWithURL(imageURL as CFURL, nil))
