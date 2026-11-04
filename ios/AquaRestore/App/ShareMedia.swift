@@ -40,7 +40,10 @@ enum ShareMediaMaker {
                         result.append(ShareMedia(url: url, video: true)); pending = nil
                 } catch {
                     if let pending { try? FileManager.default.removeItem(at: pending) }
-                    if flag.isSet { remove(result); return [] }
+                    if flag.isSet {
+                        NSLog("AquaRestore: comparison preview stopped by its time limit or by dismissing: \(error)")
+                        remove(result); return []
+                    }
                     NSLog("AquaRestore: comparison preview unavailable: \(error)")
                 }
                 return result
