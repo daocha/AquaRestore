@@ -324,6 +324,51 @@ enum MediaIO {
     }
 
     /// HEVC HDR export needs a 10-bit encoder; A10 and later have one.
+    /// How the preview can play this video, and the decode speed measured to decide it, if one was needed.
+    static func livePreview(_ source: SourceMedia) async -> (LivePreview, Double?) {
+        if LivePreview.withinLimit(width: source.width, height: source.height, fps: source.fps) { return (.full, nil) }
+        let measured = await measureDecodeFps(source)
+        return (LivePreview.decide(fps: source.fps, measuredDecodeFps: measured), measured)
+    }
+
+    /// Frames per second a sample from the start of the clip decodes at, in the format the preview uses. Nil if it
+    /// cannot be read or is too short. Takes at most three seconds, only for videos heavier than 4K60.
+    private static func measureDecodeFps(_ source: SourceMedia) async -> Double? {
+        let warmUp = 4, sample = 60, fewest = 10
+        do {
+            let asset = AVURLAsset(url: source.url)
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            return try await Task.detached(priority: .userInitiated) { () -> Double? in
+                let reader = try AVAssetReader(asset: asset)
+                let format = source.hdr == .sdr ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+                let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: format])
+                output.alwaysCopiesSampleData = false
+                guard reader.canAdd(output) else { return nil }
+                reader.add(output)
+                guard reader.startReading() else { return nil }
+                defer { reader.cancelReading() }
+                let deadline = CFAbsoluteTimeGetCurrent() + 3
+                var frames = 0
+                var started: CFAbsoluteTime?
+                while frames < warmUp + sample, CFAbsoluteTimeGetCurrent() < deadline, let buffer = output.copyNextSampleBuffer() {
+                    guard CMSampleBufferGetImageBuffer(buffer) != nil else { continue }
+                    frames += 1
+                    if frames == warmUp { started = CFAbsoluteTimeGetCurrent() }
+                }
+                // A decoder too slow to finish the sample still measures slow; a short clip does not measure at all.
+                let timedOut = CFAbsoluteTimeGetCurrent() >= deadline
+                guard let started else { return timedOut ? 0 : nil }
+                let timed = frames - warmUp
+                if timed < fewest && !timedOut { return nil }
+                let elapsed = CFAbsoluteTimeGetCurrent() - started
+                return elapsed > 0 ? Double(timed) / elapsed : nil
+            }.value
+        } catch {
+            NSLog("AquaRestore: decode speed unavailable: \(error)")
+            return nil
+        }
+    }
+
     static func requireHdrEncoder(_ source: SourceMedia) throws {
         guard source.isHdr else { return }
         if !AVAssetExportSession.allExportPresets().contains(AVAssetExportPresetHEVCHighestQuality) { throw MediaProblem("hdrDevice") }

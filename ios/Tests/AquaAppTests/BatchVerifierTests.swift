@@ -2,10 +2,39 @@ import XCTest
 @testable import AquaRestore
 
 final class BatchVerifierTests: XCTestCase {
-    func testUtf8BuildVerifierAcceptsOnlyCorrectCode() {
-        let salt = "000102030405060708090a0b0c0d0e0f"
-        let verifier = "384098cfd1872d7aacd8a22b8d0d7a87f898616c6e6a4a2c31c79832ac65afd3"
-        XCTAssertTrue(BatchAccess.verify("sample-測試-5678", saltHex: salt, verifierHex: verifier))
-        XCTAssertFalse(BatchAccess.verify("wrong", saltHex: salt, verifierHex: verifier))
+    @MainActor
+    func testReferralSwitchLocksBothAndGrantsPersistWithoutRevocation() throws {
+        let suite = "batch-referral-\(UUID().uuidString)"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let config = ["referralBackendURL": "https://example.org"]
+        let access = BatchAccess(config: config, preferences: prefs)
+        XCTAssertTrue(access.referralActive)
+        XCTAssertFalse(access.photoEnabled)
+        XCTAssertFalse(access.videoEnabled)
+        access.applyReferralUnlocks(photo: true, video: false)
+        access.applyReferralUnlocks(photo: false, video: false)
+        let restored = BatchAccess(config: config, preferences: prefs)
+        XCTAssertTrue(restored.photoEnabled)
+        XCTAssertFalse(restored.videoEnabled)
+        restored.applyReferralUnlocks(photo: false, video: true)
+        XCTAssertTrue(BatchAccess(config: config, preferences: prefs).videoEnabled)
+        let disabledCampaign = BatchAccess(config: [:], preferences: prefs)
+        XCTAssertFalse(disabledCampaign.referralActive)
+        XCTAssertFalse(disabledCampaign.gateConfigured)
+    }
+    @MainActor
+    func testNoBackendOpensBothAndLegacyGrantsSurviveMigration() throws {
+        let suite = "batch-access-\(UUID().uuidString)"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let open = BatchAccess(config: [:], preferences: prefs)
+        XCTAssertTrue(open.photoEnabled)
+        XCTAssertTrue(open.videoEnabled)
+        XCTAssertFalse(open.gateConfigured)
+        prefs.set(true, forKey: "batchUnlocked")
+        let legacy = BatchAccess(config: ["referralBackendURL": "https://example.org"], preferences: prefs)
+        XCTAssertTrue(legacy.photoEnabled)
+        XCTAssertTrue(legacy.videoEnabled)
     }
 }

@@ -10,9 +10,11 @@ default_key_alias=release
 default_lineage="$HOME/.aquarestore-signing/lineage.bin"
 # Directories whose untracked files could end up in a release build.
 build_dirs=(android ios core scripts)
-# The Play build must not update itself (Play forbids installing APKs from outside Play), and it has no network access.
-play_forbidden_permissions=(android.permission.REQUEST_INSTALL_PACKAGES android.permission.INTERNET
-  android.permission.ACCESS_NETWORK_STATE)
+# The Play build must not update itself (Play forbids installing APKs from outside Play). It needs INTERNET for referrals.
+play_forbidden_permissions=(android.permission.REQUEST_INSTALL_PACKAGES android.permission.ACCESS_NETWORK_STATE)
+# Also published under this fixed name, so releases/latest/download/AquaRestore.apk is always the newest APK.
+# Referral invites from the GitHub build link to it (ReferralInvite in the Android app).
+latest_apk_asset=AquaRestore.apk
 
 # The tuned grading is the private core/ submodule; fetch it when a fresh clone lacks it.
 # --release also refuses the public stub and any core commit AquaRestore-Core does not have,

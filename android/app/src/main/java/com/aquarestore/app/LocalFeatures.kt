@@ -3,25 +3,12 @@ package com.aquarestore.app
 import android.app.Activity
 import android.content.Context
 import com.google.android.play.core.review.ReviewManagerFactory
-import java.security.MessageDigest
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
-
 object BatchAccess {
-    fun enabled(context: Context) = BuildConfig.BATCH_VERIFIER.isEmpty() ||
-        context.getSharedPreferences("localFeatures", 0).getBoolean("batchUnlocked", false)
-    suspend fun unlock(context: Context, code: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-        if (enabled(context)) return@withContext true
-        val valid = verify(code, BuildConfig.BATCH_SALT, BuildConfig.BATCH_VERIFIER)
-        if (valid) context.getSharedPreferences("localFeatures", 0).edit().putBoolean("batchUnlocked", true).commit()
-        valid
-    }
-    internal fun verify(code: String, saltHex: String, verifierHex: String): Boolean {
-        val salt = saltHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val spec = PBEKeySpec(code.toCharArray(), salt, 120_000, 256)
-        val actual = try { SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded } finally { spec.clearPassword() }
-        val expected = verifierHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        return MessageDigest.isEqual(actual, expected)
+    val gateConfigured: Boolean get() = ReferralCampaign.active
+    private fun key(video: Boolean) = if (video) "batchVideoUnlocked" else "batchPhotoUnlocked"
+    fun enabled(context: Context, video: Boolean = false): Boolean {
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        return !gateConfigured || prefs.getBoolean(key(video), false) || prefs.getBoolean("batchUnlocked", false)
     }
 }
 

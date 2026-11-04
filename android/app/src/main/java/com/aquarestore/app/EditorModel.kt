@@ -17,6 +17,9 @@ import java.io.File
 /** Long edge of the sharper photo shown in full screen: about full size for a 12 MP phone photo, within memory. */
 private const val DETAIL_EDGE = 3840
 
+/** Matches the preview copy, and the size iOS grades its preview at. */
+private const val PREVIEW_GRADE_EDGE = 1920
+
 class EditorModel(application: Application) : AndroidViewModel(application) {
     private val context get() = getApplication<Application>().applicationContext
     private val prefs = context.getSharedPreferences("preferences", 0)
@@ -36,6 +39,9 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
      * HDR original meanwhile stutters, so the preview holds still (still graded and seekable) until it is ready.
      */
     val previewPreparing = MutableStateFlow<Int?>(null)
+    /** The long edge the preview grades the playing original at, or 0 for its full size. Set before [previewUri]. */
+    var previewGradeEdge = 0
+        private set
     val previewOriginal = MutableStateFlow<Bitmap?>(null)
     val previewGraded = MutableStateFlow<Bitmap?>(null)
     /**
@@ -118,6 +124,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         gradeJob?.cancel()
         error.value = null
         previewUri.value = null
+        previewGradeEdge = 0
         previewOriginal.value = null
         previewGraded.value = null
         setDetailWanted(false)
@@ -161,6 +168,8 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                     proxy = copy
                     copy = null
                     val playable = proxy?.let { Uri.fromFile(it) } ?: media.uri
+                    val live = withContext(Dispatchers.IO) { MediaIO.livePreview(media) }
+                    previewGradeEdge = if (proxy == null && live == LivePreview.REDUCED) PREVIEW_GRADE_EDGE else 0
                     previewUri.value = playable
                     // Thumbnails and any proxy are built in the background and never hold up the editor.
                     launch {
@@ -168,7 +177,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                         catch (e: CancellationException) { throw e }
                         catch (e: Exception) { android.util.Log.w("AquaRestore", "Filmstrip unavailable", e) }
                     }
-                    if (proxy == null) launch { planProxy(media) }
+                    if (proxy == null) launch { planProxy(media, live) }
                 } else {
                     previewOriginal.value = withContext(Dispatchers.IO) { MediaIO.bitmap(context, uri, 720) }
                     setGrade(recommended.grade)
@@ -190,9 +199,10 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
      * decoder can keep up with it. When it cannot, or for tone-mapped HDR (whose preview must be graded in the
      * same SDR as the export), the preview holds still until the copy is ready instead of stuttering.
      */
-    private suspend fun planProxy(media: SourceMedia) {
-        val hold = media.toneMapped || !withContext(Dispatchers.IO) { MediaIO.decodesLive(media) }
-        android.util.Log.i("AquaRestore", "Preview " + (if (hold) "waits for a copy" else "plays the original") +
+    private suspend fun planProxy(media: SourceMedia, live: LivePreview) {
+        val hold = media.toneMapped || live == LivePreview.COPY
+        android.util.Log.i("AquaRestore", "Preview " + (if (hold) "waits for a copy" else if (previewGradeEdge > 0)
+            "plays the original, graded at up to ${previewGradeEdge}px" else "plays the original") +
             (if (media.toneMapped) " (tone-mapped HDR)" else "") + "\n" + withContext(Dispatchers.IO) { MediaIO.liveDecodeReport(media) })
         if (hold || maxOf(media.width, media.height) > 3840) buildProxy(media, hold)
     }
@@ -217,6 +227,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             if (source.value?.uri != media.uri) { file.delete(); return }
             playbackPositionMs = playhead.value
             proxy = file
+            previewGradeEdge = 0
             previewUri.value = Uri.fromFile(file)
         } catch (e: CancellationException) { file.delete(); throw e }
         catch (e: Exception) {

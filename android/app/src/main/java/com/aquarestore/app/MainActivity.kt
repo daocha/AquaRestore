@@ -2,6 +2,7 @@ package com.aquarestore.app
 
 import android.Manifest
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -32,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -74,6 +76,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
@@ -110,6 +113,8 @@ class MainActivity : ComponentActivity() {
         CacheCleanup.onProcessStart(this)
         enableEdgeToEdge()
         setContent { AquaApp() }
+        // A recreated activity (rotation) is not a launch.
+        if (savedInstanceState == null) lifecycleScope.launch { ReferralCampaign.registerIfNeeded(applicationContext) }
     }
 
     override fun onStart() {
@@ -201,9 +206,23 @@ private fun Editor(model: EditorModel, s: Strings) {
     var mediaLibrary by rememberSaveable { mutableStateOf(false) }
     var batchLibrary by rememberSaveable { mutableStateOf(false) }
     var batchVideoLibrary by rememberSaveable { mutableStateOf(false) }
-    // Batch videos is a developer tool for now. Settings turns the tools on and off, so look again when it closes.
+    var lockedBatch by remember { mutableStateOf<Boolean?>(null) }
+    // Refresh independently persisted batch access when Settings closes.
     var batchAccess by remember { mutableStateOf(BatchAccess.enabled(context)) }
-    LaunchedEffect(settings) { if (!settings) batchAccess = BatchAccess.enabled(context) }
+    var batchVideoAccess by remember { mutableStateOf(BatchAccess.enabled(context, video = true)) }
+    LaunchedEffect(settings) { if (!settings) {
+        batchAccess = BatchAccess.enabled(context)
+        batchVideoAccess = BatchAccess.enabled(context, video = true)
+    } }
+    DisposableEffect(context) {
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            batchAccess = BatchAccess.enabled(context)
+            batchVideoAccess = BatchAccess.enabled(context, true)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
     val compare = remember { MutableInteractionSource() }
@@ -301,8 +320,10 @@ private fun Editor(model: EditorModel, s: Strings) {
         Column(Modifier.padding(inset).fillMaxSize().then(if (source == null || phase != null) Modifier.verticalScroll(editorScroll) else Modifier).padding(horizontal = if (maximized) 0.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
-                Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true },
-                    batchEnabled = batchAccess, onBatchVideos = if (batchAccess) { { batchVideoLibrary = true } } else null)
+                Welcome(s, enabled = !busy, onImport = ::pickMedia,
+                    onBatch = { if (BatchAccess.enabled(context)) batchLibrary = true else lockedBatch = false },
+                    batchEnabled = batchAccess, batchVideoEnabled = batchVideoAccess,
+                    onBatchVideos = { if (BatchAccess.enabled(context, true)) batchVideoLibrary = true else lockedBatch = true })
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -481,6 +502,12 @@ private fun Editor(model: EditorModel, s: Strings) {
     if (batchLibrary) MediaLibrary(s, photosOnly = true, onChoosePhotos = {
         model.batchPhotos.value = it
     }, onDismiss = { batchLibrary = false; model.batchPhotos.value = emptyList() })
+    lockedBatch?.let { video -> BatchQuestDialog(s, video, onUnlocked = {
+        batchAccess = BatchAccess.enabled(context)
+        batchVideoAccess = BatchAccess.enabled(context, true)
+        lockedBatch = null
+        if (video) batchVideoLibrary = true else batchLibrary = true
+    }, dismiss = { lockedBatch = null }) }
     if (batchPhotos.isNotEmpty()) BatchPhotoExportDialog(batchPhotos, photoExportSelection, s,
         onSelectionChange = { model.setExportSelection(false, it) }, onResetCustom = { model.resetCustomExport(false) },
         onDismiss = { model.batchPhotos.value = emptyList() }) {
@@ -516,7 +543,7 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit, batchEnabled: Boolean = true, onBatchVideos: (() -> Unit)? = null) {
+private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, onBatch: () -> Unit, batchEnabled: Boolean = true, batchVideoEnabled: Boolean = true, onBatchVideos: () -> Unit) {
     Spacer(Modifier.height(16.dp))
     Text(s.text("Your underwater studio", "你的水下影像工作室"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     Text(s.text("Bring the ocean’s\ntrue colors back.", "讓海底的真實色彩\n再次浮現。"), fontSize = 36.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
@@ -526,18 +553,18 @@ private fun Welcome(s: Strings, enabled: Boolean = true, onImport: () -> Unit, o
     Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
         Icon(Icons.Rounded.AddPhotoAlternate, null); Spacer(Modifier.width(10.dp)); Text(s.text("Import video or photo", "匯入影片或照片"), fontSize = 16.sp)
     }
-    if (batchEnabled) {
-        OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(Icons.Rounded.PhotoLibrary, null); Spacer(Modifier.width(10.dp))
-            Text(s.text("Batch restore photos", "批次還原照片"), fontSize = 16.sp)
+    run {
+        OutlinedButton(onClick = onBatch, enabled = enabled, modifier = Modifier.alpha(if (batchEnabled) 1f else 0.55f).fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(if (batchEnabled) Icons.Rounded.PhotoLibrary else Icons.Rounded.Lock, null); Spacer(Modifier.width(10.dp))
+            Text(s.text("Batch restore photos", "批次還原照片") + if (batchEnabled) "" else s.text(" · Locked", " · 未解鎖"), fontSize = 16.sp)
         }
         Text(s.text("Up to $MAX_BATCH_PHOTOS photos · automatic restoration", "最多 $MAX_BATCH_PHOTOS 張照片 · 自動智慧還原"),
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    if (onBatchVideos != null) {
-        OutlinedButton(onClick = onBatchVideos, enabled = enabled, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(Icons.Rounded.VideoLibrary, null); Spacer(Modifier.width(10.dp))
-            Text(s.text("Batch restore videos", "批次還原影片"), fontSize = 16.sp)
+    run {
+        OutlinedButton(onClick = onBatchVideos, enabled = enabled, modifier = Modifier.alpha(if (batchVideoEnabled) 1f else 0.55f).fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(if (batchVideoEnabled) Icons.Rounded.VideoLibrary else Icons.Rounded.Lock, null); Spacer(Modifier.width(10.dp))
+            Text(s.text("Batch restore videos", "批次還原影片") + if (batchVideoEnabled) "" else s.text(" · Locked", " · 未解鎖"), fontSize = 16.sp)
         }
         Text(s.text("Up to $MAX_BATCH_VIDEOS videos", "最多 $MAX_BATCH_VIDEOS 段影片"),
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1021,7 +1048,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     val player = remember(uri) {
         boostablePlayer(context, originalBoost).apply {
             setSeekParameters(SeekParameters.EXACT)
-            setVideoEffects(listOf(UnderwaterEffect(model.gradeState)))
+            // Grading comes after the resize, so it only has the smaller frame to work on.
+            setVideoEffects(model.source.value?.let { MediaIO.resizeEffect(it, model.previewGradeEdge) }.orEmpty() + UnderwaterEffect(model.gradeState))
             repeatMode = Player.REPEAT_MODE_ONE
             setMediaItem(MediaItem.fromUri(uri!!))
             seekTo(model.playbackPositionMs)
@@ -1289,10 +1317,6 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
     val theme by model.theme.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
-    var unlocked by remember { mutableStateOf(BatchAccess.enabled(context)) }
-    var unlockCode by remember { mutableStateOf("") }
-    var unlocking by remember { mutableStateOf(false) }
-    var unlockError by remember { mutableStateOf(false) }
     var versionTaps by remember { mutableIntStateOf(0) }
     var showLog by remember { mutableStateOf(false) }
     val source by model.source.collectAsStateWithLifecycle()
@@ -1314,16 +1338,6 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             Choices(listOf("system" to s.text("System", "跟隨系統"), "zh" to "中文", "en" to "English"), language) { model.preference("language", it) }
             Text(s.text("Appearance", "外觀"), fontWeight = FontWeight.SemiBold)
             Choices(listOf("system" to s.text("System", "跟隨系統"), "light" to s.text("Light", "淺色"), "dark" to s.text("Dark", "深色")), theme) { model.preference("theme", it) }
-            if (!unlocked) {
-                OutlinedTextField(unlockCode, { unlockCode = it; unlockError = false },
-                    label = { Text(s.text("Batch unlock code", "批次功能解鎖碼")) }, singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = unlockError)
-                Button(onClick = { unlocking = true; scope.launch {
-                    unlocked = BatchAccess.unlock(context, unlockCode)
-                    unlockError = !unlocked; unlockCode = ""; unlocking = false
-                } }, enabled = !unlocking && unlockCode.isNotEmpty()) { Text(s.text("Unlock batch processing", "解鎖批次處理")) }
-                if (unlockError) Text(s.text("Incorrect code", "解鎖碼不正確"))
-            } else Text(s.text("Batch processing enabled", "已啟用批次處理"))
             if (BuildConfig.UPDATE_CHANNEL == "play") TextButton(onClick = {
                 context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")))
             }) { Text(s.text("Rate AquaRestore", "為 AquaRestore 評分")) }
@@ -1364,6 +1378,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             }
             if (update == null) Text("AquaRestore ${BuildConfig.VERSION_NAME}", versionModifier,
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ReferralCampaign.active) ReferralSettings(s)
             if (devTools) {
                 HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1371,6 +1386,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                     // Turning them off locks them again; ten taps on the version unlock them.
                     Switch(true, { DevTools.disable(context); devTools = false; versionTaps = 0 })
                 }
+                if (BatchAccess.gateConfigured) BatchUnlockControl(context, s)
                 OutlinedButton(onClick = { showLog = true }) { Text(s.text("Developer logs", "開發者日誌")) }
                 OutlinedButton(onClick = { scope.launch { saveLogToast(context, s) } }) { Text(s.text("Save logs", "儲存日誌")) }
                 OutlinedButton(onClick = {
@@ -1391,6 +1407,49 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             }
         }
     }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })
+}
+
+@Composable
+private fun BatchUnlockControl(context: Context, s: Strings) {
+    var show by remember { mutableStateOf(false) }
+    var code by remember { mutableStateOf("") }
+    var unlocking by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    OutlinedButton(onClick = { code = ""; error = null; show = true }) { Text(s.text("Unlock Code", "解鎖碼")) }
+    if (show) AlertDialog(
+        onDismissRequest = { if (!unlocking) show = false },
+        title = { Text(s.text("Unlock Code", "解鎖碼")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(s.text("Redeeming sends an app-specific device identifier. The server stores it with the redemption record.",
+                    "兌換時會傳送此 App 專用的裝置識別碼，伺服器會將其與兌換紀錄一起儲存。"), fontSize = 12.sp)
+                OutlinedTextField(code, { code = it; error = null },
+                    placeholder = { Text(s.text("Code", "輸入解鎖碼")) },
+                    singleLine = true, enabled = !unlocking,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = error != null)
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { unlocking = true; error = null; scope.launch {
+                try {
+                    ReferralCampaign.request(context, unlockCode = code.trim())
+                    code = ""; show = false
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: ReferralApiException) {
+                    error = when (failure.errorCode) {
+                        "invalid_unlock_code" -> s.text("Incorrect unlock code", "解鎖碼不正確")
+                        "unlock_code_exhausted" -> s.text("Unlock code has reached its maximum uses.", "此解鎖碼已達使用次數上限。")
+                        else -> s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                    }
+                } catch (_: Exception) {
+                    error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                } finally { unlocking = false }
+            } }, enabled = !unlocking && code.isNotBlank()) { Text(s.text("Unlock", "解鎖")) }
+        },
+        dismissButton = { TextButton(onClick = { show = false }, enabled = !unlocking) { Text(s.text("Cancel", "取消")) } }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

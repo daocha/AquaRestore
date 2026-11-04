@@ -9,7 +9,7 @@ AquaRestore restores the colors of underwater videos and photos with native Andr
 - **[Android](#android-version):** Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later.
 - **[iOS](#ios-version):** SwiftUI, AVFoundation and Metal; iOS 16 or later.
 
-Android release builds use the network only to check for app updates and download an update when requested. Android debug builds have no network permission unless LAN updates are configured.
+Android builds have the network permission for two things: GitHub builds check for app updates and download an update when requested, and builds with a referral backend configured register an app-scoped device identifier with it on first launch. See the [privacy policy](PRIVACY.md).
 
 ## How it works
 
@@ -30,10 +30,38 @@ Recommendations come from on-device color statistics, not a cloud-based generati
 
 After analysis, videos normally play from the original, with live GPU grading. Exports **always use the original URI**, never a preview copy.
 
-- **Android:** 4K60 can play directly when the device can decode it smoothly. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, cannot play the original smoothly, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
-- **iOS:** there is no preview copy. Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
+- **Android:** 4K60 can play directly when the device can decode it smoothly. When the decoder has the speed for a video but declares no frame as large, the original plays with grading at up to 1920px on the long edge. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, the decoder cannot keep up, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
+- **iOS:** follows the same three outcomes, but iOS declares no decoder limits, so a video heavier than 4K60 is judged by timing a short decode of the clip. At least twice the video's frame rate grades at full size, at least 1.2 times grades at up to 1920px, and anything slower waits for the same kind of preview copy. These thresholds and smoothness on target devices still need testing.
 
 Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. On compatible devices, HDR video is processed and exported as HDR; otherwise it is tone-mapped and exported as SDR. Devices, encoders and color management may cause slight display differences.
+
+## Preview and export by resolution and HDR
+
+How a video previews depends on the video and on the device. Exports always read the original file.
+
+| Preview | What happens | When |
+| --- | --- | --- |
+| **Original, full size** | Plays right away, graded at the video's full resolution | The device can comfortably play it |
+| **Original, 1920px** | Plays right away, graded at up to 1920px on the long edge; zooming in looks softer | The decoder is fast enough, but grading every full-size frame may not be |
+| **Copy** | Holds still, graded and seekable, while a 1080p copy of at most 30 fps builds, then plays the copy | The decoder cannot keep up, or an HDR video will export as SDR |
+| **Cannot open** | Shows that the frame size is too large for the device | No decoder on the device accepts the frame size |
+
+Android decides from what its video decoders declare. iOS declares no decoder limits, so a video heavier than 4K60 is timed decoding a short sample: at least 2× its frame rate gives full size, at least 1.2× gives 1920px, and anything slower gets a copy.
+
+HDR stays HDR only when the device can encode it, which on Android needs Android 13+ and a suitable 10-bit encoder. Otherwise the export is SDR, and the preview uses an SDR copy so that it matches the export. That is why a phone's gallery can play an HDR video that the same phone previews from a copy here: the gallery only plays the file, with no grading and nothing to match.
+
+The table shows what to expect on the devices used for testing. **✓** marks a video type confirmed playing on that device. The rest follow from the rules above and have not been confirmed there. Other devices depend on their own decoders.
+
+| Video | Galaxy S10 (Android 12) | Galaxy S23 Ultra | Galaxy S26 Ultra | Solana Seeker (Android 16) | iPhone |
+| --- | --- | --- | --- | --- | --- |
+| **1080p, SDR** | Original, full size | Original, full size ✓ | Original, full size ✓ | Original, full size | Original, full size |
+| **3840×2160 at 60 fps, SDR** | Original, full size ✓ | Original, full size ✓ | Original, full size ✓ | Original, full size | Original, full size |
+| **3840×3360 at 60 fps, SDR** | Original, 1920px ✓ | Original, full size ✓ | Original, full size ✓ | Cannot open ✓ | Timed: full size, 1920px or copy |
+| **3840×2160 at 60 fps, HDR** | Copy; exports SDR ✓ | Original, full size; keeps HDR ✓ | Original, full size; keeps HDR ✓ | Copy; exports SDR ✓ | Original, full size; keeps HDR |
+| **3840×3360 at 60 fps, HDR** | Copy; exports SDR | Original, full size; keeps HDR ✓ | Original, full size; keeps HDR ✓ | Cannot open | Timed: full size, 1920px or copy; keeps HDR |
+| **Long edge over 3840px, such as 8K** | Copy | Copy | Copy | Depends on the frame size | Copy |
+
+For a video with a long edge over 3840px, the app always builds a copy. If the decoder can keep up, the original plays until the copy is ready; otherwise the preview holds still. HDR10+ and some Dolby Vision files are rejected; see [Scope and limitations](#scope-and-limitations).
 
 ## Export
 

@@ -26,7 +26,11 @@ class EditorUiTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     private lateinit var model: EditorModel
     private val uris = mutableListOf<Uri>()
+    private var previousBatchAccess = false
     @Before fun setup() {
+        val prefs = ui.activity.getSharedPreferences("localFeatures", 0)
+        previousBatchAccess = prefs.getBoolean("batchUnlocked", false)
+        prefs.edit().putBoolean("batchUnlocked", true).commit()
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
                 "pm grant ${ui.activity.packageName} android.permission.POST_NOTIFICATIONS"
@@ -39,6 +43,7 @@ class EditorUiTest {
         }
     }
     @After fun cleanup() {
+        ui.activity.getSharedPreferences("localFeatures", 0).edit().putBoolean("batchUnlocked", previousBatchAccess).commit()
         ui.runOnUiThread { ComparisonWork.dismiss() }
         Exports.status.value.uri?.let { uris += it }
         Exports.status.value.batch?.saved?.let { uris += it }
@@ -377,6 +382,41 @@ class EditorUiTest {
             }
         } finally { ComparisonWork.dismiss(); input.delete(); Exports.status.value = ExportStatus() }
     }
+    @Test fun batchControlsStayVisibleAndUnlockControlFollowsConfiguration() {
+        val context = ui.activity
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        val legacy = prefs.getBoolean("batchUnlocked", false)
+        val photo = prefs.getBoolean("batchPhotoUnlocked", false)
+        val video = prefs.getBoolean("batchVideoUnlocked", false)
+        prefs.edit().putBoolean("batchUnlocked", false).putBoolean("batchPhotoUnlocked", false).putBoolean("batchVideoUnlocked", false).commit()
+        DevTools.disable(context)
+        try {
+            ui.activityRule.scenario.recreate()
+            ui.onNodeWithText("Batch restore photos", substring = true).performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Batch restore videos", substring = true).performScrollTo().assertIsDisplayed()
+            ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Unlock Code").assertDoesNotExist()
+            ui.onNodeWithText("AquaRestore ${BuildConfig.VERSION_NAME}", substring = true).performScrollTo().apply {
+                repeat(DevTools.UNLOCK_TAPS) { performClick() }
+            }
+            ui.onNodeWithText("Batch photo processing").assertDoesNotExist()
+            ui.onNodeWithText("Batch video processing").assertDoesNotExist()
+            ui.onNodeWithText("Code").assertDoesNotExist()
+            if (!BatchAccess.gateConfigured) {
+                ui.onNodeWithText("Unlock Code").assertDoesNotExist()
+                return
+            }
+            ui.onNodeWithText("Unlock Code").performScrollTo().performClick()
+            ui.onNodeWithText("Code").performTextInput("example-server-code")
+            // Do not redeem or contact a configured backend from UI instrumentation.
+            ui.onNodeWithText("Cancel").performClick()
+            assertFalse(BatchAccess.enabled(context))
+            assertFalse(BatchAccess.enabled(context, video = true))
+        } finally {
+            prefs.edit().putBoolean("batchUnlocked", legacy).putBoolean("batchPhotoUnlocked", photo).putBoolean("batchVideoUnlocked", video).commit()
+            DevTools.disable(context)
+        }
+    }
     @Test fun batchAccessPersistsIndependentlyOfDeveloperTools() {
         val context = ui.activity
         val prefs = context.getSharedPreferences("localFeatures", 0)
@@ -388,7 +428,8 @@ class EditorUiTest {
             ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
             ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
             ui.onNodeWithContentDescription("Settings").performClick()
-            ui.onNodeWithText("Batch processing enabled").assertExists()
+            ui.onNodeWithText("Batch photo processing").assertDoesNotExist()
+            ui.onNodeWithText("Batch video processing").assertDoesNotExist()
             ui.onNodeWithText("Developer tools").assertDoesNotExist()
             ui.onNodeWithText("Done").performClick()
             ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()

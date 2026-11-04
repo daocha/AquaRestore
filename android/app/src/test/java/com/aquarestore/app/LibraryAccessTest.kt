@@ -42,17 +42,29 @@ class LibraryAccessTest {
         assertTrue(audio.requestOnOpen)
     }
 
-    @Test fun fullPhotoAccessAndSelectedVideoAccessStillRespectTheLimitedChoice() {
-        val granted = setOf(READ_MEDIA_IMAGES, READ_MEDIA_VISUAL_USER_SELECTED)
-        val mixed = libraryAccess(mediaPermissions(false, false, sdk = 34), granted)
+    @Test fun allowAllForOneMediaTypeStillRequestsTheOther() {
+        // "Allow all" on a photo-only request grants these two, and the selected-files flag is not a limited choice.
+        val afterPhotos = setOf(READ_MEDIA_IMAGES, READ_MEDIA_VISUAL_USER_SELECTED)
+        val videos = libraryAccess(mediaPermissions(false, false, videosOnly = true, sdk = 34), afterPhotos)
+        assertFalse(videos.allowed)
+        assertFalse(videos.full)
+        assertFalse(videos.limited)
+        assertTrue("Batch video must ask for video access", videos.requestOnOpen)
+        val mixed = libraryAccess(mediaPermissions(false, false, sdk = 34), afterPhotos)
         assertTrue(mixed.allowed)
         assertFalse(mixed.full)
-        assertTrue(mixed.limited)
-        assertFalse(mixed.requestOnOpen)
-        val photos = libraryAccess(mediaPermissions(false, true, sdk = 34), granted)
+        assertFalse(mixed.limited)
+        assertTrue("Import must still ask for video access", mixed.requestOnOpen)
+        val photos = libraryAccess(mediaPermissions(false, true, sdk = 34), afterPhotos)
         assertTrue(photos.full)
         assertFalse(photos.limited)
         assertFalse(photos.requestOnOpen)
+
+        val afterVideos = setOf(READ_MEDIA_VIDEO, READ_MEDIA_VISUAL_USER_SELECTED)
+        val photosAfterVideos = libraryAccess(mediaPermissions(false, true, sdk = 34), afterVideos)
+        assertFalse(photosAfterVideos.allowed)
+        assertTrue("Batch photos must ask for photo access", photosAfterVideos.requestOnOpen)
+        assertTrue(libraryAccess(mediaPermissions(false, false, videosOnly = true, sdk = 34), afterVideos).full)
     }
 
     @Test fun fullAccessDoesNotRequireTheOptionalSelectedFilesPermission() {

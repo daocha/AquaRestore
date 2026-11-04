@@ -9,12 +9,10 @@ struct SettingsDialog: View {
     @Environment(\.strings) private var s
     @Environment(\.palette) private var c
     @ObservedObject private var devTools = DevTools.shared
-    @ObservedObject private var batchAccess = BatchAccess.shared
-    @State private var unlockCode = ""
-    @State private var unlocking = false
-    @State private var unlockError = false
     @State private var versionTaps = 0
     @State private var showLog = false
+    @State private var showUnlock = false
+    @State private var referralError: String?
     @State private var savingFrames = false
     /// Android shows these as toasts.
     @State private var notice: String?
@@ -23,6 +21,14 @@ struct SettingsDialog: View {
         ZStack {
             dialog
             if showLog { DevLogPanel { showLog = false } }
+            if showUnlock { UnlockCodeDialog { showUnlock = false } }
+            if let referralError {
+                M3Dialog(title: s.text("Referral code", "推薦碼"), dismiss: { self.referralError = nil }) {
+                    MText(referralError)
+                } buttons: {
+                    M3TextButton(title: s.text("OK", "知道了")) { self.referralError = nil }
+                }
+            }
         }
     }
 
@@ -41,15 +47,6 @@ struct SettingsDialog: View {
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("zh", "中文"), ("en", "English")], selected: model.language) { model.preference("language", $0) }
                 MText(s.text("Appearance", "外觀"), weight: .semibold)
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("light", s.text("Light", "淺色")), ("dark", s.text("Dark", "深色"))], selected: model.theme) { model.preference("theme", $0) }
-                if !batchAccess.enabled {
-                    SecureField(s.text("Batch unlock code", "批次功能解鎖碼"), text: $unlockCode)
-                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    M3Button(title: s.text("Unlock batch processing", "解鎖批次處理"), spinner: unlocking) {
-                        unlocking = true
-                        Task { unlockError = !(await batchAccess.unlock(unlockCode)); unlockCode = ""; unlocking = false }
-                    }.disabled(unlocking || unlockCode.isEmpty)
-                    if unlockError { MText(s.text("Incorrect code", "解鎖碼不正確")) }
-                } else { MText(s.text("Batch processing enabled", "已啟用批次處理")) }
                 // Like Android's build number: ten taps on the version unlock the developer tools.
                 MText(DevTools.version, size: 12, color: c.onSurfaceVariant)
                     .contentShape(Rectangle())
@@ -59,6 +56,7 @@ struct SettingsDialog: View {
                         if versionTaps >= DevTools.unlockTaps { devTools.enable() }
                     }
                     .accessibilityIdentifier("version")
+                if BatchAccess.shared.referralActive { ReferralSettings { referralError = $0 } }
                 if devTools.enabled {
                     Rectangle().fill(c.outlineVariant).frame(height: 1)
                     HStack {
@@ -68,6 +66,9 @@ struct SettingsDialog: View {
                         Toggle("", isOn: Binding(get: { true }, set: { on in if !on { devTools.disable(); versionTaps = 0 } }))
                             .labelsHidden().tint(c.primary)
                             .accessibilityLabel(s.text("Developer tools", "開發者工具"))
+                    }
+                    if BatchAccess.shared.gateConfigured {
+                        M3Button(title: s.text("Unlock Code", "解鎖碼"), style: .outlined) { showUnlock = true }
                     }
                     M3Button(title: s.text("Developer logs", "開發者日誌"), style: .outlined) { showLog = true }
                     M3Button(title: s.text("Save logs", "儲存日誌"), style: .outlined) {
@@ -95,6 +96,48 @@ struct SettingsDialog: View {
             savingFrames = false
             notice = saved > 0 ? s.text("Saved \(saved) frames to On My iPhone › AquaRestore › frames", "已儲存 \(saved) 張畫面至「我的 iPhone › AquaRestore › frames」")
                 : s.text("Could not save the frames", "無法儲存畫面")
+        }
+    }
+}
+
+private struct UnlockCodeDialog: View {
+    let dismiss: () -> Void
+    @Environment(\.strings) private var s
+    @Environment(\.palette) private var c
+    @State private var code = ""
+    @State private var unlocking = false
+    @State private var error: String?
+
+    var body: some View {
+        M3Dialog(title: s.text("Unlock Code", "解鎖碼"), dismiss: { if !unlocking { dismiss() } }) {
+            VStack(alignment: .leading, spacing: 12) {
+                MText(s.text("Redeeming sends an app-specific device identifier. The server stores it with the redemption record.",
+                             "兌換時會傳送此 App 專用的裝置識別碼，伺服器會將其與兌換紀錄一起儲存。"), size: 12)
+                SecureField(s.text("Code", "輸入解鎖碼"), text: Binding(get: { code }, set: { code = $0; error = nil }))
+                    .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .disabled(unlocking)
+                if let error { MText(error, color: c.error) }
+            }
+        } buttons: {
+            M3TextButton(title: s.text("Cancel", "取消"), action: dismiss).disabled(unlocking)
+            M3Button(title: s.text("Unlock", "解鎖"), spinner: unlocking) {
+                unlocking = true; error = nil
+                Task {
+                    defer { unlocking = false }
+                    do {
+                        try await ReferralCampaign.shared.request(unlockCode: code.trimmingCharacters(in: .whitespacesAndNewlines))
+                        code = ""; dismiss()
+                    } catch ReferralFailure.api(let reason) {
+                        switch reason {
+                        case "invalid_unlock_code": error = s.text("Incorrect unlock code", "解鎖碼不正確")
+                        case "unlock_code_exhausted": error = s.text("Unlock code has reached its maximum uses.", "此解鎖碼已達使用次數上限。")
+                        default: error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                        }
+                    } catch {
+                        if !Task.isCancelled { self.error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。") }
+                    }
+                }
+            }.disabled(unlocking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 }
