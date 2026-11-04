@@ -237,4 +237,4 @@ The full license text in [LICENSE](LICENSE) is what applies; this summary is for
 
 **Contributions are not accepted.** Pull requests will be closed without merging. Bug reports and suggestions are welcome as issues.
 
-Third-party libraries used by the app (such as AndroidX Media3, Jetpack Compose, libjpeg-turbo and skcms) remain under their own licenses. The iOS app is based in part on the work of the Independent JPEG Group, and includes the libjpeg-turbo and skcms license notices as `LICENSE.txt` in its bundle.
+Third-party libraries used by the app (such as AndroidX Media3, Jetpack Compose, libjpeg-turbo and skcms) remain under their own licenses. The iOS app is based in part on the work of the Independent JPEG Group, uses code derived from Skia and libyuv, and includes these license notices as `LICENSE.txt` in its bundle.
