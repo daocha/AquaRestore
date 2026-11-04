@@ -9,7 +9,7 @@ AquaRestore restores the colors of underwater videos and photos with native Andr
 - **[Android](#android-version):** Kotlin, Jetpack Compose, Media3 and OpenGL ES; Android 10 (API 29) or later.
 - **[iOS](#ios-version):** SwiftUI, AVFoundation and Metal; iOS 16 or later.
 
-Android release builds use the network only to check for app updates and download an update when requested. Android debug builds have no network permission unless LAN updates are configured.
+Android builds have the network permission for two things: GitHub builds check for app updates and download an update when requested, and builds with a referral backend configured register an app-scoped device identifier with it on first launch. See the [privacy policy](PRIVACY.md).
 
 ## How it works
 

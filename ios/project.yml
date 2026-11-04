@@ -30,8 +30,15 @@ targets:
       - name: Prepare local features
         script: 'python3 "$SRCROOT/../scripts/prepare-ios-features.py"'
         basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Prepare referral transport
+        script: 'python3 "$SRCROOT/../scripts/prepare-ios-referral-transport.py"'
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: AquaRestore/AquaRestore.entitlements
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app
         PRODUCT_NAME: AquaRestore
@@ -42,9 +49,11 @@ targets:
       configs:
         # Like the Android debug build: its own bundle id and name, so it installs next to the release app.
         Debug:
+          REFERRAL_ATTEST_ENVIRONMENT: development
           PRODUCT_BUNDLE_IDENTIFIER: com.aquarestore.app.debug
           INFOPLIST_KEY_CFBundleDisplayName: AquaRestore Dev
         Release:
+          REFERRAL_ATTEST_ENVIRONMENT: production
           INFOPLIST_KEY_CFBundleDisplayName: AquaRestore
     info:
       path: Generated/Info.plist
@@ -63,7 +72,7 @@ targets:
         # as On My iPhone › AquaRestore. Nothing else is kept there; imports live in the temporary folder.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        # The app has no network access and only ever adds to the Photos library.
+        # Media stays local; a configured referral backend receives only an app-scoped device hash and submitted codes.
         NSPhotoLibraryAddUsageDescription: AquaRestore saves your restored photos and videos to your Photos library. It never reads your library.
   AquaRestoreTests:
     type: bundle.unit-test

@@ -382,17 +382,18 @@ class EditorUiTest {
             }
         } finally { ComparisonWork.dismiss(); input.delete(); Exports.status.value = ExportStatus() }
     }
-    @Test fun oneUnlockButtonChecksBothCodesAndStaysInsideDeveloperTools() {
+    @Test fun batchControlsStayVisibleAndUnlockControlFollowsConfiguration() {
         val context = ui.activity
         val prefs = context.getSharedPreferences("localFeatures", 0)
+        val legacy = prefs.getBoolean("batchUnlocked", false)
         val photo = prefs.getBoolean("batchPhotoUnlocked", false)
         val video = prefs.getBoolean("batchVideoUnlocked", false)
         prefs.edit().putBoolean("batchUnlocked", false).putBoolean("batchPhotoUnlocked", false).putBoolean("batchVideoUnlocked", false).commit()
         DevTools.disable(context)
         try {
             ui.activityRule.scenario.recreate()
-            ui.onNodeWithText("Batch restore photos").assertDoesNotExist()
-            ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
+            ui.onNodeWithText("Batch restore photos", substring = true).performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Batch restore videos", substring = true).performScrollTo().assertIsDisplayed()
             ui.onNodeWithContentDescription("Settings").performClick()
             ui.onNodeWithText("Unlock Code").assertDoesNotExist()
             ui.onNodeWithText("AquaRestore ${BuildConfig.VERSION_NAME}", substring = true).performScrollTo().apply {
@@ -401,22 +402,18 @@ class EditorUiTest {
             ui.onNodeWithText("Batch photo processing").assertDoesNotExist()
             ui.onNodeWithText("Batch video processing").assertDoesNotExist()
             ui.onNodeWithText("Code").assertDoesNotExist()
+            if (!BatchAccess.gateConfigured) {
+                ui.onNodeWithText("Unlock Code").assertDoesNotExist()
+                return
+            }
             ui.onNodeWithText("Unlock Code").performScrollTo().performClick()
-            ui.onNodeWithText("Code").performTextInput("incorrect")
-            ui.onNodeWithText("Unlock", substring = false).performClick()
-            ui.waitUntil(10_000) { ui.onAllNodesWithText("Incorrect code").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithText("Code").performTextInput("example-server-code")
+            // Do not redeem or contact a configured backend from UI instrumentation.
+            ui.onNodeWithText("Cancel").performClick()
             assertFalse(BatchAccess.enabled(context))
             assertFalse(BatchAccess.enabled(context, video = true))
-            ui.onNodeWithText("Code").performTextInput(context.packageName)
-            ui.onNodeWithText("Unlock", substring = false).performClick()
-            ui.waitUntil(10_000) { BatchAccess.enabled(context) && BatchAccess.enabled(context, video = true) }
-            ui.onNodeWithText("Done").performClick()
-            DevTools.disable(context)
-            ui.activityRule.scenario.recreate()
-            ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
-            ui.onNodeWithText("Batch restore videos").performScrollTo().assertIsDisplayed()
         } finally {
-            prefs.edit().putBoolean("batchPhotoUnlocked", photo).putBoolean("batchVideoUnlocked", video).commit()
+            prefs.edit().putBoolean("batchUnlocked", legacy).putBoolean("batchPhotoUnlocked", photo).putBoolean("batchVideoUnlocked", video).commit()
             DevTools.disable(context)
         }
     }

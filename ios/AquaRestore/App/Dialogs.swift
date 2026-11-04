@@ -12,6 +12,7 @@ struct SettingsDialog: View {
     @State private var versionTaps = 0
     @State private var showLog = false
     @State private var showUnlock = false
+    @State private var referralError: String?
     @State private var savingFrames = false
     /// Android shows these as toasts.
     @State private var notice: String?
@@ -21,6 +22,13 @@ struct SettingsDialog: View {
             dialog
             if showLog { DevLogPanel { showLog = false } }
             if showUnlock { UnlockCodeDialog { showUnlock = false } }
+            if let referralError {
+                M3Dialog(title: s.text("Referral code", "推薦碼"), dismiss: { self.referralError = nil }) {
+                    MText(referralError)
+                } buttons: {
+                    M3TextButton(title: s.text("OK", "知道了")) { self.referralError = nil }
+                }
+            }
         }
     }
 
@@ -48,6 +56,7 @@ struct SettingsDialog: View {
                         if versionTaps >= DevTools.unlockTaps { devTools.enable() }
                     }
                     .accessibilityIdentifier("version")
+                if BatchAccess.shared.referralActive { ReferralSettings { referralError = $0 } }
                 if devTools.enabled {
                     Rectangle().fill(c.outlineVariant).frame(height: 1)
                     HStack {
@@ -58,7 +67,9 @@ struct SettingsDialog: View {
                             .labelsHidden().tint(c.primary)
                             .accessibilityLabel(s.text("Developer tools", "開發者工具"))
                     }
-                    M3Button(title: s.text("Unlock Code", "解鎖碼"), style: .outlined) { showUnlock = true }
+                    if BatchAccess.shared.gateConfigured {
+                        M3Button(title: s.text("Unlock Code", "解鎖碼"), style: .outlined) { showUnlock = true }
+                    }
                     M3Button(title: s.text("Developer logs", "開發者日誌"), style: .outlined) { showLog = true }
                     M3Button(title: s.text("Save logs", "儲存日誌"), style: .outlined) {
                         Task { notice = await DevLog.save().map { s.text("Saved to \($0)", "已儲存至 \($0)") } ?? s.text("Could not save the log", "無法儲存日誌") }
@@ -92,29 +103,41 @@ struct SettingsDialog: View {
 private struct UnlockCodeDialog: View {
     let dismiss: () -> Void
     @Environment(\.strings) private var s
+    @Environment(\.palette) private var c
     @State private var code = ""
     @State private var unlocking = false
-    @State private var error = false
+    @State private var error: String?
 
     var body: some View {
         M3Dialog(title: s.text("Unlock Code", "解鎖碼"), dismiss: { if !unlocking { dismiss() } }) {
             VStack(alignment: .leading, spacing: 12) {
-                SecureField(s.text("Code", "輸入解鎖碼"), text: $code)
+                MText(s.text("Redeeming sends an app-specific device identifier. The server stores it with the redemption record.",
+                             "兌換時會傳送此 App 專用的裝置識別碼，伺服器會將其與兌換紀錄一起儲存。"), size: 12)
+                SecureField(s.text("Code", "輸入解鎖碼"), text: Binding(get: { code }, set: { code = $0; error = nil }))
                     .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .disabled(unlocking)
-                    .onChange(of: code) { value in if !value.isEmpty { error = false } }
-                if error { MText(s.text("Incorrect code", "解鎖碼不正確")) }
+                if let error { MText(error, color: c.error) }
             }
         } buttons: {
             M3TextButton(title: s.text("Cancel", "取消"), action: dismiss).disabled(unlocking)
             M3Button(title: s.text("Unlock", "解鎖"), spinner: unlocking) {
-                unlocking = true
+                unlocking = true; error = nil
                 Task {
-                    let valid = await BatchAccess.shared.unlock(code)
-                    error = !valid; code = ""; unlocking = false
-                    if valid { dismiss() }
+                    defer { unlocking = false }
+                    do {
+                        try await ReferralCampaign.shared.request(unlockCode: code.trimmingCharacters(in: .whitespacesAndNewlines))
+                        code = ""; dismiss()
+                    } catch ReferralFailure.api(let reason) {
+                        switch reason {
+                        case "invalid_unlock_code": error = s.text("Incorrect unlock code", "解鎖碼不正確")
+                        case "unlock_code_exhausted": error = s.text("Unlock code has reached its maximum uses.", "此解鎖碼已達使用次數上限。")
+                        default: error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                        }
+                    } catch {
+                        if !Task.isCancelled { self.error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。") }
+                    }
                 }
-            }.disabled(unlocking || code.isEmpty)
+            }.disabled(unlocking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 }

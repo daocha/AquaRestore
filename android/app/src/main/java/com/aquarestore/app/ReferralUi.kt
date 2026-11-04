@@ -1,0 +1,145 @@
+package com.aquarestore.app
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+
+@Composable
+internal fun BatchQuestDialog(s: Strings, video: Boolean, onUnlocked: () -> Unit, dismiss: () -> Unit) {
+    val context = LocalContext.current
+    var checking by remember { mutableStateOf(ReferralCampaign.active) }
+    var error by remember { mutableStateOf(false) }
+    var count by remember { mutableIntStateOf(ReferralCampaign.count(context)) }
+    var invited by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (BatchAccess.enabled(context, video)) { onUnlocked(); return@LaunchedEffect }
+        if (ReferralCampaign.active) {
+            try {
+                ReferralCampaign.request(context)
+                count = ReferralCampaign.count(context)
+                if (BatchAccess.enabled(context, video)) onUnlocked()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { error = true }
+            finally { checking = false }
+        }
+    }
+    AlertDialog(onDismissRequest = dismiss, title = { Text(s.text("Unlock batch processing", "解鎖批次處理")) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (ReferralCampaign.active) {
+                Text(s.text("Complete the app quest: invite friends to use AquaRestore. They enter your referral code in Settings.",
+                    "完成 App 任務：邀請朋友使用 AquaRestore，並請他們在設定中輸入你的推薦碼。"))
+                Text(s.text("Invite 5 friends → unlock batch photo processing", "邀請 5 位朋友 → 解鎖批次照片處理"))
+                Text(s.text("Invite 10 friends → unlock batch video processing", "邀請 10 位朋友 → 解鎖批次影片處理"))
+                runCatching { ReferralCampaign.code(context) }.getOrNull()?.let { code ->
+                    OwnReferralCode(s, code) { invited = true }
+                }
+                if (invited) Text(s.text("Invite copied.", "邀請內容已複製。"))
+                Text(s.text("Friends invited: $count", "已邀請朋友：$count"))
+                if (checking) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (error) Text(s.text("Could not check quest progress. Check your connection and tap the batch button again.",
+                    "無法查詢任務進度。請檢查網路，然後再次點選批次按鈕。"), color = MaterialTheme.colorScheme.error)
+            } else Text(s.text("This feature is locked. Enter an unlock code in Settings → Developer tools.",
+                "此功能尚未解鎖。請在「設定 → 開發者工具」中輸入解鎖碼。"))
+        }
+    }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })
+}
+
+/** Monospaced, because codes are read and retyped: this font tells l from I and O from 0. */
+@Composable
+private fun ReferralCode(label: String, code: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label)
+        SelectionContainer { Text(code, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+/** Copies first, so the invite is still on the clipboard if the share sheet is dismissed. */
+private fun shareInvite(context: Context, s: Strings, code: String) {
+    val fromPlay = BuildConfig.UPDATE_CHANNEL == "play" || installedViaPlay(context)
+    val invite = ReferralInvite.message(s, code, ReferralInvite.appUrl(fromPlay, context.packageName))
+    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("AquaRestore", invite))
+    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, invite), null))
+}
+
+@Composable
+private fun OwnReferralCode(s: Strings, code: String, onInvited: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ReferralCode(s.text("Your referral code", "你的推薦碼"), code, Modifier.weight(1f))
+        OutlinedButton(onClick = {
+            shareInvite(context, s, code)
+            onInvited()
+            // A device that was offline at launch must exist on the server before a friend tries this code.
+            scope.launch { ReferralCampaign.registerIfNeeded(context) }
+        }) { Text(s.text("Invite", "邀請")) }
+    }
+}
+
+@Composable
+internal fun ReferralSettings(s: Strings) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val bound = remember(ReferralCampaign.revision) { ReferralCampaign.referredBy(context) }
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val invalidCode = s.text("This referral code is invalid. Codes are case-sensitive and some characters look alike, such as l and I or O and 0. Paste the code if you can.",
+        "此推薦碼無效。推薦碼區分大小寫，部分字元外觀相近（如 l 與 I、O 與 0），建議直接貼上。")
+    // In a popup: the submit button can sit at the bottom of the scrolling settings, with anything below it out of view.
+    error?.let { text ->
+        AlertDialog(onDismissRequest = { error = null }, title = { Text(s.text("Referral code", "推薦碼")) }, text = { Text(text) },
+            confirmButton = { TextButton(onClick = { error = null }) { Text(s.text("OK", "知道了")) } })
+    }
+    HorizontalDivider()
+    Text(s.text("Invite friends", "邀請朋友"), fontWeight = FontWeight.SemiBold)
+    val ownCode = remember { runCatching { ReferralCampaign.code(context) }.getOrNull() }
+    if (ownCode != null) OwnReferralCode(s, ownCode) { message = s.text("Invite copied.", "邀請內容已複製。") }
+    else Text(s.text("Device identity unavailable. Try reopening the app.", "無法取得裝置識別碼，請重新開啟 App。"))
+    Text(s.text("Invite 5 friends for batch photos; 10 for batch videos.", "邀請 5 位朋友解鎖批次照片；10 位解鎖批次影片。"))
+    if (bound != null) {
+        ReferralCode(s.text("Friend’s referral code", "朋友的推薦碼"), bound)
+        Text(s.text("Referral code saved. It cannot be changed.", "推薦碼已儲存，無法變更。"))
+    } else {
+        OutlinedTextField(value = code, onValueChange = { code = ReferralIdentity.codeIn(it); message = null },
+            label = { Text(s.text("Friend’s referral code", "朋友的推薦碼")) }, singleLine = true, enabled = !busy)
+        Text(s.text("You can submit a friend’s code only once.", "朋友的推薦碼只能提交一次。"))
+        OutlinedButton(onClick = {
+            val entered = code.trim()
+            if (!ReferralIdentity.acceptable(entered, ownCode.orEmpty())) { error = invalidCode; return@OutlinedButton }
+            busy = true; message = null
+            scope.launch {
+                try {
+                    val accepted = ReferralCampaign.request(context, entered)
+                    code = ""
+                    message = if (accepted) s.text("Referral code saved.", "推薦碼已儲存。")
+                    else s.text("This device already used a referral code. The original code has been restored.", "此裝置已使用推薦碼，已還原原本的推薦碼。")
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    error = if ((failure as? ReferralApiException)?.errorCode == "invalid_referral_code") invalidCode
+                    else s.text("Could not submit the code. Check your connection and try again.", "無法提交推薦碼。請檢查網路連線後重試。")
+                }
+                finally { busy = false }
+            }
+        }, enabled = !busy && ownCode != null && code.isNotBlank()) {
+            Text(if (busy) s.text("Submitting…", "正在提交…") else s.text("Submit referral code", "提交推薦碼"))
+        }
+    }
+    message?.let { Text(it) }
+}

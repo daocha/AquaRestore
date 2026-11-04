@@ -1,4 +1,3 @@
-import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -25,42 +24,63 @@ class FeatureBuildTests(unittest.TestCase):
                 module.generate(root, output)
             return plistlib.loads(output.read_bytes()), output.read_bytes()
 
-    def assertCode(self, values, feature, code):
-        expected = hashlib.pbkdf2_hmac("sha256", code.encode(), bytes.fromhex(values[feature + "Salt"]), 120000).hex()
-        self.assertEqual(expected, values[feature + "Verifier"])
+    def test_legacy_unlock_environment_is_ignored_and_not_packaged(self):
+        values, raw = self.generate(photo="old-photo-secret", video="old-video-secret", environment={
+            "CONFIGURATION": "Release", "AQUARESTORE_BATCH_PHOTO_UNLOCK_CODE": "exported-secret"})
+        self.assertEqual({"referralBackendURL": ""}, values)
+        for secret in (b"old-photo-secret", b"old-video-secret", b"exported-secret"):
+            self.assertNotIn(secret, raw)
 
-    def test_missing_settings_enable_features_independently(self):
+    def test_backend_configuration_is_the_only_gate(self):
         values, _ = self.generate()
-        self.assertEqual(values["photoVerifier"], "")
-        self.assertEqual(values["videoVerifier"], "")
-        values, _ = self.generate(photo="photos")
-        self.assertCode(values, "photo", "photos")
-        self.assertEqual(values["videoVerifier"], "")
-        values, _ = self.generate(video="videos")
-        self.assertEqual(values["photoVerifier"], "")
-        self.assertCode(values, "video", "videos")
+        self.assertEqual({"referralBackendURL": ""}, values)
+        values, _ = self.generate(environment={"CONFIGURATION": "Debug",
+            "AQUARESTORE_REFERRAL_BACKEND_URL": "https://example.org/referrals/"})
+        self.assertEqual("https://example.org/referrals", values["referralBackendURL"])
+        self.assertFalse(any("Verifier" in key or "Salt" in key for key in values))
 
-    def test_only_independent_salted_verifiers_are_packaged(self):
-        code = "sample-測試-5678"
-        first, raw = self.generate(photo=code, video="video-only")
-        second, _ = self.generate(photo=code, video="video-only")
-        self.assertNotIn(code.encode(), raw)
-        self.assertNotIn(b"video-only", raw)
-        self.assertNotEqual(first["photoSalt"], second["photoSalt"])
-        self.assertNotEqual(first["photoSalt"], first["videoSalt"])
-        self.assertCode(first, "photo", code)
-        self.assertCode(first, "video", "video-only")
+    def test_root_dotenv_url_and_exported_empty_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text('AQUARESTORE_REFERRAL_BACKEND_URL=https://example.org\n')
+            output = root / "BatchGate.plist"
+            with patch.dict(os.environ, {}, clear=True):
+                module.generate(root, output)
+            self.assertEqual("https://example.org", plistlib.loads(output.read_bytes())["referralBackendURL"])
+            with patch.dict(os.environ, {"AQUARESTORE_REFERRAL_BACKEND_URL": ""}, clear=True):
+                module.generate(root, output)
+            self.assertEqual("", plistlib.loads(output.read_bytes())["referralBackendURL"])
 
-    def test_debug_uses_actual_bundle_identifier_for_both_features(self):
-        package = "com.aquarestore.app.debug"
-        values, raw = self.generate(photo="release-photo", video="release-video", environment={
-            "CONFIGURATION": "Debug", "PRODUCT_BUNDLE_IDENTIFIER": package})
-        self.assertCode(values, "photo", package)
-        self.assertCode(values, "video", package)
-        self.assertNotIn(package.encode(), raw)
+    def test_rejects_invalid_backend_urls(self):
+        for backend in ("ftp://example.org", "https://a:b@example.org", "https://example.org?token=secret", "https://@example.org", "https://example.org?", "https://example.org#"):
+            with self.subTest(backend=backend), self.assertRaises(ValueError):
+                self.generate(environment={"AQUARESTORE_REFERRAL_BACKEND_URL": backend})
 
-    def test_release_environment_overrides_dotenv_independently(self):
-        values, _ = self.generate(photo="file-photo", video="file-video", environment={
-            "CONFIGURATION": "Release", "AQUARESTORE_BATCH_PHOTO_UNLOCK_CODE": "environment-photo"})
-        self.assertCode(values, "photo", "environment-photo")
-        self.assertCode(values, "video", "file-video")
+    def test_debug_referral_secret_is_never_packaged_in_release(self):
+        environment = {"AQUARESTORE_REFERRAL_DEBUG_TOKEN": "test_" + "x" * 40, "CONFIGURATION": "Debug"}
+        values, _ = self.generate(environment=environment)
+        self.assertEqual(environment["AQUARESTORE_REFERRAL_DEBUG_TOKEN"], values["referralDebugToken"])
+        environment["CONFIGURATION"] = "Release"
+        values, raw = self.generate(environment=environment)
+        self.assertNotIn("referralDebugToken", values)
+        self.assertNotIn(environment["AQUARESTORE_REFERRAL_DEBUG_TOKEN"].encode(), raw)
+
+    def test_platform_verification_can_be_enabled_explicitly_in_debug_only(self):
+        values, _ = self.generate(environment={"CONFIGURATION": "Debug", "PRODUCT_BUNDLE_IDENTIFIER": "com.aquarestore.app.debug"})
+        self.assertEqual("token", values["referralDebugVerification"])
+        values, _ = self.generate(environment={"CONFIGURATION": "Debug", "PRODUCT_BUNDLE_IDENTIFIER": "com.aquarestore.app.debug",
+                                               "AQUARESTORE_REFERRAL_DEBUG_VERIFICATION": "platform"})
+        self.assertEqual("platform", values["referralDebugVerification"])
+        values, _ = self.generate(environment={"CONFIGURATION": "Release", "AQUARESTORE_REFERRAL_DEBUG_VERIFICATION": "token"})
+        self.assertNotIn("referralDebugVerification", values)
+        with self.assertRaises(ValueError):
+            self.generate(environment={"CONFIGURATION": "Debug", "AQUARESTORE_REFERRAL_DEBUG_VERIFICATION": "invalid"})
+
+    def test_release_referral_http_is_rejected_and_debug_scheme_is_normalized(self):
+        with self.assertRaises(ValueError):
+            self.generate(environment={"CONFIGURATION": "Release", "AQUARESTORE_REFERRAL_BACKEND_URL": "http://example.org"})
+        values, _ = self.generate(environment={"CONFIGURATION": "Debug", "AQUARESTORE_REFERRAL_BACKEND_URL": "HTTP://127.0.0.1:8080"})
+        self.assertEqual("http://127.0.0.1:8080", values["referralBackendURL"])
+        for port in ("bad", "0", "65536"):
+            with self.subTest(port=port), self.assertRaises(ValueError):
+                self.generate(environment={"AQUARESTORE_REFERRAL_BACKEND_URL": "https://example.org:" + port})
