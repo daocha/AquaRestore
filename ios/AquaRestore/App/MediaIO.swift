@@ -127,6 +127,7 @@ enum MediaIO {
         let (width, height) = try imageSize(url)
         let (w, h) = ExportSizing.dimensions(width, height, edge)
         if UInt64(w) * UInt64(h) * 8 > Platform.physicalMemory / 4 { throw MediaProblem("memory") }
+        if let image = PhotoDecoder.decode(url, edge: edge) { return image }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
@@ -136,8 +137,18 @@ enum MediaIO {
         return pixels
     }
 
+    static func analysisBitmap(_ url: URL, edge: Int = 192) throws -> PixelImage {
+        try bitmap(url, edge: edge)
+    }
+
     /// Calls `each` with each sampled video analysis frame and its requested time in milliseconds.
-    private static func videoFrames(_ source: SourceMedia, _ each: (Int64, CGImage) throws -> Void) async throws {
+    private static func videoFrames(_ source: SourceMedia, _ each: (Int64, PixelImage) throws -> Void) async throws {
+        let fractions = [0.05, 0.23, 0.41, 0.59, 0.77, 0.95]
+        let times = fractions.map { Int64(Double(source.durationMs) * 1000 * $0) }
+        if !source.isHdr, let frames = try await VideoDecoder.analysisFrames(source.url, timesUs: times, edge: 192) {
+            for (us, frame) in zip(times, frames) { try each(us / 1000, frame) }
+            return
+        }
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source.url))
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 192, height: 192)
@@ -147,12 +158,13 @@ enum MediaIO {
         #if DEBUG
         NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) codec=\(source.codec) hdr=\(source.hdr) durationMs=\(source.durationMs) fps=\(source.fps)")
         #endif
-        for fraction in [0.05, 0.23, 0.41, 0.59, 0.77, 0.95] {
+        for fraction in fractions {
             try Task.checkCancellation()
             let ms = Int64(Double(source.durationMs) * fraction)
             let time = CMTime(seconds: Double(source.durationMs) / 1000 * fraction, preferredTimescale: 600)
             guard let result = try? await generator.image(at: time) else { continue }
-            try each(ms, result.image)
+            guard let pixels = PixelImage.videoAnalysis(result.image, hdr: source.isHdr) else { continue }
+            try each(ms, pixels)
         }
     }
 
@@ -160,14 +172,13 @@ enum MediaIO {
         var frames: [[UInt32]] = []
         var described: [String] = []
         if source.video {
-            try await videoFrames(source) { ms, image in
-                guard let pixels = PixelImage.videoAnalysis(image, hdr: source.isHdr) else { return }
+            try await videoFrames(source) { ms, pixels in
                 frames.append(pixels.pixels)
                 #if DEBUG
                 described.append("at \(ms)ms " + describe(pixels))
                 #endif
             }
-        } else if let image = try? bitmap(source.url, edge: 192) {
+        } else if let image = try? analysisBitmap(source.url) {
             frames.append(image.pixels)
             #if DEBUG
             NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) photo")
@@ -209,13 +220,12 @@ enum MediaIO {
         }
         if source.video {
             var index = 0
-            try await videoFrames(source) { _, decoded in
+            try await videoFrames(source) { _, pixels in
                 index += 1
-                guard let pixels = PixelImage.videoAnalysis(decoded, hdr: source.isHdr) else { return }
                 try save(pixels, name: "\(stem)-frame-\(index).png")
             }
         } else {
-            try save(bitmap(source.url, edge: 192), name: "\(stem)-photo-analysis.png")
+            try save(analysisBitmap(source.url), name: "\(stem)-photo-analysis.png")
             let handle = try FileHandle(forReadingFrom: source.url)
             defer { try? handle.close() }
             var digest = SHA256(), bytes = 0
