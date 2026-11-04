@@ -38,9 +38,13 @@ enum ComparisonWork {
         var source = request.source; source.url = url
         let input = ExportRequest(source: source, grade: request.grade, options: request.options, chinese: request.chinese)
         let predecessor = previousWorker
+        // A second full-size decoder beside the export can run a phone out of memory on heavy video, so that waits for
+        // the export to succeed. A rejected or dismissed entry is cancelled.
+        let heavy = source.video && !LivePreview.withinLimit(width: source.width, height: source.height, fps: source.fps)
         let task = Task {
             defer { try? FileManager.default.removeItem(at: url) }
             await predecessor?.value
+            while heavy && !entry.accepted && !Task.isCancelled { try? await Task.sleep(nanoseconds: 200_000_000) }
             if !Task.isCancelled {
                 entry.assets = await ShareMediaMaker.make(input, onAsset: { item in
                     Task { @MainActor in

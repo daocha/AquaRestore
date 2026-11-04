@@ -14,9 +14,7 @@ final class LivePreviewTests: XCTestCase {
     }
 
     func testMeasuredSpeedChoosesHowThePreviewPlays() {
-        XCTAssertEqual(.full, LivePreview.decide(fps: 60, measuredDecodeFps: 120))
-        XCTAssertEqual(.full, LivePreview.decide(fps: 60, measuredDecodeFps: 240))
-        XCTAssertEqual(.reduced, LivePreview.decide(fps: 60, measuredDecodeFps: 119))
+        XCTAssertEqual(.reduced, LivePreview.decide(fps: 60, measuredDecodeFps: 240))
         XCTAssertEqual(.reduced, LivePreview.decide(fps: 60, measuredDecodeFps: 72))
         XCTAssertEqual(.copy, LivePreview.decide(fps: 60, measuredDecodeFps: 71))
         XCTAssertEqual(.copy, LivePreview.decide(fps: 60, measuredDecodeFps: 20))

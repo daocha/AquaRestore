@@ -417,7 +417,15 @@ enum Exporter {
             AVVideoYCbCrMatrixKey: source.isHdr ? AVVideoYCbCrMatrix_ITU_R_2020 : AVVideoYCbCrMatrix_ITU_R_709_2,
         ]
         try? FileManager.default.removeItem(at: temp)
+        let label = comparison ? "comparison" : "export"
+        NSLog("AquaRestore: \(label) starting: \(source.width)x\(source.height) at \(source.fps) fps to \(width)x\(height), original=\(o.original), \(useHevc ? "hevc" : "h264"), \(bitrate) bps\(AppLog.memory)")
+        defer { NSLog("AquaRestore: \(label) ended\(AppLog.memory)") }
         let writer = try AVAssetWriter(outputURL: temp, fileType: .mp4)
+        // Creating the input with settings the device refuses raises an exception that Swift cannot catch.
+        guard writer.canApply(outputSettings: videoSettings, forMediaType: .video) else {
+            NSLog("AquaRestore: this device cannot encode \(width)x\(height) as \(useHevc ? "HEVC" : "H.264")")
+            throw MediaProblem(source.isHdr ? "hdrDevice" : "exportFailed")
+        }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoInput.expectsMediaDataInRealTime = false
         guard writer.canAdd(videoInput) else { throw MediaProblem(source.isHdr ? "hdrDevice" : "exportFailed") }
@@ -481,6 +489,7 @@ enum Exporter {
                     if video {
                         if frames.add() { NSLog("AquaRestore: video export read its first frame after \(String(format: "%.1f", Date().timeIntervalSince(started))) s") }
                         update(Int(min(time.seconds / totalSeconds, 1) * 90), "exporting")
+                        AppLog.progress(label, percent: Int(min(time.seconds / totalSeconds, 1) * 100))
                         if let cadence, !cadence.accept(timeUs: Int64((time.seconds * 1_000_000).rounded())) { continue }
                     }
                     if !input.append(sample) { failed.set(); break }

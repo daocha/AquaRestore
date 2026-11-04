@@ -5,6 +5,9 @@ import MediaToolbox
 /// change live while the player runs.
 final class GainBox {
     var gain: Float
+    /// For the log: how often the audio pipeline delivered sound, and the loudest sample since it was last read.
+    var deliveries = 0
+    var peak: Float = 0
     init(_ gain: Float = 1) { self.gain = gain }
 }
 
@@ -31,6 +34,16 @@ enum GainTap {
             process: { tap, frames, _, bufferList, framesOut, flagsOut in
                 guard MTAudioProcessingTapGetSourceAudio(tap, frames, bufferList, flagsOut, nil, framesOut) == noErr else { return }
                 let context = Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+                context.box.deliveries += 1
+                if let buffer = UnsafeMutableAudioBufferListPointer(bufferList).first, let data = buffer.mData {
+                    if context.isFloat && context.bits == 32 {
+                        let samples = data.assumingMemoryBound(to: Float.self)
+                        for i in stride(from: 0, to: Int(buffer.mDataByteSize) / 4, by: 16) { context.box.peak = max(context.box.peak, abs(samples[i])) }
+                    } else if !context.isFloat && context.bits == 16 {
+                        let samples = data.assumingMemoryBound(to: Int16.self)
+                        for i in stride(from: 0, to: Int(buffer.mDataByteSize) / 2, by: 16) { context.box.peak = max(context.box.peak, abs(Float(samples[i]) / 32768)) }
+                    }
+                }
                 let gain = context.box.gain
                 if gain == 1 { return }
                 for buffer in UnsafeMutableAudioBufferListPointer(bufferList) {
