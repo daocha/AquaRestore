@@ -219,7 +219,7 @@ final class EditorModel: ObservableObject {
                     try Task.checkCancellation()
                     let hold = live == .copy
                     NSLog("AquaRestore: preview \(hold ? "waits for a copy" : live == .reduced ? "plays the original, graded at up to \(LivePreview.reducedEdge)px" : "plays the original")" +
-                          " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))")
+                          " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))\(AppLog.memory)")
                     if hold { self.previewPreparing = 0 }
                     self.previewURL = media.url
                     self.player.load(media, gradeEdge: live == .full ? 0 : LivePreview.reducedEdge)

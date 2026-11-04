@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 import UIKit
 import AVFoundation
 @testable import AquaRestore
@@ -44,7 +45,7 @@ final class ShareMediaTests: XCTestCase {
         let options = ExportOptions(original: false, longEdge: 160, fps: 10, speed: 2, startMs: start, endMs: end)
         let began = Date()
         let items = await ShareMediaMaker.make(ExportRequest(source: source, grade: .neutral, options: options, chinese: false))
-        NSLog("AquaRestoreTest: sequential video comparison %.2f s", Date().timeIntervalSince(began))
+        Foundation.NSLog("AquaRestoreTest:sequential video comparison %.2f s", Date().timeIntervalSince(began))
         defer { ShareMediaMaker.remove(items) }
         XCTAssertEqual(items.count, 1)
         guard let item = items.first else { return }
@@ -98,7 +99,7 @@ final class ShareMediaTests: XCTestCase {
         defer { ShareMediaMaker.remove(items) }
         let item = try XCTUnwrap(items.first)
         let output = try await MediaIO.inspect(item.url)
-        NSLog("AquaRestoreTest: full comparison %lld ms at %dx%d %.1f fps generated in %.3f s", output.durationMs, output.width, output.height, output.fps, elapsed)
+        Foundation.NSLog("AquaRestoreTest:full comparison %lld ms at %dx%d %.1f fps generated in %.3f s", output.durationMs, output.width, output.height, output.fps, elapsed)
         XCTAssertEqual(items.count, 1)
         XCTAssertEqual(output.width, 1280); XCTAssertEqual(output.height, 720)
         XCTAssertTrue(abs(output.durationMs - SharingPlan.clip(source.durationMs).length) <= 100)

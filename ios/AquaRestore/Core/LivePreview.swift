@@ -12,11 +12,19 @@ enum LivePreview: Equatable {
         Double(width) * Double(height) * Double(fps) <= 3840.0 * 2160 * 61
     }
 
-    /// iOS declares no decoder limits, so a heavier video is judged by how fast a sample of it decoded. It never grades
-    /// at full size: frames that large in the preview, on top of an export, ran an iPhone SE out of memory. If the sample
-    /// could not be measured, the original still plays.
-    static func decide(fps: Float, measuredDecodeFps: Double?) -> LivePreview {
+    /// Whether this phone has the memory right now to treat a video heavier than 4K60 as lighter ones: a full-size preview,
+    /// and a comparison alongside the export. Asks what is free rather than which model it is, so later iPhones need no
+    /// changes. Doing both ran an iPhone SE with 4 GB out of memory. The figures are estimates, meant to exclude 4 GB
+    /// phones. Zero, where the system reports nothing, counts as no room.
+    static func hasRoom(width: Int, height: Int, availableMemory: UInt64 = AppLog.availableMemory) -> Bool {
+        availableMemory >= max(2_500 * 1_048_576, UInt64(width) * UInt64(height) * 200)
+    }
+
+    /// iOS declares no decoder limits, so a heavier video is judged by how fast a sample of it decoded. Full size also
+    /// needs the memory. If the sample could not be measured, the original still plays, graded smaller.
+    static func decide(fps: Float, measuredDecodeFps: Double?, hasRoom: Bool) -> LivePreview {
         guard let measured = measuredDecodeFps else { return .reduced }
+        if hasRoom && measured >= Double(fps) * 2 { return .full }
         return measured >= Double(fps) * 1.2 ? .reduced : .copy
     }
 }

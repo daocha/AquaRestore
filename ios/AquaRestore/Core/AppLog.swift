@@ -54,10 +54,19 @@ enum AppLog {
         append("AquaRestore: \(label) at \(percent)%\(memory)")
     }
 
+    /// What this app can still use before the system ends it. Zero where the system does not report it.
+    static var availableMemory: UInt64 {
+        #if os(iOS)
+        return UInt64(os_proc_available_memory())
+        #else
+        return 0
+        #endif
+    }
+
     /// The free memory, to add to a log line where it matters. Nothing where the system does not report it.
     static var memory: String {
         #if os(iOS)
-        return " | free memory \(os_proc_available_memory() / 1_048_576) MB"
+        return " | free memory \(availableMemory / 1_048_576) MB"
         #else
         return ""
         #endif
