@@ -104,7 +104,7 @@ private struct BatchUnlockControl: View {
             } else {
                 SecureField(video ? s.text("Batch video unlock code", "批次影片解鎖碼") : s.text("Batch photo unlock code", "批次照片解鎖碼"), text: $code)
                     .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .onChange(of: code) { _ in error = false }
+                    .onChange(of: code) { value in if !value.isEmpty { error = false } }
                 M3Button(title: video ? s.text("Unlock batch videos", "解鎖批次影片") : s.text("Unlock batch photos", "解鎖批次照片"), spinner: unlocking) {
                     unlocking = true
                     Task { error = !(await access.unlock(code, video: video)); code = ""; unlocking = false }

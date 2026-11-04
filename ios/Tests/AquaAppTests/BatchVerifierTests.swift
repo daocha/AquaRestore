@@ -48,4 +48,15 @@ final class BatchVerifierTests: XCTestCase {
         XCTAssertTrue(access.photoEnabled)
         XCTAssertFalse(access.videoEnabled)
     }
+    func testDebugPackagedVerifiersMatchBundleIdentifier() throws {
+        #if DEBUG
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "BatchGate", withExtension: "plist"))
+        let config = try XCTUnwrap(NSDictionary(contentsOf: url) as? [String: String])
+        let identifier = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        for feature in ["photo", "video"] {
+            XCTAssertTrue(BatchAccess.verify(identifier, saltHex: try XCTUnwrap(config[feature + "Salt"]),
+                                            verifierHex: try XCTUnwrap(config[feature + "Verifier"])))
+        }
+        #endif
+    }
 }
