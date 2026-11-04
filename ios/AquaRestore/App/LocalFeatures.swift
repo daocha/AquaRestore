@@ -5,20 +5,34 @@ import StoreKit
 @MainActor
 final class BatchAccess: ObservableObject {
     static let shared = BatchAccess()
-    @Published private(set) var enabled: Bool
+    @Published private(set) var photoEnabled: Bool
+    @Published private(set) var videoEnabled: Bool
     private let config: [String: String]
-    private init() {
-        config = Bundle.main.url(forResource: "BatchGate", withExtension: "plist")
+    private let preferences: UserDefaults
+    private convenience init() {
+        let values = Bundle.main.url(forResource: "BatchGate", withExtension: "plist")
             .flatMap { NSDictionary(contentsOf: $0) as? [String: String] } ?? [:]
-        enabled = config["verifier", default: ""].isEmpty || UserDefaults.standard.bool(forKey: "batchUnlocked")
+        self.init(config: values, preferences: .standard)
+    }
+    init(config values: [String: String], preferences prefs: UserDefaults) {
+        config = values
+        preferences = prefs
+        let legacy = prefs.bool(forKey: "batchUnlocked")
+        photoEnabled = values["photoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchPhotoUnlocked")
+        videoEnabled = values["videoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchVideoUnlocked")
     }
     func unlock(_ code: String) async -> Bool {
-        if enabled { return true }
-        let salt = config["salt", default: ""]
-        let expected = config["verifier", default: ""]
-        let valid = await Task.detached { Self.verify(code, saltHex: salt, verifierHex: expected) }.value
-        if valid { UserDefaults.standard.set(true, forKey: "batchUnlocked"); enabled = true }
-        return valid
+        let values = config
+        let (photo, video) = await Task.detached {
+            let photoVerifier = values["photoVerifier", default: ""]
+            let videoVerifier = values["videoVerifier", default: ""]
+            let photo = !photoVerifier.isEmpty && Self.verify(code, saltHex: values["photoSalt", default: ""], verifierHex: photoVerifier)
+            let video = !videoVerifier.isEmpty && Self.verify(code, saltHex: values["videoSalt", default: ""], verifierHex: videoVerifier)
+            return (photo, video)
+        }.value
+        if photo { preferences.set(true, forKey: "batchPhotoUnlocked"); photoEnabled = true }
+        if video { preferences.set(true, forKey: "batchVideoUnlocked"); videoEnabled = true }
+        return photo || video
     }
     nonisolated static func verify(_ code: String, saltHex: String, verifierHex: String) -> Bool {
         let salt = bytes(saltHex), expected = bytes(verifierHex)

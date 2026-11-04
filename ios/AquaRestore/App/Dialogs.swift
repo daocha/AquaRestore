@@ -9,12 +9,9 @@ struct SettingsDialog: View {
     @Environment(\.strings) private var s
     @Environment(\.palette) private var c
     @ObservedObject private var devTools = DevTools.shared
-    @ObservedObject private var batchAccess = BatchAccess.shared
-    @State private var unlockCode = ""
-    @State private var unlocking = false
-    @State private var unlockError = false
     @State private var versionTaps = 0
     @State private var showLog = false
+    @State private var showUnlock = false
     @State private var savingFrames = false
     /// Android shows these as toasts.
     @State private var notice: String?
@@ -23,6 +20,7 @@ struct SettingsDialog: View {
         ZStack {
             dialog
             if showLog { DevLogPanel { showLog = false } }
+            if showUnlock { UnlockCodeDialog { showUnlock = false } }
         }
     }
 
@@ -41,15 +39,6 @@ struct SettingsDialog: View {
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("zh", "中文"), ("en", "English")], selected: model.language) { model.preference("language", $0) }
                 MText(s.text("Appearance", "外觀"), weight: .semibold)
                 Choices(items: [("system", s.text("System", "跟隨系統")), ("light", s.text("Light", "淺色")), ("dark", s.text("Dark", "深色"))], selected: model.theme) { model.preference("theme", $0) }
-                if !batchAccess.enabled {
-                    SecureField(s.text("Batch unlock code", "批次功能解鎖碼"), text: $unlockCode)
-                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    M3Button(title: s.text("Unlock batch processing", "解鎖批次處理"), spinner: unlocking) {
-                        unlocking = true
-                        Task { unlockError = !(await batchAccess.unlock(unlockCode)); unlockCode = ""; unlocking = false }
-                    }.disabled(unlocking || unlockCode.isEmpty)
-                    if unlockError { MText(s.text("Incorrect code", "解鎖碼不正確")) }
-                } else { MText(s.text("Batch processing enabled", "已啟用批次處理")) }
                 // Like Android's build number: ten taps on the version unlock the developer tools.
                 MText(DevTools.version, size: 12, color: c.onSurfaceVariant)
                     .contentShape(Rectangle())
@@ -69,6 +58,7 @@ struct SettingsDialog: View {
                             .labelsHidden().tint(c.primary)
                             .accessibilityLabel(s.text("Developer tools", "開發者工具"))
                     }
+                    M3Button(title: s.text("Unlock Code", "解鎖碼"), style: .outlined) { showUnlock = true }
                     M3Button(title: s.text("Developer logs", "開發者日誌"), style: .outlined) { showLog = true }
                     M3Button(title: s.text("Save logs", "儲存日誌"), style: .outlined) {
                         Task { notice = await DevLog.save().map { s.text("Saved to \($0)", "已儲存至 \($0)") } ?? s.text("Could not save the log", "無法儲存日誌") }
@@ -95,6 +85,36 @@ struct SettingsDialog: View {
             savingFrames = false
             notice = saved > 0 ? s.text("Saved \(saved) frames to On My iPhone › AquaRestore › frames", "已儲存 \(saved) 張畫面至「我的 iPhone › AquaRestore › frames」")
                 : s.text("Could not save the frames", "無法儲存畫面")
+        }
+    }
+}
+
+private struct UnlockCodeDialog: View {
+    let dismiss: () -> Void
+    @Environment(\.strings) private var s
+    @State private var code = ""
+    @State private var unlocking = false
+    @State private var error = false
+
+    var body: some View {
+        M3Dialog(title: s.text("Unlock Code", "解鎖碼"), dismiss: { if !unlocking { dismiss() } }) {
+            VStack(alignment: .leading, spacing: 12) {
+                SecureField(s.text("Code", "輸入解鎖碼"), text: $code)
+                    .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .disabled(unlocking)
+                    .onChange(of: code) { value in if !value.isEmpty { error = false } }
+                if error { MText(s.text("Incorrect code", "解鎖碼不正確")) }
+            }
+        } buttons: {
+            M3TextButton(title: s.text("Cancel", "取消"), action: dismiss).disabled(unlocking)
+            M3Button(title: s.text("Unlock", "解鎖"), spinner: unlocking) {
+                unlocking = true
+                Task {
+                    let valid = await BatchAccess.shared.unlock(code)
+                    error = !valid; code = ""; unlocking = false
+                    if valid { dismiss() }
+                }
+            }.disabled(unlocking || code.isEmpty)
         }
     }
 }

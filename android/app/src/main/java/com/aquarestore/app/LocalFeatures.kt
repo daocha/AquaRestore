@@ -8,13 +8,28 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 object BatchAccess {
-    fun enabled(context: Context) = BuildConfig.BATCH_VERIFIER.isEmpty() ||
-        context.getSharedPreferences("localFeatures", 0).getBoolean("batchUnlocked", false)
+    private fun verifier(video: Boolean) = if (video) BuildConfig.BATCH_VIDEO_VERIFIER else BuildConfig.BATCH_PHOTO_VERIFIER
+    private fun key(video: Boolean) = if (video) "batchVideoUnlocked" else "batchPhotoUnlocked"
+    fun enabled(context: Context, video: Boolean = false): Boolean {
+        val prefs = context.getSharedPreferences("localFeatures", 0)
+        return verifier(video).isEmpty() || prefs.getBoolean(key(video), false) || prefs.getBoolean("batchUnlocked", false)
+    }
     suspend fun unlock(context: Context, code: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-        if (enabled(context)) return@withContext true
-        val valid = verify(code, BuildConfig.BATCH_SALT, BuildConfig.BATCH_VERIFIER)
-        if (valid) context.getSharedPreferences("localFeatures", 0).edit().putBoolean("batchUnlocked", true).commit()
-        valid
+        val (photo, video) = matchingFeatures(code, BuildConfig.BATCH_PHOTO_SALT, BuildConfig.BATCH_PHOTO_VERIFIER,
+            BuildConfig.BATCH_VIDEO_SALT, BuildConfig.BATCH_VIDEO_VERIFIER)
+        if (photo || video) {
+            val edit = context.getSharedPreferences("localFeatures", 0).edit()
+            if (photo) edit.putBoolean(key(false), true)
+            if (video) edit.putBoolean(key(true), true)
+            edit.commit()
+        }
+        photo || video
+    }
+    internal fun matchingFeatures(code: String, photoSalt: String, photoVerifier: String,
+                                  videoSalt: String, videoVerifier: String): Pair<Boolean, Boolean> {
+        val photo = photoVerifier.isNotEmpty() && verify(code, photoSalt, photoVerifier)
+        val video = videoVerifier.isNotEmpty() && verify(code, videoSalt, videoVerifier)
+        return photo to video
     }
     internal fun verify(code: String, saltHex: String, verifierHex: String): Boolean {
         val salt = saltHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()

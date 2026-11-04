@@ -2,6 +2,7 @@ package com.aquarestore.app
 
 import android.Manifest
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -201,9 +202,13 @@ private fun Editor(model: EditorModel, s: Strings) {
     var mediaLibrary by rememberSaveable { mutableStateOf(false) }
     var batchLibrary by rememberSaveable { mutableStateOf(false) }
     var batchVideoLibrary by rememberSaveable { mutableStateOf(false) }
-    // Batch videos is a developer tool for now. Settings turns the tools on and off, so look again when it closes.
+    // Refresh independently persisted batch access when Settings closes.
     var batchAccess by remember { mutableStateOf(BatchAccess.enabled(context)) }
-    LaunchedEffect(settings) { if (!settings) batchAccess = BatchAccess.enabled(context) }
+    var batchVideoAccess by remember { mutableStateOf(BatchAccess.enabled(context, video = true)) }
+    LaunchedEffect(settings) { if (!settings) {
+        batchAccess = BatchAccess.enabled(context)
+        batchVideoAccess = BatchAccess.enabled(context, video = true)
+    } }
     var musicLibrary by rememberSaveable { mutableStateOf(false) }
     var editorPlayer by remember { mutableStateOf<Player?>(null) }
     val compare = remember { MutableInteractionSource() }
@@ -302,7 +307,7 @@ private fun Editor(model: EditorModel, s: Strings) {
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 12.dp)) {
             if (source == null && phase == null) {
                 Welcome(s, enabled = !busy, onImport = ::pickMedia, onBatch = { batchLibrary = true },
-                    batchEnabled = batchAccess, onBatchVideos = if (batchAccess) { { batchVideoLibrary = true } } else null)
+                    batchEnabled = batchAccess, onBatchVideos = if (batchVideoAccess) { { batchVideoLibrary = true } } else null)
             } else if (phase != null) {
                 Spacer(Modifier.height(36.dp))
                 OceanArt(Modifier.fillMaxWidth().height(210.dp))
@@ -1290,10 +1295,6 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
     val theme by model.theme.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var devTools by remember { mutableStateOf(DevTools.enabled(context)) }
-    var unlocked by remember { mutableStateOf(BatchAccess.enabled(context)) }
-    var unlockCode by remember { mutableStateOf("") }
-    var unlocking by remember { mutableStateOf(false) }
-    var unlockError by remember { mutableStateOf(false) }
     var versionTaps by remember { mutableIntStateOf(0) }
     var showLog by remember { mutableStateOf(false) }
     val source by model.source.collectAsStateWithLifecycle()
@@ -1315,16 +1316,6 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             Choices(listOf("system" to s.text("System", "跟隨系統"), "zh" to "中文", "en" to "English"), language) { model.preference("language", it) }
             Text(s.text("Appearance", "外觀"), fontWeight = FontWeight.SemiBold)
             Choices(listOf("system" to s.text("System", "跟隨系統"), "light" to s.text("Light", "淺色"), "dark" to s.text("Dark", "深色")), theme) { model.preference("theme", it) }
-            if (!unlocked) {
-                OutlinedTextField(unlockCode, { unlockCode = it; unlockError = false },
-                    label = { Text(s.text("Batch unlock code", "批次功能解鎖碼")) }, singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = unlockError)
-                Button(onClick = { unlocking = true; scope.launch {
-                    unlocked = BatchAccess.unlock(context, unlockCode)
-                    unlockError = !unlocked; unlockCode = ""; unlocking = false
-                } }, enabled = !unlocking && unlockCode.isNotEmpty()) { Text(s.text("Unlock batch processing", "解鎖批次處理")) }
-                if (unlockError) Text(s.text("Incorrect code", "解鎖碼不正確"))
-            } else Text(s.text("Batch processing enabled", "已啟用批次處理"))
             if (BuildConfig.UPDATE_CHANNEL == "play") TextButton(onClick = {
                 context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")))
             }) { Text(s.text("Rate AquaRestore", "為 AquaRestore 評分")) }
@@ -1372,6 +1363,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                     // Turning them off locks them again; ten taps on the version unlock them.
                     Switch(true, { DevTools.disable(context); devTools = false; versionTaps = 0 })
                 }
+                BatchUnlockControl(context, s)
                 OutlinedButton(onClick = { showLog = true }) { Text(s.text("Developer logs", "開發者日誌")) }
                 OutlinedButton(onClick = { scope.launch { saveLogToast(context, s) } }) { Text(s.text("Save logs", "儲存日誌")) }
                 OutlinedButton(onClick = {
@@ -1392,6 +1384,39 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
             }
         }
     }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })
+}
+
+@Composable
+private fun BatchUnlockControl(context: Context, s: Strings) {
+    var show by remember { mutableStateOf(false) }
+    var code by remember { mutableStateOf("") }
+    var unlocking by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    OutlinedButton(onClick = { code = ""; error = false; show = true }) { Text(s.text("Unlock Code", "解鎖碼")) }
+    if (show) AlertDialog(
+        onDismissRequest = { if (!unlocking) show = false },
+        title = { Text(s.text("Unlock Code", "解鎖碼")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(code, { code = it; error = false },
+                    placeholder = { Text(s.text("Code", "輸入解鎖碼")) },
+                    singleLine = true, enabled = !unlocking,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = error)
+                if (error) Text(s.text("Incorrect code", "解鎖碼不正確"))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { unlocking = true; scope.launch {
+                try {
+                    val valid = BatchAccess.unlock(context, code)
+                    error = !valid; code = ""
+                    if (valid) show = false
+                } finally { unlocking = false }
+            } }, enabled = !unlocking && code.isNotEmpty()) { Text(s.text("Unlock", "解鎖")) }
+        },
+        dismissButton = { TextButton(onClick = { show = false }, enabled = !unlocking) { Text(s.text("Cancel", "取消")) } }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

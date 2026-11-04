@@ -20,17 +20,27 @@ val devUpdateHost = devSetting("AQUARESTORE_DEV_UPDATE_HOST")?.takeIf(String::is
 val devUpdatePort = (devSetting("AQUARESTORE_DEV_UPDATE_PORT") ?: "8765").also {
     require(it.toIntOrNull() in 1..65535) { "AQUARESTORE_DEV_UPDATE_PORT must be a port number" }
 }
-val batchCode = devSetting("AQUARESTORE_BATCH_UNLOCK_CODE").orEmpty()
-val batchSalt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-val batchVerifier = if (batchCode.isEmpty()) "" else javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-    .generateSecret(javax.crypto.spec.PBEKeySpec(batchCode.toCharArray(), batchSalt, 120_000, 256)).encoded
-    .joinToString("") { "%02x".format(it) }
+fun batchGate(code: String): Pair<String, String> {
+    val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+    val spec = javax.crypto.spec.PBEKeySpec(code.toCharArray(), salt, 120_000, 256)
+    val verifier = try {
+        if (code.isEmpty()) "" else javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            .generateSecret(spec).encoded.joinToString("") { "%02x".format(it) }
+    } finally { spec.clearPassword() }
+    return salt.joinToString("") { "%02x".format(it) } to verifier
+}
+val photoGate = batchGate(devSetting("AQUARESTORE_BATCH_PHOTO_UNLOCK_CODE").orEmpty())
+val videoGate = batchGate(devSetting("AQUARESTORE_BATCH_VIDEO_UNLOCK_CODE").orEmpty())
+val debugPhotoGate = batchGate("com.aquarestore.app.debug")
+val debugVideoGate = batchGate("com.aquarestore.app.debug")
 android {
     namespace = "com.aquarestore.app"
     compileSdk = 36
     defaultConfig {
-        buildConfigField("String", "BATCH_SALT", "\"${batchSalt.joinToString("") { "%02x".format(it) }}\"")
-        buildConfigField("String", "BATCH_VERIFIER", "\"$batchVerifier\"")
+        buildConfigField("String", "BATCH_PHOTO_SALT", "\"${photoGate.first}\"")
+        buildConfigField("String", "BATCH_PHOTO_VERIFIER", "\"${photoGate.second}\"")
+        buildConfigField("String", "BATCH_VIDEO_SALT", "\"${videoGate.first}\"")
+        buildConfigField("String", "BATCH_VIDEO_VERIFIER", "\"${videoGate.second}\"")
         applicationId = "com.aquarestore.app"
         minSdk = 29
         targetSdk = 36
@@ -53,6 +63,10 @@ android {
         // Own package name and label so the debug build installs next to (not over) a release build signed with a different key.
         debug {
             applicationIdSuffix = ".debug"; versionNameSuffix = "-debug"
+            buildConfigField("String", "BATCH_PHOTO_SALT", "\"${debugPhotoGate.first}\"")
+            buildConfigField("String", "BATCH_PHOTO_VERIFIER", "\"${debugPhotoGate.second}\"")
+            buildConfigField("String", "BATCH_VIDEO_SALT", "\"${debugVideoGate.first}\"")
+            buildConfigField("String", "BATCH_VIDEO_VERIFIER", "\"${debugVideoGate.second}\"")
             manifestPlaceholders["appLabel"] = "AquaRestore Dev"
             buildConfigField("String", "UPDATE_CHANNEL", if (devUpdateHost == null) "\"none\"" else "\"lan\"")
             if (devUpdateHost != null) buildConfigField("String", "DEV_UPDATE_URL", "\"http://$devUpdateHost:$devUpdatePort/\"")

@@ -8,4 +8,81 @@ final class BatchVerifierTests: XCTestCase {
         XCTAssertTrue(BatchAccess.verify("sample-測試-5678", saltHex: salt, verifierHex: verifier))
         XCTAssertFalse(BatchAccess.verify("wrong", saltHex: salt, verifierHex: verifier))
     }
+    @MainActor
+    func testUnlocksPersistIndependentlyAndLegacyAccessSurvives() async throws {
+        let suite = "batch-access-\(UUID().uuidString)"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let config = ["photoSalt": "000102030405060708090a0b0c0d0e0f",
+                      "photoVerifier": "384098cfd1872d7aacd8a22b8d0d7a87f898616c6e6a4a2c31c79832ac65afd3",
+                      "videoSalt": "000102030405060708090a0b0c0d0e0f",
+                      "videoVerifier": "e40fc53d3cc8a699dbdc60329c1b3af09d9ee7af50d501c270e730d427f0ee31"]
+        let access = BatchAccess(config: config, preferences: prefs)
+        XCTAssertFalse(access.photoEnabled)
+        XCTAssertFalse(access.videoEnabled)
+        let photoResult = await access.unlock("sample-測試-5678")
+        XCTAssertTrue(photoResult)
+        XCTAssertTrue(access.photoEnabled)
+        XCTAssertFalse(access.videoEnabled)
+        let wrongVideo = await access.unlock("wrong")
+        XCTAssertFalse(wrongVideo)
+        let restored = BatchAccess(config: config, preferences: prefs)
+        XCTAssertTrue(restored.photoEnabled)
+        XCTAssertFalse(restored.videoEnabled)
+        let videoResult = await restored.unlock("video-only")
+        XCTAssertTrue(videoResult)
+        XCTAssertTrue(BatchAccess(config: config, preferences: prefs).videoEnabled)
+        prefs.removePersistentDomain(forName: suite)
+        let videoFirst = BatchAccess(config: config, preferences: prefs)
+        let videoOnly = await videoFirst.unlock("video-only")
+        XCTAssertTrue(videoOnly)
+        XCTAssertFalse(videoFirst.photoEnabled)
+        XCTAssertTrue(videoFirst.videoEnabled)
+        prefs.removePersistentDomain(forName: suite)
+        prefs.set(true, forKey: "batchUnlocked")
+        let legacy = BatchAccess(config: config, preferences: prefs)
+        XCTAssertTrue(legacy.photoEnabled)
+        XCTAssertTrue(legacy.videoEnabled)
+    }
+
+    @MainActor
+    func testSharedCodeUnlocksBothAndWrongCodeNeverMatchesEnabledFeatures() async throws {
+        let suite = "batch-access-\(UUID().uuidString)"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let salt = "000102030405060708090a0b0c0d0e0f"
+        let verifier = "384098cfd1872d7aacd8a22b8d0d7a87f898616c6e6a4a2c31c79832ac65afd3"
+        let access = BatchAccess(config: ["photoSalt": salt, "photoVerifier": verifier,
+                                          "videoSalt": salt, "videoVerifier": verifier], preferences: prefs)
+        let valid = await access.unlock("sample-測試-5678")
+        XCTAssertTrue(valid)
+        XCTAssertTrue(access.photoEnabled)
+        XCTAssertTrue(access.videoEnabled)
+        let invalid = await access.unlock("wrong")
+        XCTAssertFalse(invalid)
+        let open = BatchAccess(config: [:], preferences: prefs)
+        let missing = await open.unlock("anything")
+        XCTAssertFalse(missing)
+    }
+
+    @MainActor
+    func testMissingPhotoCodeEnablesOnlyPhotos() throws {
+        let suite = "batch-access-\(UUID().uuidString)"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let access = BatchAccess(config: ["videoVerifier": "configured"], preferences: prefs)
+        XCTAssertTrue(access.photoEnabled)
+        XCTAssertFalse(access.videoEnabled)
+    }
+    func testDebugPackagedVerifiersMatchBundleIdentifier() throws {
+        #if DEBUG
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "BatchGate", withExtension: "plist"))
+        let config = try XCTUnwrap(NSDictionary(contentsOf: url) as? [String: String])
+        let identifier = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        for feature in ["photo", "video"] {
+            XCTAssertTrue(BatchAccess.verify(identifier, saltHex: try XCTUnwrap(config[feature + "Salt"]),
+                                            verifierHex: try XCTUnwrap(config[feature + "Verifier"])))
+        }
+        #endif
+    }
 }
