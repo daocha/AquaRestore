@@ -23,6 +23,16 @@ class ReleaseUpdatesTest {
         assertNull(ReleaseUpdates.select(release().apply { getJSONArray("assets").remove(1) }, 3))
     }
 
+    @Test fun fixedNameApkForDirectLinksIsIgnored() {
+        val assets = release().getJSONArray("assets")
+        val fixedNameFirst = JSONObject("""{"tag_name":"v2026.10.24","draft":false,"prerelease":false,"assets":[
+          {"name":"AquaRestore.apk","size":1234,"browser_download_url":"https://github.com/daocha/AquaRestore/releases/download/v2026.10.24/AquaRestore.apk"},
+          ${assets.getJSONObject(0)},${assets.getJSONObject(1)}]}""")
+        assertEquals("AquaRestore-2026.10.24-4.apk", ReleaseUpdates.select(fixedNameFirst, 3)?.apkName)
+        fixedNameFirst.getJSONArray("assets").apply { remove(2); remove(1) }
+        assertNull(ReleaseUpdates.select(fixedNameFirst, 3))
+    }
+
     @Test fun checksumMustMatchSelectedApk() {
         val hash = "a".repeat(64)
         assertEquals(hash, ReleaseUpdates.checksum("$hash  AquaRestore-2026.10.24-4.apk", "AquaRestore-2026.10.24-4.apk"))
