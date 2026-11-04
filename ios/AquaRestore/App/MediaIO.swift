@@ -325,11 +325,10 @@ enum MediaIO {
 
     /// HEVC HDR export needs a 10-bit encoder; A10 and later have one.
     /// How the preview can play this video, and the decode speed measured to decide it, if one was needed.
-    static func livePreview(_ source: SourceMedia, availableMemory: UInt64) async -> (LivePreview, Double?) {
-        if LivePreview.withinLimit(width: source.width, height: source.height, fps: source.fps) { return (.full, nil) }
+    static func livePreview(_ source: SourceMedia) async -> (LivePreview, Double?) {
+        if LivePreview.withinLimit(width: source.width, height: source.height, fps: source.fps) { return (.original, nil) }
         let measured = await measureDecodeFps(source)
-        let hasRoom = LivePreview.hasRoom(width: source.width, height: source.height, availableMemory: availableMemory)
-        return (LivePreview.decide(fps: source.fps, measuredDecodeFps: measured, hasRoom: hasRoom), measured)
+        return (LivePreview.decide(fps: source.fps, measuredDecodeFps: measured), measured)
     }
 
     /// Frames per second a sample from the start of the clip decodes at, in the format the preview uses. Nil if it

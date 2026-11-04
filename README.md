@@ -28,25 +28,24 @@ Android builds have the network permission for two things: GitHub builds check f
 
 Recommendations come from on-device color statistics, not a cloud-based generative model. For videos, 6 frames spread across 5%–95% of the clip are analyzed together, and one set of parameters is used for the whole video, so the white balance does not pump from frame to frame. The analysis tells deep blue or green water, washed-out hazy water and dim footage apart and recommends settings for each. Low-confidence footage shows a notice and starts at a lower intensity; everything can still be adjusted by hand.
 
-After analysis, videos normally play from the original, with live GPU grading. Exports **always use the original URI**, never a preview copy.
+After analysis, videos normally play from the original, with live GPU grading at up to 1920px on the long edge and at most 30 frames a second on screen, on every device. Exports **always use the original URI**, never a preview copy, and keep the original's quality and frame rate unless you change them.
 
-- **Android:** 4K60 can play directly when the device can decode it smoothly. When the decoder has the speed for a video but declares no frame as large, the original plays with grading at up to 1920px on the long edge. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, the decoder cannot keep up, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
-- **iOS:** follows the same three outcomes, but iOS declares no decoder limits, so a video heavier than 4K60 is judged by timing a short decode of the clip. At least twice the video's frame rate grades at full size if the phone has enough free memory, at least 1.2 times grades at up to 1920px, and anything slower waits for the same kind of preview copy. These thresholds and smoothness on target devices still need testing.
+- **Android:** the app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, the decoder cannot keep up, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
+- **iOS:** iOS declares no decoder limits, so a video heavier than 4K60 is judged by timing a short decode of the clip. At least 1.2 times the video's frame rate plays the original, and anything slower waits for the same kind of preview copy. This threshold and smoothness on target devices still need testing.
 
 Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. On compatible devices, HDR video is processed and exported as HDR; otherwise it is tone-mapped and exported as SDR. Devices, encoders and color management may cause slight display differences.
 
 ## Preview and export by resolution and HDR
 
-How a video previews depends on the video and on the device. Exports always read the original file.
+The preview is capped so that it runs well on any phone, because a phone screen shows little of the extra detail. Exports always read the original file.
 
 | Preview | What happens | When |
 | --- | --- | --- |
-| **Original, full size** | Plays right away, graded at the video's full resolution | The device can comfortably play it |
-| **Original, 1920px** | Plays right away, graded at up to 1920px on the long edge; zooming in looks softer | The decoder is fast enough, but grading every full-size frame may not be |
+| **Original** | Plays right away, with no copy, shrunk as it plays to at most 1920px on the long edge and 30 frames a second on screen; zooming in looks softer | The decoder can keep up |
 | **Copy** | Holds still, graded and seekable, while a 1080p copy of at most 30 fps builds, then plays the copy | The decoder cannot keep up, or an HDR video will export as SDR |
 | **Cannot open** | Shows that the frame size is too large for the device | No decoder on the device accepts the frame size |
 
-Android decides from what its video decoders declare. iOS declares no decoder limits, so a video heavier than 4K60 is timed decoding a short sample: at least 2× its frame rate gives full size if the phone has about 2.5 GB of memory free, at least 1.2× gives 1920px, and anything slower gets a copy. The app checks free memory rather than the iPhone model, so later iPhones need no changes. An iPhone SE 3 with 4 GB of RAM stays at 1920px, because full size did not play smoothly and crashed with an export running. In the 1920px outcome, the player still decodes the original and shrinks each frame as it plays, so no copy is written.
+The decoder still reads every full-size frame of the original, so shrinking saves grading work and memory but not decoding, and a copy is for a decoder that cannot keep up. At 0.5× speed, a 60 fps video still shows every frame. Android decides from what its video decoders declare. iOS declares no decoder limits, so a video heavier than 4K60 is timed decoding a short sample: at least 1.2× its frame rate plays the original, and anything slower gets a copy.
 
 HDR stays HDR only when the device can encode it, which on Android needs Android 13+ and a suitable 10-bit encoder. Otherwise the export is SDR, and the preview uses an SDR copy so that it matches the export. That is why a phone's gallery can play an HDR video that the same phone previews from a copy here: the gallery only plays the file, with no grading and nothing to match.
 
@@ -54,11 +53,11 @@ The table shows what to expect on the devices used for testing. **✓** marks a 
 
 | Video | Galaxy S10 (Android 12) | Galaxy S23 Ultra | Galaxy S26 Ultra | Solana Seeker (Android 16) | iPhone |
 | --- | --- | --- | --- | --- | --- |
-| **1080p, SDR** | Original, full size | Original, full size ✓ | Original, full size ✓ | Original, full size | Original, full size |
-| **3840×2160 at 60 fps, SDR** | Original, full size ✓ | Original, full size ✓ | Original, full size ✓ | Original, full size | Original, full size |
-| **3840×3360 at 60 fps, SDR** | Original, 1920px ✓ | Original, full size ✓ | Original, full size ✓ | Cannot open ✓ | Timed, with free memory: full size, 1920px or copy |
-| **3840×2160 at 60 fps, HDR** | Copy; exports SDR ✓ | Original, full size; keeps HDR ✓ | Original, full size; keeps HDR ✓ | Copy; exports SDR ✓ | Original, full size; keeps HDR |
-| **3840×3360 at 60 fps, HDR** | Copy; exports SDR | Original, full size; keeps HDR ✓ | Original, full size; keeps HDR ✓ | Cannot open | Timed, with free memory: full size, 1920px or copy; keeps HDR |
+| **1080p, SDR** | Original | Original ✓ | Original ✓ | Original | Original |
+| **3840×2160 at 60 fps, SDR** | Original ✓ | Original ✓ | Original ✓ | Original | Original |
+| **3840×3360 at 60 fps, SDR** | Original ✓ | Original ✓ | Original ✓ | Cannot open ✓ | Timed: original or copy ✓ |
+| **3840×2160 at 60 fps, HDR** | Copy; exports SDR ✓ | Original; keeps HDR | Original; keeps HDR | Copy; exports SDR ✓ | Original; keeps HDR |
+| **3840×3360 at 60 fps, HDR** | Copy; exports SDR | Original; keeps HDR | Original; keeps HDR | Cannot open | Timed: original or copy; keeps HDR |
 | **Long edge over 3840px, such as 8K** | Copy | Copy | Copy | Depends on the frame size | Copy |
 
 For a video with a long edge over 3840px, the app always builds a copy. If the decoder can keep up, the original plays until the copy is ready; otherwise the preview holds still. HDR10+ and some Dolby Vision files are rejected; see [Scope and limitations](#scope-and-limitations).

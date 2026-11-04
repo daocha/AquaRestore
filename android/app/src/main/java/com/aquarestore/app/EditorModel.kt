@@ -169,7 +169,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                     copy = null
                     val playable = proxy?.let { Uri.fromFile(it) } ?: media.uri
                     val live = withContext(Dispatchers.IO) { MediaIO.livePreview(media) }
-                    previewGradeEdge = if (proxy == null && live == LivePreview.REDUCED) PREVIEW_GRADE_EDGE else 0
+                    previewGradeEdge = if (proxy == null) PREVIEW_GRADE_EDGE else 0
                     previewUri.value = playable
                     // Thumbnails and any proxy are built in the background and never hold up the editor.
                     launch {
