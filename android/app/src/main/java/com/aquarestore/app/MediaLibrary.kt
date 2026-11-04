@@ -90,16 +90,22 @@ internal data class LibraryAccess(val allowed: Boolean, val full: Boolean, val l
     val requestOnOpen: Boolean get() = !full && !limited
 }
 
-/** Selected files remain browsable, but access to one media type does not cover another. */
+private val fullVisualPermissions = listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+
+/**
+ * Selected files remain browsable, but access to one media type does not cover another. Android also grants the
+ * selected-files permission with "Allow all", so it only means a limited choice when no full permission is held:
+ * after "Allow all" for photos, videos have simply not been requested yet.
+ */
 internal fun libraryAccess(permissions: Array<String>, granted: Set<String>): LibraryAccess {
     val selected = Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
     val full = permissions.filter { it != selected }.all { it in granted }
-    return LibraryAccess(allowed = permissions.any { it in granted }, full = full,
-        limited = !full && selected in permissions && selected in granted)
+    val limited = !full && selected in permissions && selected in granted && fullVisualPermissions.none { it in granted }
+    return LibraryAccess(allowed = limited || permissions.any { it != selected && it in granted }, full = full, limited = limited)
 }
 
 private fun libraryAccess(context: Context, permissions: Array<String>): LibraryAccess = libraryAccess(permissions,
-    permissions.filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }.toSet())
+    (permissions.toList() + fullVisualPermissions).filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }.toSet())
 
 private fun loadLibrary(context: Context, audioOnly: Boolean, photosOnly: Boolean, videosOnly: Boolean): List<LibraryItem> {
     val collection = MediaStore.Files.getContentUri("external")
