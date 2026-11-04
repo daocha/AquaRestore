@@ -215,7 +215,7 @@ final class EditorModel: ObservableObject {
                 self.setGrade(recommended.grade)
                 if media.video {
                     // Play the original straight away when the decoder can keep up; the grade is a live GPU effect.
-                    let (live, measured) = await MediaIO.livePreview(media)
+                    let (live, measured) = await MediaIO.livePreview(media, availableMemory: AppLog.availableMemory)
                     try Task.checkCancellation()
                     let hold = live == .copy
                     NSLog("AquaRestore: preview \(hold ? "waits for a copy" : live == .reduced ? "plays the original, graded at up to \(LivePreview.reducedEdge)px" : "plays the original")" +
