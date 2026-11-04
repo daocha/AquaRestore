@@ -108,13 +108,17 @@ object ShareMediaMaker {
                 androidx.media3.effect.OverlayEffect(java.util.ArrayList<androidx.media3.effect.TextureOverlay>().apply {
                     add(creditOverlay(mark, source.hdrTransfer)) })
             )
+            android.util.Log.i("AquaRestore", "Comparison video starting: ${source.width}x${source.height} hdr=${source.keepsHdr} to ${w}x$h")
             withTimeout(60_000) {
                 MediaIO.transform(context, source, file, effects,
                     maxOf(500_000, w * h * 4), if (source.keepsHdr) "video/hevc" else "video/avc", true,
                     speed = if (source.video) request.options.speed else 1f, startMs = start, endMs = end,
                     audio = AudioMix(originalVolume = 0f), imageDurationMs = if (source.video) 0 else 6000) { }
             }
+            android.util.Log.i("AquaRestore", "Comparison video finished")
             return listOf(ShareMedia(file, true))
+        } catch (e: TimeoutCancellationException) {
+            file.delete(); android.util.Log.w("AquaRestore", "Comparison video stopped by its 60-second limit"); return emptyList()
         } catch (e: CancellationException) { file.delete(); throw e }
         catch (e: Exception) { file.delete(); android.util.Log.w("AquaRestore", "Comparison video unavailable", e); return emptyList() }
         finally { mark.recycle() }
