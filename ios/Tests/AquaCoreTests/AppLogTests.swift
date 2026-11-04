@@ -1,8 +1,11 @@
 import XCTest
+// A test file sees both Foundation's NSLog and the app's, so it has to name the one it means.
 #if canImport(AquaCore)
 @testable import AquaCore
+private func log(_ line: String) { AquaCore.NSLog(line) }
 #else
 @testable import AquaRestore
+private func log(_ line: String) { AquaRestore.NSLog(line) }
 #endif
 
 final class AppLogTests: XCTestCase {
@@ -15,19 +18,19 @@ final class AppLogTests: XCTestCase {
     override func tearDown() { try? FileManager.default.removeItem(at: folder) }
 
     func testLinesAreReadBack() {
-        NSLog("AquaRestore: first")
+        log("AquaRestore: first")
         XCTAssertTrue(AppLog.read().contains("AquaRestore: first"))
     }
 
     func testAStrayPercentSignIsKeptAsWritten() {
-        NSLog("AquaRestore: file 100%d %@.mp4")
+        log("AquaRestore: file 100%d %@.mp4")
         XCTAssertTrue(AppLog.read().contains("file 100%d %@.mp4"))
     }
 
     func testTheLastRunRemainsAfterRestartingOnlyUntilTheNextOne() {
-        NSLog("AquaRestore: run one")
+        log("AquaRestore: run one")
         AppLog.start(folder: folder)
-        NSLog("AquaRestore: run two")
+        log("AquaRestore: run two")
         XCTAssertTrue(AppLog.read().contains("run one") && AppLog.read().contains("run two"))
         AppLog.start(folder: folder)
         XCTAssertFalse(AppLog.read().contains("run one"))
@@ -35,10 +38,10 @@ final class AppLogTests: XCTestCase {
     }
 
     func testClearStillLeavesLaterLinesReadable() {
-        NSLog("AquaRestore: before")
+        log("AquaRestore: before")
         AppLog.clear()
         XCTAssertEqual("", AppLog.read())
-        NSLog("AquaRestore: after")
+        log("AquaRestore: after")
         XCTAssertFalse(AppLog.read().contains("before"))
         XCTAssertTrue(AppLog.read().contains("after"))
     }
