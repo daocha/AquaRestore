@@ -1410,10 +1410,7 @@ private fun BatchUnlockControl(context: Context, s: Strings) {
                 try {
                     val valid = BatchAccess.unlock(context, code)
                     error = !valid; code = ""
-                    if (valid) {
-                        show = false
-                        android.widget.Toast.makeText(context, s.text("Unlocked", "已解鎖"), android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    if (valid) show = false
                 } finally { unlocking = false }
             } }, enabled = !unlocking && code.isNotEmpty()) { Text(s.text("Unlock", "解鎖")) }
         },
