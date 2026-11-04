@@ -123,11 +123,17 @@ enum MediaIO {
         return pixels > 0 ? Double(bytes) / Double(pixels) : 0
     }
 
+    /// The long edge of the images the automatic analysis reads.
+    static let analysisEdge = 192
+
     static func bitmap(_ url: URL, edge: Int) throws -> PixelImage {
         let (width, height) = try imageSize(url)
         let (w, h) = ExportSizing.dimensions(width, height, edge)
         if UInt64(w) * UInt64(h) * 8 > Platform.physicalMemory / 4 { throw MediaProblem("memory") }
-        if let image = PhotoDecoder.decode(url, edge: edge) { return image }
+        if let image = try PhotoDecoder.decode(url, edge: edge) { return image }
+        #if DEBUG
+        NSLog("AquaRestore: Photo decoded natively: \(url.lastPathComponent) edge=\(edge)")
+        #endif
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
@@ -137,26 +143,28 @@ enum MediaIO {
         return pixels
     }
 
-    static func analysisBitmap(_ url: URL, edge: Int = 192) throws -> PixelImage {
-        try bitmap(url, edge: edge)
-    }
-
     /// Calls `each` with each sampled video analysis frame and its requested time in milliseconds.
     private static func videoFrames(_ source: SourceMedia, _ each: (Int64, PixelImage) throws -> Void) async throws {
         let fractions = [0.05, 0.23, 0.41, 0.59, 0.77, 0.95]
         let times = fractions.map { Int64(Double(source.durationMs) * 1000 * $0) }
-        if !source.isHdr, let frames = try await VideoDecoder.analysisFrames(source.url, timesUs: times, edge: 192) {
+        #if DEBUG
+        NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) codec=\(source.codec) hdr=\(source.hdr) durationMs=\(source.durationMs) fps=\(source.fps)")
+        #endif
+        if !source.isHdr, let frames = try await VideoDecoder.analysisFrames(source.url, timesUs: times, edge: analysisEdge) {
+            #if DEBUG
+            NSLog("AquaRestore: Analysis video decoder: input adapter")
+            #endif
             for (us, frame) in zip(times, frames) { try each(us / 1000, frame) }
             return
         }
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source.url))
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 192, height: 192)
+        generator.maximumSize = CGSize(width: analysisEdge, height: analysisEdge)
         // The nearest keyframe is enough for statistics and avoids decoding long GOPs.
         generator.requestedTimeToleranceBefore = .positiveInfinity
         generator.requestedTimeToleranceAfter = .positiveInfinity
         #if DEBUG
-        NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) codec=\(source.codec) hdr=\(source.hdr) durationMs=\(source.durationMs) fps=\(source.fps)")
+        NSLog("AquaRestore: Analysis video decoder: native")
         #endif
         for fraction in fractions {
             try Task.checkCancellation()
@@ -178,7 +186,8 @@ enum MediaIO {
                 described.append("at \(ms)ms " + describe(pixels))
                 #endif
             }
-        } else if let image = try? analysisBitmap(source.url) {
+        } else {
+            let image = try bitmap(source.url, edge: analysisEdge)
             frames.append(image.pixels)
             #if DEBUG
             NSLog("AquaRestore: Analysis source: \(source.name) \(source.width)x\(source.height) photo")
@@ -225,7 +234,7 @@ enum MediaIO {
                 try save(pixels, name: "\(stem)-frame-\(index).png")
             }
         } else {
-            try save(analysisBitmap(source.url), name: "\(stem)-photo-analysis.png")
+            try save(bitmap(source.url, edge: analysisEdge), name: "\(stem)-photo-analysis.png")
             let handle = try FileHandle(forReadingFrom: source.url)
             defer { try? handle.close() }
             var digest = SHA256(), bytes = 0
