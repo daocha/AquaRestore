@@ -27,7 +27,7 @@ struct SharePreview: View {
             if let notice { MText(notice, size: 12) }
         }
         .sheet(item: $sharing, onDismiss: { Exports.shared.resultActionBusy = false }) { item in
-            ActivityShare(url: item.url)
+            ActivityShare(items: [item.url])
         }
     }
     private func save(share: Bool) {
@@ -73,10 +73,10 @@ private struct ComparisonPlayer: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {}
 }
-private struct ActivityShare: UIViewControllerRepresentable {
-    let url: URL
+struct ActivityShare: UIViewControllerRepresentable {
+    let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

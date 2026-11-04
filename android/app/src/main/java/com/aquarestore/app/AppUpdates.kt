@@ -51,7 +51,7 @@ internal class AppUpdates(
     private var pendingApk: File? = null
     val source: UpdateSource = when {
         BuildConfig.UPDATE_CHANNEL == "lan" -> UpdateSource.LAN
-        BuildConfig.UPDATE_CHANNEL == "play" || installedViaPlay() -> UpdateSource.PLAY
+        BuildConfig.UPDATE_CHANNEL == "play" || installedViaPlay(activity) -> UpdateSource.PLAY
         else -> UpdateSource.GITHUB
     }
     var ui by androidx.compose.runtime.mutableStateOf(UpdateUi(source))
@@ -219,12 +219,13 @@ internal class AppUpdates(
             catch (error: Exception) { ui = ui.copy(phase = UpdatePhase.ERROR, error = error.message) }
         }
     }
-
-    @Suppress("DEPRECATION")
-    private fun installedViaPlay(): Boolean = try {
-        val installer = if (Build.VERSION.SDK_INT >= 30)
-            activity.packageManager.getInstallSourceInfo(activity.packageName).installingPackageName
-        else activity.packageManager.getInstallerPackageName(activity.packageName)
-        installer == "com.android.vending"
-    } catch (_: Exception) { false }
 }
+
+/** A regular release build can also arrive through Google Play. */
+@Suppress("DEPRECATION")
+internal fun installedViaPlay(context: android.content.Context): Boolean = try {
+    val installer = if (Build.VERSION.SDK_INT >= 30)
+        context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+    else context.packageManager.getInstallerPackageName(context.packageName)
+    installer == "com.android.vending"
+} catch (_: Exception) { false }

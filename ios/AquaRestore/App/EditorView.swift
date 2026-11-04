@@ -41,6 +41,7 @@ struct EditorView: View {
     @State private var pickedItem: PhotosPickerItem?
     @State private var showBatchPicker = false
     @State private var batchVideos = false
+    @State private var lockedBatch: Bool?
     @State private var batchItems: [PhotosPickerItem] = []
     @State private var scrollToTop = 0
     @StateObject private var clip = ClipUI()
@@ -105,6 +106,7 @@ struct EditorView: View {
     }
 
     private func pickBatch(videos: Bool) {
+        guard videos ? batchAccess.videoEnabled : batchAccess.photoEnabled else { lockedBatch = videos; return }
         batchVideos = videos
         showBatchPicker = true
     }
@@ -221,16 +223,18 @@ struct EditorView: View {
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
             .accessibilityIdentifier("importMedia")
             .disabled(busy)
-        if batchAccess.photoEnabled {
-            M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
+        Group {
+            M3Button(title: (s.text("Batch restore photos", "批次還原照片") + (batchAccess.photoEnabled ? "" : s.text(" · Locked", " · 未解鎖"))), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                      height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
+                .opacity(batchAccess.photoEnabled ? 1 : 0.55)
                 .disabled(busy)
             MText(s.text("Up to \(BatchLimits.photos) photos · automatic restoration · keep the app open", "最多 \(BatchLimits.photos) 張照片 · 自動智慧還原 · 請保持 App 開啟"),
                   size: 12, color: c.onSurfaceVariant)
         }
-        if batchAccess.videoEnabled {
-            M3Button(title: s.text("Batch restore videos", "批次還原影片"), icon: .videoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
+        Group {
+            M3Button(title: (s.text("Batch restore videos", "批次還原影片") + (batchAccess.videoEnabled ? "" : s.text(" · Locked", " · 未解鎖"))), icon: .videoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                      height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: true) }
+                .opacity(batchAccess.videoEnabled ? 1 : 0.55)
                 .disabled(busy)
             MText(s.text("Up to \(BatchLimits.videos) videos · keep the app open", "最多 \(BatchLimits.videos) 段影片 · 請保持 App 開啟"),
                   size: 12, color: c.onSurfaceVariant)
@@ -331,6 +335,12 @@ struct EditorView: View {
                 }
                 M3TextButton(title: s.text("Done", "完成")) { exports.dismissResult() }.disabled(exports.resultActionBusy)
             }
+        }
+        if let video = lockedBatch {
+            BatchQuestDialog(video: video, onUnlocked: {
+                lockedBatch = nil
+                pickBatch(videos: video)
+            }, dismiss: { lockedBatch = nil })
         }
         if settings { SettingsDialog(model: model) { settings = false } }
         if let draft = model.batchDraft {

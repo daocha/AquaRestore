@@ -9,6 +9,7 @@ struct AquaRestoreApp: App {
         WindowGroup {
             RootView(model: model)
                 .onAppear { Exports.shared.activityChanged(scenePhase == .active) }
+                .task { await ReferralCampaign.shared.registerIfNeeded() }
                 .onChange(of: scenePhase) { phase in Exports.shared.activityChanged(phase == .active) }
         }
     }

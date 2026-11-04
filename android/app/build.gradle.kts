@@ -1,7 +1,7 @@
 import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.BuiltArtifactsLoader
+import java.net.URI
 import java.security.MessageDigest
-import java.security.SecureRandom
 
 plugins {
     id("com.android.application")
@@ -20,27 +20,22 @@ val devUpdateHost = devSetting("AQUARESTORE_DEV_UPDATE_HOST")?.takeIf(String::is
 val devUpdatePort = (devSetting("AQUARESTORE_DEV_UPDATE_PORT") ?: "8765").also {
     require(it.toIntOrNull() in 1..65535) { "AQUARESTORE_DEV_UPDATE_PORT must be a port number" }
 }
-fun batchGate(code: String): Pair<String, String> {
-    val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-    val spec = javax.crypto.spec.PBEKeySpec(code.toCharArray(), salt, 120_000, 256)
-    val verifier = try {
-        if (code.isEmpty()) "" else javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec).encoded.joinToString("") { "%02x".format(it) }
-    } finally { spec.clearPassword() }
-    return salt.joinToString("") { "%02x".format(it) } to verifier
+val referralBackend = devSetting("AQUARESTORE_REFERRAL_BACKEND_URL").orEmpty().trim().trimEnd('/').let {
+    if (it.contains("://")) it.substringBefore("://").lowercase() + "://" + it.substringAfter("://") else it
 }
-val photoGate = batchGate(devSetting("AQUARESTORE_BATCH_PHOTO_UNLOCK_CODE").orEmpty())
-val videoGate = batchGate(devSetting("AQUARESTORE_BATCH_VIDEO_UNLOCK_CODE").orEmpty())
-val debugPhotoGate = batchGate("com.aquarestore.app.debug")
-val debugVideoGate = batchGate("com.aquarestore.app.debug")
+if (referralBackend.isNotEmpty()) {
+    val uri = URI(referralBackend)
+    require(uri.scheme in listOf("https", "http") && uri.host != null && uri.rawQuery == null && uri.rawFragment == null && uri.userInfo == null && (uri.port == -1 || uri.port in 1..65535)) {
+        "AQUARESTORE_REFERRAL_BACKEND_URL must be an HTTP(S) base URL without credentials, query or fragment"
+    }
+}
 android {
     namespace = "com.aquarestore.app"
     compileSdk = 36
     defaultConfig {
-        buildConfigField("String", "BATCH_PHOTO_SALT", "\"${photoGate.first}\"")
-        buildConfigField("String", "BATCH_PHOTO_VERIFIER", "\"${photoGate.second}\"")
-        buildConfigField("String", "BATCH_VIDEO_SALT", "\"${videoGate.first}\"")
-        buildConfigField("String", "BATCH_VIDEO_VERIFIER", "\"${videoGate.second}\"")
+        buildConfigField("String", "REFERRAL_BACKEND_URL", "\"${referralBackend.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "REFERRAL_DEBUG_TOKEN", "\"\"")
+        buildConfigField("boolean", "REFERRAL_VERIFY_PLATFORM", "false")
         applicationId = "com.aquarestore.app"
         minSdk = 29
         targetSdk = 36
@@ -62,11 +57,13 @@ android {
     buildTypes {
         // Own package name and label so the debug build installs next to (not over) a release build signed with a different key.
         debug {
+            val verifyPlatform = devSetting("AQUARESTORE_REFERRAL_DEBUG_VERIFICATION").orEmpty().trim().ifEmpty { "token" }
+            require(verifyPlatform in listOf("token", "platform")) { "Debug referral verification must be token or platform" }
+            buildConfigField("boolean", "REFERRAL_VERIFY_PLATFORM", (verifyPlatform == "platform").toString())
+            val referralDebugToken = devSetting("AQUARESTORE_REFERRAL_DEBUG_TOKEN").orEmpty()
+            require(Regex("[A-Za-z0-9_-]*").matches(referralDebugToken)) { "Debug token must be base64url" }
+            buildConfigField("String", "REFERRAL_DEBUG_TOKEN", "\"$referralDebugToken\"")
             applicationIdSuffix = ".debug"; versionNameSuffix = "-debug"
-            buildConfigField("String", "BATCH_PHOTO_SALT", "\"${debugPhotoGate.first}\"")
-            buildConfigField("String", "BATCH_PHOTO_VERIFIER", "\"${debugPhotoGate.second}\"")
-            buildConfigField("String", "BATCH_VIDEO_SALT", "\"${debugVideoGate.first}\"")
-            buildConfigField("String", "BATCH_VIDEO_VERIFIER", "\"${debugVideoGate.second}\"")
             manifestPlaceholders["appLabel"] = "AquaRestore Dev"
             buildConfigField("String", "UPDATE_CHANNEL", if (devUpdateHost == null) "\"none\"" else "\"lan\"")
             if (devUpdateHost != null) buildConfigField("String", "DEV_UPDATE_URL", "\"http://$devUpdateHost:$devUpdatePort/\"")
@@ -113,7 +110,7 @@ if (devUpdateHost != null) androidComponents.onVariants(androidComponents.select
     // name carries it too (2026.10.25-debug.425918), so builds made on the same day can be told apart.
     val stamp = (System.currentTimeMillis() / 60_000 - 29_453_760).toInt()
     variant.outputs.forEach { it.versionCode.set(stamp); it.versionName.set("${it.versionName.get()}.$stamp") }
-    val network = tasks.register<LanNetworkConfig>("${variant.name}LanNetworkConfig") { host.set(devUpdateHost) }
+    val network = tasks.register<LanNetworkConfig>("${variant.name}LanNetworkConfig") { hosts.set(listOfNotNull(devUpdateHost, referralBackend.takeIf { it.startsWith("http://") }?.let { URI(it).host }).distinct()) }
     variant.sources.res?.addGeneratedSourceDirectory(network, LanNetworkConfig::outputDir)
     val publish = tasks.register<PublishLanUpdate>("${variant.name}PublishLanUpdate") {
         apkFolder.set(variant.artifacts.get(SingleArtifact.APK))
@@ -123,14 +120,34 @@ if (devUpdateHost != null) androidComponents.onVariants(androidComponents.select
     tasks.matching { it.name == "assemble${variant.name.replaceFirstChar(Char::uppercase)}" }.configureEach { finalizedBy(publish) }
 }
 
+if (devUpdateHost == null && referralBackend.startsWith("http://")) {
+    android.sourceSets.getByName("debug").manifest.srcFile("src/referralDebug/AndroidManifest.xml")
+    androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+        val network = tasks.register<LanNetworkConfig>("${variant.name}ReferralNetworkConfig") {
+            hosts.set(listOf(URI(referralBackend).host))
+        }
+        variant.sources.res?.addGeneratedSourceDirectory(network, LanNetworkConfig::outputDir)
+    }
+}
+
+// Reject referral-enabled release artifacts that cannot obtain or submit a real proof.
+// Both GitHub and Play release builds use hardware-backed Android Key Attestation.
+tasks.matching { it.name in setOf("preReleaseBuild", "prePlayReleaseBuild") }.configureEach {
+    doFirst {
+        if (referralBackend.isNotEmpty()) {
+            require(referralBackend.startsWith("https://")) { "Release referral campaigns require an HTTPS backend URL" }
+        }
+    }
+}
+
 /** Lets the debug app use plain HTTP to the LAN update host and nowhere else. */
 abstract class LanNetworkConfig : DefaultTask() {
-    @get:Input abstract val host: Property<String>
+    @get:Input abstract val hosts: ListProperty<String>
     @get:OutputDirectory abstract val outputDir: DirectoryProperty
     @TaskAction fun write() {
         outputDir.get().file("xml/lan_update_network.xml").asFile.apply { parentFile.mkdirs() }.writeText("""
             <network-security-config>
-                <domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">${host.get()}</domain></domain-config>
+                ${hosts.get().joinToString("\n") { "<domain-config cleartextTrafficPermitted=\"true\"><domain includeSubdomains=\"false\">$it</domain></domain-config>" }}
             </network-security-config>
         """.trimIndent())
     }
