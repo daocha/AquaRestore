@@ -44,6 +44,28 @@ import kotlin.math.roundToInt
 
 class MediaProblem(val key: String) : Exception(key)
 
+/** How the preview plays a video: the original with full-size grading, the original with lighter grading, or a copy. */
+internal enum class LivePreview { FULL, REDUCED, COPY }
+
+/** The frame rate at 3840x2160 that takes the same pixels per second as this video. */
+internal fun equivalentFps4k(width: Int, height: Int, fps: Float): Int =
+    ceil(width.toDouble() * height * fps / (3840.0 * 2160)).toInt().coerceAtLeast(1)
+
+/**
+ * [decoders] holds, for each hardware decoder that accepts the frame size, whether a size and rate is covered by a
+ * performance point it declares. Up to 4K at 60 fps of pixels per second plays live: some decoders declare only 4K30
+ * performance points yet sustain 4K60. Above that, separately declared limits are often generous, so a performance
+ * point must cover the video. A frame larger than any declared point only needs the same pixels per second: such a
+ * decoder can keep up, but grading every full-size frame may not, so the preview grades it smaller.
+ */
+internal fun livePreview(width: Int, height: Int, fps: Float, decoders: List<(Int, Int, Int) -> Boolean>): LivePreview = when {
+    decoders.isEmpty() -> LivePreview.COPY
+    width.toDouble() * height * fps <= 3840.0 * 2160 * 61 -> LivePreview.FULL
+    decoders.any { it(width, height, ceil(fps).toInt().coerceAtLeast(1)) } -> LivePreview.FULL
+    decoders.any { it(3840, 2160, equivalentFps4k(width, height, fps)) } -> LivePreview.REDUCED
+    else -> LivePreview.COPY
+}
+
 /** The frame rate from the spacing of frame times in microseconds (in any order), or null for too few frames. */
 internal fun frameRateFromTimes(timesUs: List<Long>): Float? {
     val gaps = timesUs.sorted().zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
@@ -380,28 +402,27 @@ object MediaIO {
         if (source.keepsHdr && !hdrEncoderAvailable(source, mime)) throw MediaProblem("hdrDevice")
     }
 
-    /**
-     * Whether a hardware decoder can play this video live. It must declare the frame size. Up to 4K at 60 fps of
-     * pixels per second plays live: some decoders declare only 4K30 performance points yet sustain 4K60. Above that,
-     * separately declared width, height and frame rate limits are often generous, so the decoder must declare a
-     * performance point (a size and rate it sustains) that covers this video.
-     */
-    fun decodesLive(source: SourceMedia): Boolean = runCatching {
-        val withinLimit = source.width.toLong() * source.height * source.fps <= 3840L * 2160 * 61
-        val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(source.width, source.height,
-            ceil(source.fps).toInt().coerceAtLeast(1))
-        decoders(source, hardware = true).any { caps -> withinLimit || caps.supportedPerformancePoints?.any { it.covers(needed) } == true }
-    }.getOrDefault(true)
+    /** How the preview can play this video, from what its hardware decoders declare. See [livePreview]. */
+    internal fun livePreview(source: SourceMedia): LivePreview = runCatching {
+        livePreview(source.width, source.height, source.fps, decoders(source, hardware = true).map { caps ->
+            { w: Int, h: Int, fps: Int ->
+                val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(w, h, fps)
+                caps.supportedPerformancePoints?.any { it.covers(needed) } == true
+            }
+        })
+    }.getOrDefault(LivePreview.FULL)
 
-    /** What [decodesLive] saw, decoder by decoder, for the log. */
+    /** What [livePreview] saw, decoder by decoder, for the log. */
     fun liveDecodeReport(source: SourceMedia): String = runCatching {
         val (w, h) = source.width to source.height
         val needed = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(w, h, ceil(source.fps).toInt().coerceAtLeast(1))
+        val equivalent = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(3840, 2160, equivalentFps4k(w, h, source.fps))
         val lines = mutableListOf(
             "${w}x$h ${source.mime}",
             "Frame rate: %.0f used, %s declared".format(source.fps, source.declaredFps?.let { "%.2f".format(it) } ?: "none"),
             "Pixel rate: %.0f M/s (plays live up to %.0f M/s)".format(w.toDouble() * h * source.fps / 1e6, 3840.0 * 2160 * 61 / 1e6),
             "Needs: $needed",
+            "Or the same speed at a smaller frame: $equivalent",
         )
         val hardware = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
             !info.isEncoder && info.isHardwareAccelerated && info.supportedTypes.any { it.equals(source.mime, true) }
@@ -414,7 +435,8 @@ object MediaIO {
             lines += "\n${info.name}"
             lines += "Size: ${if (caps.isSizeSupported(cw, ch)) "yes" else "no"} (max ${caps.supportedWidths.upper}x${caps.supportedHeights.upper})" +
                 ", rate on paper: ${if (runCatching { caps.areSizeAndRateSupported(cw, ch, source.fps.toDouble()) }.getOrDefault(false)) "yes" else "no"}" +
-                ", covered: ${when { points == null -> "no points declared"; points.any { it.covers(needed) } -> "yes"; else -> "no" }}"
+                ", covered: ${when { points == null -> "no points declared"; points.any { it.covers(needed) } -> "yes"; else -> "no" }}" +
+                ", same speed: ${if (points?.any { it.covers(equivalent) } == true) "yes" else "no"}"
             points?.forEach { lines += "  $it" }
         }
         lines.joinToString("\n")

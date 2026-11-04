@@ -1021,7 +1021,8 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     val player = remember(uri) {
         boostablePlayer(context, originalBoost).apply {
             setSeekParameters(SeekParameters.EXACT)
-            setVideoEffects(listOf(UnderwaterEffect(model.gradeState)))
+            // Grading comes after the resize, so it only has the smaller frame to work on.
+            setVideoEffects(model.source.value?.let { MediaIO.resizeEffect(it, model.previewGradeEdge) }.orEmpty() + UnderwaterEffect(model.gradeState))
             repeatMode = Player.REPEAT_MODE_ONE
             setMediaItem(MediaItem.fromUri(uri!!))
             seekTo(model.playbackPositionMs)

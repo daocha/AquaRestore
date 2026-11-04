@@ -33,6 +33,7 @@ final class PlayerController: ObservableObject {
     private var speed: Float = 1
     private var refreshing = false
     private var refreshAgain = false
+    private static let previewFps: Float = 30
 
     init(model: EditorModel) {
         self.model = model
@@ -66,7 +67,8 @@ final class PlayerController: ObservableObject {
 
     // MARK: Loading
 
-    func load(_ media: SourceMedia) {
+    /// `gradeEdge` limits the long edge the preview is graded at; 0 grades at the video's full size.
+    func load(_ media: SourceMedia, gradeEdge: Int = 0) {
         unload()
         loopingSince = nil
         FrameProbe.reset()
@@ -81,9 +83,9 @@ final class PlayerController: ObservableObject {
                 let audio = try await asset.loadTracks(withMediaType: .audio).first
                 guard let self, !Task.isCancelled else { return }
 
-                // The preview renders at up to 1920px; the layer scales it to the view.
+                // The layer scales the graded frames to the view.
                 let display = GradeInstruction.displaySize(natural, transform)
-                let scale = min(1, 1920 / max(display.width, display.height))
+                let scale = gradeEdge > 0 ? min(1, CGFloat(gradeEdge) / max(display.width, display.height)) : 1
                 let render = CGSize(width: max(2, (display.width * scale / 2).rounded() * 2), height: max(2, (display.height * scale / 2).rounded() * 2))
                 let fps = Int32(min(max(media.fps.rounded(), 24), 60))
                 let composition = GradeComposition.make(track: track, trackID: track.trackID, duration: duration, state: self.model.gradeState,
@@ -152,6 +154,7 @@ final class PlayerController: ObservableObject {
         durationMs = 0
         aspect = nil
         isPlaying = false
+        updateGradeRate()
         resume = false
         musicPlayer?.pause()
     }
@@ -173,6 +176,7 @@ final class PlayerController: ObservableObject {
             player.publisher(for: \.timeControlStatus).dropFirst().sink { [weak self] status in
                 guard let self else { return }
                 self.isPlaying = status != .paused
+                self.updateGradeRate()
                 if self.appActive && !self.exporting { self.model.playbackWanted = status != .paused }
             },
         ]
@@ -180,7 +184,11 @@ final class PlayerController: ObservableObject {
 
     // MARK: Transport
 
-    func play() { player?.play() }
+    /// The preview holds still, graded and seekable, until a copy it is waiting for is ready.
+    func play() {
+        guard model.previewPreparing == nil else { return }
+        player?.play()
+    }
 
     func pause() { player?.pause() }
 
@@ -224,8 +232,15 @@ final class PlayerController: ObservableObject {
         }
     }
 
+    /// At most 30 frames a second on screen at any speed: 60 fps footage keeps every frame at 0.5×, and
+    /// high-resolution footage grades half as many frames at 1×. Paused frames always grade, so sliders update them.
+    private func updateGradeRate() {
+        model.gradeState.frameRate = isPlaying ? Self.previewFps / max(speed, 0.01) : 0
+    }
+
     private func applyRate() {
         rate = speed
+        updateGradeRate()
         guard let player else { return }
         player.defaultRate = speed
         if player.rate != 0 { player.rate = speed }

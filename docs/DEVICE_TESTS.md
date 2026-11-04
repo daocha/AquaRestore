@@ -22,7 +22,7 @@ Unit tests cover the recommendation direction, low confidence, robustness to unu
 
 ## Performance
 
-On at least one mid-range and one flagship phone, test the preview playing the original video directly (1080p, 4K30) and the switch to the background proxy for 4K60. Record dropped frames, UI frame time, temperature and memory over 60 continuous seconds; check that the position does not jump and no error appears when switching after the proxy is ready. Verify that 4K export does not use the proxy and that the graded result is close to the preview. When the device cannot encode the source codec, Original must fail clearly, and Custom H.264 can be tried instead.
+On at least one mid-range and one flagship phone, test the preview playing the original video directly (1080p, 4K30) and the switch to the background proxy for 4K60. On iPhone, also try a video heavier than 4K60 (such as 3840×3360 at 60 fps): check the logged decode speed and outcome against how smoothly it actually plays, since the thresholds in `LivePreview` are untested estimates. Record dropped frames, UI frame time, temperature and memory over 60 continuous seconds; check that the position does not jump and no error appears when switching after the proxy is ready. Verify that 4K export does not use the proxy and that the graded result is close to the preview. When the device cannot encode the source codec, Original must fail clearly, and Custom H.264 can be tried instead.
 
 ## Interaction and speed acceptance
 
