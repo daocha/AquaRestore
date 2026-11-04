@@ -221,14 +221,14 @@ struct EditorView: View {
                  height: 56, corner: 16, fontSize: 16, fullWidth: true) { showPicker = true }
             .accessibilityIdentifier("importMedia")
             .disabled(busy)
-        if batchAccess.enabled {
+        if batchAccess.photoEnabled {
             M3Button(title: s.text("Batch restore photos", "批次還原照片"), icon: .photoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                      height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: false) }
                 .disabled(busy)
             MText(s.text("Up to \(BatchLimits.photos) photos · automatic restoration · keep the app open", "最多 \(BatchLimits.photos) 張照片 · 自動智慧還原 · 請保持 App 開啟"),
                   size: 12, color: c.onSurfaceVariant)
         }
-        if batchAccess.enabled {
+        if batchAccess.videoEnabled {
             M3Button(title: s.text("Batch restore videos", "批次還原影片"), icon: .videoLibrary, iconSize: 24, iconSpacing: 10, style: .outlined,
                      height: 56, corner: 16, fontSize: 16, fullWidth: true) { pickBatch(videos: true) }
                 .disabled(busy)

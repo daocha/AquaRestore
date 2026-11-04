@@ -9,4 +9,10 @@ class BatchVerifierTest {
         assertTrue(BatchAccess.verify("sample-測試-5678", salt, verifier))
         assertFalse(BatchAccess.verify("wrong", salt, verifier))
     }
+    @Test fun debugGatesUseApplicationIdForBothFeatures() {
+        assertTrue(BatchAccess.verify(BuildConfig.APPLICATION_ID, BuildConfig.BATCH_PHOTO_SALT, BuildConfig.BATCH_PHOTO_VERIFIER))
+        assertTrue(BatchAccess.verify(BuildConfig.APPLICATION_ID, BuildConfig.BATCH_VIDEO_SALT, BuildConfig.BATCH_VIDEO_VERIFIER))
+        assertFalse(BatchAccess.verify("incorrect", BuildConfig.BATCH_PHOTO_SALT, BuildConfig.BATCH_PHOTO_VERIFIER))
+        assertNotEquals(BuildConfig.BATCH_PHOTO_SALT, BuildConfig.BATCH_VIDEO_SALT)
+    }
 }

@@ -5,19 +5,32 @@ import StoreKit
 @MainActor
 final class BatchAccess: ObservableObject {
     static let shared = BatchAccess()
-    @Published private(set) var enabled: Bool
+    @Published private(set) var photoEnabled: Bool
+    @Published private(set) var videoEnabled: Bool
     private let config: [String: String]
-    private init() {
-        config = Bundle.main.url(forResource: "BatchGate", withExtension: "plist")
+    private let preferences: UserDefaults
+    private convenience init() {
+        let values = Bundle.main.url(forResource: "BatchGate", withExtension: "plist")
             .flatMap { NSDictionary(contentsOf: $0) as? [String: String] } ?? [:]
-        enabled = config["verifier", default: ""].isEmpty || UserDefaults.standard.bool(forKey: "batchUnlocked")
+        self.init(config: values, preferences: .standard)
     }
-    func unlock(_ code: String) async -> Bool {
-        if enabled { return true }
-        let salt = config["salt", default: ""]
-        let expected = config["verifier", default: ""]
+    init(config values: [String: String], preferences prefs: UserDefaults) {
+        config = values
+        preferences = prefs
+        let legacy = prefs.bool(forKey: "batchUnlocked")
+        photoEnabled = values["photoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchPhotoUnlocked")
+        videoEnabled = values["videoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchVideoUnlocked")
+    }
+    func unlock(_ code: String, video: Bool = false) async -> Bool {
+        if video ? videoEnabled : photoEnabled { return true }
+        let feature = video ? "video" : "photo"
+        let salt = config[feature + "Salt", default: ""]
+        let expected = config[feature + "Verifier", default: ""]
         let valid = await Task.detached { Self.verify(code, saltHex: salt, verifierHex: expected) }.value
-        if valid { UserDefaults.standard.set(true, forKey: "batchUnlocked"); enabled = true }
+        if valid {
+            preferences.set(true, forKey: video ? "batchVideoUnlocked" : "batchPhotoUnlocked")
+            if video { videoEnabled = true } else { photoEnabled = true }
+        }
         return valid
     }
     nonisolated static func verify(_ code: String, saltHex: String, verifierHex: String) -> Bool {
