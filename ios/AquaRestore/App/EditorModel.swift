@@ -29,6 +29,8 @@ final class EditorModel: ObservableObject {
     let gradeState = GradeState(.neutral)
     /// Set for videos: the player grades it live. Photos use the bitmaps below instead.
     @Published var previewURL: URL?
+    /// Progress of the preview copy the preview holds still for, or nil when nothing waits.
+    @Published var previewPreparing: Int?
     @Published var previewOriginal: PixelImage?
     @Published var previewOriginalImage: CGImage?
     @Published var previewGraded: CGImage?
@@ -180,6 +182,7 @@ final class EditorModel: ObservableObject {
         player.unload()
         error = nil
         previewURL = nil
+        previewPreparing = nil
         previewOriginal = nil
         previewOriginalImage = nil
         previewGraded = nil
@@ -206,9 +209,18 @@ final class EditorModel: ObservableObject {
                 self.analysis = recommended
                 self.setGrade(recommended.grade)
                 if media.video {
-                    // Play the original straight away; the grade is a live GPU effect, so no re-encode is needed.
+                    // Play the original straight away when the decoder can keep up; the grade is a live GPU effect.
+                    let (live, measured) = await MediaIO.livePreview(media)
+                    try Task.checkCancellation()
+                    let hold = live == .copy
+                    NSLog("AquaRestore: preview \(hold ? "waits for a copy" : live == .reduced ? "plays the original, graded at up to \(LivePreview.reducedEdge)px" : "plays the original")" +
+                          " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))")
+                    if hold { self.previewPreparing = 0 }
                     self.previewURL = media.url
-                    self.player.load(media)
+                    self.player.load(media, gradeEdge: live == .full ? 0 : LivePreview.reducedEdge)
+                    if hold || max(media.width, media.height) > 3840 {
+                        self.backgroundTasks.append(Task { [weak self] in await self?.buildPreviewCopy(media, hold: hold) })
+                    }
                     // Thumbnails are built in the background and never hold up the editor.
                     self.backgroundTasks.append(Task { [weak self] in
                         do { self?.filmstrip = try await MediaIO.filmstrip(media.url, durationMs: media.durationMs, count: 10) }
@@ -236,6 +248,47 @@ final class EditorModel: ObservableObject {
                     self.sourceFolder = nil
                 }
             }
+        }
+    }
+
+    /// Re-encodes a lighter, ungraded 1080p copy with the original timeline, so trim and music stay aligned, then swaps
+    /// the player to it at the same position. Export keeps reading the original. A copy is only an optimization: if it
+    /// fails, the original plays.
+    private func buildPreviewCopy(_ media: SourceMedia, hold: Bool) async {
+        guard let folder = sourceFolder else { return }
+        let file = folder.appendingPathComponent("preview-\(UUID().uuidString).mp4")
+        var options = ExportOptions()
+        options.original = false
+        options.longEdge = LivePreview.reducedEdge
+        options.fps = 30
+        let request = ExportRequest(source: media, grade: .neutral, options: options, chinese: false)
+        let update: Exporter.Update = { [weak self] progress, _ in
+            guard let progress else { return }
+            // Export reports up to 90%, leaving the rest for saving, which a copy does not do.
+            Task { @MainActor in
+                if self?.previewPreparing != nil { self?.previewPreparing = min(progress * 100 / 90, 99) }
+            }
+        }
+        do {
+            try await ForegroundExport.run(waiting: {}) {
+                try await Exporter.exportVideo(request, to: file, update: update)
+            }
+            try Task.checkCancellation()
+            guard source?.url == media.url else { try? FileManager.default.removeItem(at: file); return }
+            var copy = media
+            copy.url = file
+            copy.fps = min(media.fps, 30)
+            playbackPositionMs = player.playhead
+            previewPreparing = nil
+            previewURL = file
+            player.load(copy)
+        } catch {
+            try? FileManager.default.removeItem(at: file)
+            if error is CancellationError { return }
+            NSLog("AquaRestore: preview copy unavailable: \(error)")
+            guard source?.url == media.url else { return }
+            previewPreparing = nil
+            if hold && playbackWanted && !Exports.shared.status.busy { player.play() }
         }
     }
 
@@ -379,6 +432,7 @@ final class EditorModel: ObservableObject {
         source = nil
         analysis = nil
         previewURL = nil
+        previewPreparing = nil
         previewOriginal = nil
         previewOriginalImage = nil
         previewGraded = nil

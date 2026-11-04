@@ -31,7 +31,7 @@ Recommendations come from on-device color statistics, not a cloud-based generati
 After analysis, videos normally play from the original, with live GPU grading. Exports **always use the original URI**, never a preview copy.
 
 - **Android:** 4K60 can play directly when the device can decode it smoothly. When the decoder has the speed for a video but declares no frame as large, the original plays with grading at up to 1920px on the long edge. The app makes a 1080p, up to 30fps preview copy when it needs to convert HDR for preview, the decoder cannot keep up, or the video's long edge exceeds 3840px. When the copy is needed for playback, a graded, seekable frame and progress are shown until it is ready.
-- **iOS:** there is no preview copy. Heavy footage (such as 4K60) is played directly; smoothness on target devices still needs testing.
+- **iOS:** follows the same three outcomes, but iOS declares no decoder limits, so a video heavier than 4K60 is judged by timing a short decode of the clip. At least twice the video's frame rate grades at full size, at least 1.2 times grades at up to 1920px, and anything slower waits for the same kind of preview copy. These thresholds and smoothness on target devices still need testing.
 
 Photo previews have a 720px long edge and are graded in the background; each finished preview immediately picks up the latest slider values, so continuous dragging never keeps cancelling work until you let go. Photos and videos use the same grading formula. On compatible devices, HDR video is processed and exported as HDR; otherwise it is tone-mapped and exported as SDR. Devices, encoders and color management may cause slight display differences.
 

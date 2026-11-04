@@ -115,6 +115,7 @@ struct PreviewView: View {
         HStack(spacing: 6) {
             if let source = model.source { PreviewTag(text: source.video ? s.text("VIDEO", "影片") : s.text("PHOTO", "照片")) }
             PreviewTag(text: model.compare ? s.text("ORIGINAL", "原色") : s.text("RESTORED", "還原後"))
+            if let preparing = model.previewPreparing { PreviewTag(text: s.text("Preparing smooth preview… \(preparing)%", "正在準備流暢預覽… \(preparing)%")) }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

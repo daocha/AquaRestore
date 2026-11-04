@@ -21,6 +21,13 @@ final class GradeState: @unchecked Sendable {
     }
 
     /// How many frames the compositor has been asked for, so the player can notice that they have stopped coming.
+    private var _frameRate: Float = 0
+    /// While playing, at most this many source frames a second are graded; 0 grades them all.
+    var frameRate: Float {
+        get { lock.lock(); defer { lock.unlock() }; return _frameRate }
+        set { lock.lock(); _frameRate = newValue; lock.unlock() }
+    }
+
     private var _requests = 0
     var requests: Int { lock.lock(); defer { lock.unlock() }; return _requests }
     func noteRequest() { lock.lock(); _requests += 1; lock.unlock() }
@@ -343,6 +350,10 @@ class GradeCompositor: NSObject, AVVideoCompositing {
     private let queue = DispatchQueue(label: "AquaRestore.compositor", qos: .userInitiated)
     private var generation = 0
     private let lock = NSLock()
+    /// Used only on `queue`.
+    private var cadence: (rate: Float, frames: FrameCadence)?
+    /// The last graded frame, repeated for frames over `GradeState.frameRate`. Guarded by `lock`.
+    private var lastOutput: CVPixelBuffer?
 
     var sourcePixelBufferAttributes: [String: any Sendable]? {
         [kCVPixelBufferPixelFormatTypeKey as String: [Self.pixelFormat], kCVPixelBufferMetalCompatibilityKey as String: true]
@@ -382,6 +393,13 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 return
             }
             instruction.state.noteRequest()
+            let rate = instruction.state.frameRate
+            if rate > 0, request.sourceFrame(byTrackID: instruction.trackID) != nil {
+                if self.cadence?.rate != rate { self.cadence = (rate, FrameCadence(fps: rate)) }
+                let accepted = self.cadence?.frames.accept(timeUs: Int64(request.compositionTime.seconds * 1_000_000)) ?? true
+                self.lock.lock(); let last = self.lastOutput; self.lock.unlock()
+                if !accepted, let last { request.finish(withComposedVideoFrame: last); return }
+            }
             guard let output = request.renderContext.newPixelBuffer() else {
                 GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
                 request.finish(with: GradeError.textureFailed)
@@ -406,6 +424,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                     return
                 }
                 #endif
+                if ok && rate > 0 { self.lock.lock(); self.lastOutput = output; self.lock.unlock() }
                 if ok { request.finish(withComposedVideoFrame: output) } else { request.finish(with: GradeError.textureFailed) }
             }
         }
