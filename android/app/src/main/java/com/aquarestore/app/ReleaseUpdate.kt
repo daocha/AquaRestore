@@ -18,7 +18,8 @@ internal data class ReleaseUpdate(
 )
 
 /**
- * The release script publishes exactly one versioned APK and a matching SHA256SUMS asset. Debug builds
+ * The release script publishes exactly one versioned APK and a matching SHA256SUMS asset, plus a fixed-name
+ * copy for direct download links, which this ignores because it has no version in its name. Debug builds
  * with a LAN server instead read latest.json, which the debug build writes next to its APK.
  */
 internal object ReleaseUpdates {
