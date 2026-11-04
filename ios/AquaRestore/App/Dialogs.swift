@@ -11,6 +11,7 @@ struct SettingsDialog: View {
     @ObservedObject private var devTools = DevTools.shared
     @State private var versionTaps = 0
     @State private var showLog = false
+    @State private var showUnlock = false
     @State private var savingFrames = false
     /// Android shows these as toasts.
     @State private var notice: String?
@@ -19,6 +20,7 @@ struct SettingsDialog: View {
         ZStack {
             dialog
             if showLog { DevLogPanel { showLog = false } }
+            if showUnlock { UnlockCodeDialog { showUnlock = false } }
         }
     }
 
@@ -56,8 +58,7 @@ struct SettingsDialog: View {
                             .labelsHidden().tint(c.primary)
                             .accessibilityLabel(s.text("Developer tools", "開發者工具"))
                     }
-                    BatchUnlockControl(video: false)
-                    BatchUnlockControl(video: true)
+                    M3Button(title: s.text("Unlock Code", "解鎖碼"), style: .outlined) { showUnlock = true }
                     M3Button(title: s.text("Developer logs", "開發者日誌"), style: .outlined) { showLog = true }
                     M3Button(title: s.text("Save logs", "儲存日誌"), style: .outlined) {
                         Task { notice = await DevLog.save().map { s.text("Saved to \($0)", "已儲存至 \($0)") } ?? s.text("Could not save the log", "無法儲存日誌") }
@@ -88,29 +89,32 @@ struct SettingsDialog: View {
     }
 }
 
-private struct BatchUnlockControl: View {
-    let video: Bool
+private struct UnlockCodeDialog: View {
+    let dismiss: () -> Void
     @Environment(\.strings) private var s
-    @ObservedObject private var access = BatchAccess.shared
     @State private var code = ""
     @State private var unlocking = false
     @State private var error = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            MText(video ? s.text("Batch video processing", "批次影片處理") : s.text("Batch photo processing", "批次照片處理"), weight: .semibold)
-            if video ? access.videoEnabled : access.photoEnabled {
-                MText(s.text("Enabled", "已啟用"))
-            } else {
-                SecureField(video ? s.text("Batch video unlock code", "批次影片解鎖碼") : s.text("Batch photo unlock code", "批次照片解鎖碼"), text: $code)
+        M3Dialog(title: s.text("Unlock Code", "解鎖碼"), dismiss: { if !unlocking { dismiss() } }) {
+            VStack(alignment: .leading, spacing: 12) {
+                SecureField(s.text("Code", "輸入解鎖碼"), text: $code)
                     .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .disabled(unlocking)
                     .onChange(of: code) { value in if !value.isEmpty { error = false } }
-                M3Button(title: video ? s.text("Unlock batch videos", "解鎖批次影片") : s.text("Unlock batch photos", "解鎖批次照片"), spinner: unlocking) {
-                    unlocking = true
-                    Task { error = !(await access.unlock(code, video: video)); code = ""; unlocking = false }
-                }.disabled(unlocking || code.isEmpty)
                 if error { MText(s.text("Incorrect code", "解鎖碼不正確")) }
             }
+        } buttons: {
+            M3TextButton(title: s.text("Cancel", "取消"), action: dismiss).disabled(unlocking)
+            M3Button(title: s.text("Unlock", "解鎖"), spinner: unlocking) {
+                unlocking = true
+                Task {
+                    let valid = await BatchAccess.shared.unlock(code)
+                    error = !valid; code = ""; unlocking = false
+                    if valid { dismiss() }
+                }
+            }.disabled(unlocking || code.isEmpty)
         }
     }
 }

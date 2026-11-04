@@ -1362,8 +1362,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                     // Turning them off locks them again; ten taps on the version unlock them.
                     Switch(true, { DevTools.disable(context); devTools = false; versionTaps = 0 })
                 }
-                BatchUnlockControl(context, s, video = false)
-                BatchUnlockControl(context, s, video = true)
+                BatchUnlockControl(context, s)
                 OutlinedButton(onClick = { showLog = true }) { Text(s.text("Developer logs", "開發者日誌")) }
                 OutlinedButton(onClick = { scope.launch { saveLogToast(context, s) } }) { Text(s.text("Save logs", "儲存日誌")) }
                 OutlinedButton(onClick = {
@@ -1387,30 +1386,39 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
 }
 
 @Composable
-private fun BatchUnlockControl(context: Context, s: Strings, video: Boolean) {
-    var unlocked by remember { mutableStateOf(BatchAccess.enabled(context, video)) }
+private fun BatchUnlockControl(context: Context, s: Strings) {
+    var show by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     var unlocking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val title = if (video) s.text("Batch video processing", "批次影片處理") else s.text("Batch photo processing", "批次照片處理")
-    Text(title, fontWeight = FontWeight.SemiBold)
-    if (unlocked) {
-        Text(s.text("Enabled", "已啟用"))
-    } else {
-        OutlinedTextField(code, { code = it; error = false },
-            label = { Text(if (video) s.text("Batch video unlock code", "批次影片解鎖碼") else s.text("Batch photo unlock code", "批次照片解鎖碼")) },
-            singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = error)
-        Button(onClick = { unlocking = true; scope.launch {
-            try {
-                unlocked = BatchAccess.unlock(context, code, video)
-                error = !unlocked; code = ""
-            } finally { unlocking = false }
-        } }, enabled = !unlocking && code.isNotEmpty()) {
-            Text(if (video) s.text("Unlock batch videos", "解鎖批次影片") else s.text("Unlock batch photos", "解鎖批次照片"))
-        }
-        if (error) Text(s.text("Incorrect code", "解鎖碼不正確"))
-    }
+    OutlinedButton(onClick = { code = ""; error = false; show = true }) { Text(s.text("Unlock Code", "解鎖碼")) }
+    if (show) AlertDialog(
+        onDismissRequest = { if (!unlocking) show = false },
+        title = { Text(s.text("Unlock Code", "解鎖碼")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(code, { code = it; error = false },
+                    placeholder = { Text(s.text("Code", "輸入解鎖碼")) },
+                    singleLine = true, enabled = !unlocking,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), isError = error)
+                if (error) Text(s.text("Incorrect code", "解鎖碼不正確"))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { unlocking = true; scope.launch {
+                try {
+                    val valid = BatchAccess.unlock(context, code)
+                    error = !valid; code = ""
+                    if (valid) {
+                        show = false
+                        android.widget.Toast.makeText(context, s.text("Unlocked", "已解鎖"), android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } finally { unlocking = false }
+            } }, enabled = !unlocking && code.isNotEmpty()) { Text(s.text("Unlock", "解鎖")) }
+        },
+        dismissButton = { TextButton(onClick = { show = false }, enabled = !unlocking) { Text(s.text("Cancel", "取消")) } }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

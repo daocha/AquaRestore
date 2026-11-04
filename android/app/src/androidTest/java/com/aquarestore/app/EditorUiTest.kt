@@ -382,7 +382,7 @@ class EditorUiTest {
             }
         } finally { ComparisonWork.dismiss(); input.delete(); Exports.status.value = ExportStatus() }
     }
-    @Test fun debugBatchUnlocksAreIndependentAndHiddenInsideDeveloperTools() {
+    @Test fun oneUnlockButtonChecksBothCodesAndStaysInsideDeveloperTools() {
         val context = ui.activity
         val prefs = context.getSharedPreferences("localFeatures", 0)
         val photo = prefs.getBoolean("batchPhotoUnlocked", false)
@@ -394,22 +394,23 @@ class EditorUiTest {
             ui.onNodeWithText("Batch restore photos").assertDoesNotExist()
             ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
             ui.onNodeWithContentDescription("Settings").performClick()
-            ui.onNodeWithText("Unlock batch photos").assertDoesNotExist()
-            ui.onNodeWithText("Unlock batch videos").assertDoesNotExist()
+            ui.onNodeWithText("Unlock Code").assertDoesNotExist()
             ui.onNodeWithText("AquaRestore ${BuildConfig.VERSION_NAME}", substring = true).performScrollTo().apply {
                 repeat(DevTools.UNLOCK_TAPS) { performClick() }
             }
-            ui.onNodeWithText("Batch photo unlock code").performScrollTo().performTextInput(context.packageName)
-            ui.onNodeWithText("Unlock batch photos").performScrollTo().performClick()
-            ui.waitUntil(10_000) { BatchAccess.enabled(context) }
+            ui.onNodeWithText("Batch photo processing").assertDoesNotExist()
+            ui.onNodeWithText("Batch video processing").assertDoesNotExist()
+            ui.onNodeWithText("Code").assertDoesNotExist()
+            ui.onNodeWithText("Unlock Code").performScrollTo().performClick()
+            ui.onNodeWithText("Code").performTextInput("incorrect")
+            ui.onNodeWithText("Unlock", substring = false).performClick()
+            ui.waitUntil(10_000) { ui.onAllNodesWithText("Incorrect code").fetchSemanticsNodes().isNotEmpty() }
+            assertFalse(BatchAccess.enabled(context))
             assertFalse(BatchAccess.enabled(context, video = true))
-            kotlinx.coroutines.runBlocking {
-                assertFalse(BatchAccess.unlock(context, "incorrect", video = true))
-            }
+            ui.onNodeWithText("Code").performTextInput(context.packageName)
+            ui.onNodeWithText("Unlock", substring = false).performClick()
+            ui.waitUntil(10_000) { BatchAccess.enabled(context) && BatchAccess.enabled(context, video = true) }
             ui.onNodeWithText("Done").performClick()
-            ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()
-            ui.onNodeWithText("Batch restore videos").assertDoesNotExist()
-            kotlinx.coroutines.runBlocking { assertTrue(BatchAccess.unlock(context, context.packageName, video = true)) }
             DevTools.disable(context)
             ui.activityRule.scenario.recreate()
             ui.onNodeWithText("Batch restore photos").performScrollTo().assertIsDisplayed()

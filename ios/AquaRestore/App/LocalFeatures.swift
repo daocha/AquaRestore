@@ -21,17 +21,18 @@ final class BatchAccess: ObservableObject {
         photoEnabled = values["photoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchPhotoUnlocked")
         videoEnabled = values["videoVerifier", default: ""].isEmpty || legacy || prefs.bool(forKey: "batchVideoUnlocked")
     }
-    func unlock(_ code: String, video: Bool = false) async -> Bool {
-        if video ? videoEnabled : photoEnabled { return true }
-        let feature = video ? "video" : "photo"
-        let salt = config[feature + "Salt", default: ""]
-        let expected = config[feature + "Verifier", default: ""]
-        let valid = await Task.detached { Self.verify(code, saltHex: salt, verifierHex: expected) }.value
-        if valid {
-            preferences.set(true, forKey: video ? "batchVideoUnlocked" : "batchPhotoUnlocked")
-            if video { videoEnabled = true } else { photoEnabled = true }
-        }
-        return valid
+    func unlock(_ code: String) async -> Bool {
+        let values = config
+        let (photo, video) = await Task.detached {
+            let photoVerifier = values["photoVerifier", default: ""]
+            let videoVerifier = values["videoVerifier", default: ""]
+            let photo = !photoVerifier.isEmpty && Self.verify(code, saltHex: values["photoSalt", default: ""], verifierHex: photoVerifier)
+            let video = !videoVerifier.isEmpty && Self.verify(code, saltHex: values["videoSalt", default: ""], verifierHex: videoVerifier)
+            return (photo, video)
+        }.value
+        if photo { preferences.set(true, forKey: "batchPhotoUnlocked"); photoEnabled = true }
+        if video { preferences.set(true, forKey: "batchVideoUnlocked"); videoEnabled = true }
+        return photo || video
     }
     nonisolated static func verify(_ code: String, saltHex: String, verifierHex: String) -> Bool {
         let salt = bytes(saltHex), expected = bytes(verifierHex)
