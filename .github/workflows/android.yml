@@ -39,7 +39,9 @@ jobs:
       - run: python3 -m unittest discover -s scripts/tests -v
       - run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
         working-directory: android
+      # Artifacts of a public repository are public, so anything built with the private core stays on the runner.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: env.HAS_CORE != 'true'
         with:
           name: AquaRestore-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
@@ -92,7 +94,7 @@ jobs:
           working-directory: android
           script: ./gradlew --console=plain :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
+        if: failure() && env.HAS_CORE != 'true'
         with:
           name: device-test-report
           path: android/app/build/reports/androidTests/
