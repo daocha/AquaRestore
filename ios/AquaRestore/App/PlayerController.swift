@@ -25,6 +25,7 @@ final class PlayerController: ObservableObject {
     private var loaded: (media: SourceMedia, gradeEdge: Int)?
     /// The preview has given up its memory until the export and its comparison end.
     private var released = false
+    private var retry = PlaybackRetry()
     private var observers: [AnyCancellable] = []
     private var itemObservers: [AnyCancellable] = []
     private var originalBoost = GainBox()
@@ -45,11 +46,7 @@ final class PlayerController: ObservableObject {
     init(model: EditorModel) {
         self.model = model
         AppActivity.observe()
-        // The default audio category goes silent with the Ring/Silent switch, which should not mute a video being edited.
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch { NSLog("AquaRestore: audio session unavailable: \(error)") }
+        Self.configureAudioSession()
         let center = NotificationCenter.default
         observers = [
             center.publisher(for: Notification.Name("UIApplicationWillResignActiveNotification")).sink { [weak self] _ in self?.resignActive() },
@@ -63,6 +60,12 @@ final class PlayerController: ObservableObject {
             },
             center.publisher(for: AVAudioSession.routeChangeNotification).sink { _ in
                 NSLog("AquaRestore: audio route: \(AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName))")
+            },
+            // A reset ends the audio session and every player. The video's own failure brings the preview back; this is the rest.
+            center.publisher(for: AVAudioSession.mediaServicesWereResetNotification).sink { [weak self] _ in
+                NSLog("AquaRestore: media services were reset\(AppLog.memory)")
+                Self.configureAudioSession()
+                self?.loadMusic(self?.model.music)
             },
             model.$speed.sink { [weak self] value in self?.speed = value; self?.applyRate() },
             model.$originalVolume.sink { [weak self] value in self?.setOriginalVolume(value) },
@@ -94,6 +97,14 @@ final class PlayerController: ObservableObject {
                 } else if self.model.playbackWanted && self.appActive { self.play() }
             },
         ]
+    }
+
+    /// The default audio category goes silent with the Ring/Silent switch, which should not mute a video being edited.
+    private static func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch { NSLog("AquaRestore: audio session unavailable: \(error)") }
     }
 
     // MARK: Loading
@@ -239,14 +250,22 @@ final class PlayerController: ObservableObject {
         NSLog("AquaRestore: preview released for the export\(AppLog.memory)")
     }
 
+    /// A failed item never plays again, even once what stopped it has passed, so the play button would do nothing from then on.
+    /// During an export the preview comes back when the export ends; otherwise it is built again once before saying so.
+    private func itemFailed(_ failed: AVPlayerItem) {
+        guard self.item === failed, let loaded else { return }
+        NSLog("AquaRestore: preview playback failed: \(String(describing: failed.error))\(AppLog.memory)")
+        if exporting { releaseForExport(); return }
+        guard retry.allowed() else { model.error = "playbackFailed"; return }
+        model.playbackPositionMs = playhead
+        load(loaded.media, gradeEdge: loaded.gradeEdge)
+    }
+
     private func observe(_ item: AVPlayerItem, _ player: AVPlayer) {
         itemObservers = [
             item.publisher(for: \.status).sink { [weak self] status in
                 if status == .readyToPlay { NSLog("AquaRestore: preview ready \(item.presentationSize) tracks=\(item.tracks.count)") }
-                if status == .failed {
-                    NSLog("AquaRestore: preview playback failed: \(String(describing: item.error))")
-                    self?.model.error = "playbackFailed"
-                }
+                if status == .failed { Task { @MainActor [weak self] in self?.itemFailed(item) } }
             },
             // The loop stays inside the trim range; ending the whole clip wraps to the trim start.
             NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: item).sink { [weak self] _ in

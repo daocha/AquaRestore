@@ -199,6 +199,11 @@ enum ComparisonWork {
         entry?.rejected = true; entry?.task?.cancel()
         if let entry { ShareMediaMaker.remove(entry.assets) }
     }
+    /// Rejects it and waits until it has let go of its decoder and memory, so that nothing new starts on top of them.
+    static func stop(_ entry: Entry?) async {
+        reject(entry)
+        await entry?.task?.value
+    }
     static func finish(_ terminal: ExportStatus) {
         guard let owner = session else { Exports.shared.status = terminal; return }
         owner.terminal = terminal; refresh(owner)
