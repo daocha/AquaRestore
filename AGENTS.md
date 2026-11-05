@@ -75,8 +75,8 @@ Spurious "Unresolved reference" errors for functions in the same package mean a 
 
 After a successful build, copy the APK to `android/dist/AquaRestore-debug.apk`. Then publish it to the phone over
 the LAN: when the gitignored `.env` sets `AQUARESTORE_DEV_UPDATE_HOST`, the build has already written
-`android/dist/dev-update/`. Run `scripts/serve-dev-update.sh` in the background, since it keeps serving until stopped.
-If a server is already running, leave it running: it serves the folder, so the new build is picked up.
+`android/dist/dev-update/`. Run `scripts/serve-dev-update.sh`. It starts the server in the background and returns, and does
+nothing if one is already running, because a running server picks up the new build by itself.
 Never write the address from `.env` into a committed file, commit message or pull request.
 
 ## CI and releases
