@@ -30,6 +30,18 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertEqual(10, (0..<10).filter { cadence.accept(timeUs: Int64($0) * 100_000) }.count)
     }
 
+    func testEveryLoopOfAPreviewKeepsItsFrames() {
+        let cadence = FrameCadence(fps: 30)
+        let loop = (0..<120).map { Int64($0) * 1_000_000 / 60 }
+        for _ in 0..<3 { XCTAssertEqual(60, loop.filter { cadence.accept(timeUs: $0) }.count) }
+    }
+    func testSeekingBackPartWayKeepsItsFrames() {
+        let cadence = FrameCadence(fps: 30)
+        // Playing from a start after zero, then back to a point after that start but before where it had reached.
+        XCTAssertEqual(60, (60..<180).filter { cadence.accept(timeUs: Int64($0) * 1_000_000 / 60) }.count)
+        XCTAssertEqual(30, (120..<180).filter { cadence.accept(timeUs: Int64($0) * 1_000_000 / 60) }.count)
+    }
+
     func testResizingPreservesPortraitAndNeverUpscales() {
         XCTAssert(ExportSizing.dimensions(2160, 3840, 1920, even: true) == (1080, 1920))
         XCTAssert(ExportSizing.dimensions(640, 480, 1920, even: true) == (640, 480))
