@@ -42,6 +42,51 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertEqual(30, (120..<180).filter { cadence.accept(timeUs: Int64($0) * 1_000_000 / 60) }.count)
     }
 
+    private func described(_ result: FrameRepeater<Int, String>.Repeat) -> String {
+        switch result {
+        case .now(let frame): return "now \(frame)"
+        case .waiting: return "waiting"
+        case .nothing: return "nothing"
+        }
+    }
+    func testALeftOutFrameNeverShowsAnOlderPictureThanTheOneBeingGraded() {
+        let repeats = FrameRepeater<Int, String>()
+        XCTAssertEqual("nothing", described(repeats.repeatFrame(for: "before any")))
+        let first = repeats.begin()
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "a")))
+        let ended = repeats.finish(first, frame: 1)
+        XCTAssertEqual(["a"], ended.waiters)
+        XCTAssertEqual(1, ended.show)
+        XCTAssertEqual("now 1", described(repeats.repeatFrame(for: "b")))
+        // The next frame is still on the GPU: showing frame 1 again now would step back after it.
+        let second = repeats.begin()
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "c")))
+        XCTAssertEqual(2, repeats.finish(second, frame: 2).show)
+        XCTAssertEqual("now 2", described(repeats.repeatFrame(for: "d")))
+    }
+    func testALeftOutFrameWaitsForTheNewestOfSeveralBeingGraded() {
+        let repeats = FrameRepeater<Int, String>()
+        let first = repeats.begin(), second = repeats.begin()
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "a")))
+        XCTAssertEqual([], repeats.finish(first, frame: 1).waiters)
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "b")))
+        let ended = repeats.finish(second, frame: 2)
+        XCTAssertEqual(["a", "b"], ended.waiters)
+        XCTAssertEqual(2, ended.show)
+    }
+    func testFailedGradingFallsBackToTheLastGoodPicture() {
+        let repeats = FrameRepeater<Int, String>()
+        let none = repeats.begin()
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "a")))
+        XCTAssertNil(repeats.finish(none, frame: nil).show)
+        XCTAssertEqual("nothing", described(repeats.repeatFrame(for: "b")))
+        _ = repeats.finish(repeats.begin(), frame: 1)
+        let failing = repeats.begin()
+        XCTAssertEqual("waiting", described(repeats.repeatFrame(for: "c")))
+        XCTAssertEqual(1, repeats.finish(failing, frame: nil).show)
+        XCTAssertEqual("now 1", described(repeats.repeatFrame(for: "d")))
+    }
+
     func testResizingPreservesPortraitAndNeverUpscales() {
         XCTAssert(ExportSizing.dimensions(2160, 3840, 1920, even: true) == (1080, 1920))
         XCTAssert(ExportSizing.dimensions(640, 480, 1920, even: true) == (640, 480))
