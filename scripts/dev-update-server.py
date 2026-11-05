@@ -39,7 +39,9 @@ def handler(directory, secret, migrate):
 
         def answer(self, send_body):
             name = requested_file(self.path, secret, migrate)
-            path = os.path.join(directory, name) if name else None
+            # Only a name found by listing the folder can open a file, so request text never becomes a path.
+            with os.scandir(directory) as entries:
+                path = next((entry.path for entry in entries if entry.name == name and entry.is_file()), None)
             try:
                 source = open(path, "rb") if path else None
             except OSError:

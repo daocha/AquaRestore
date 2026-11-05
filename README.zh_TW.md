@@ -110,6 +110,15 @@ Original 影片在 Android 保留來源 codec；iOS 僅保留 AVC 或 HEVC 編�
 
 正式 APK 啟動時會靜默檢查 GitHub 最新正式版（最多每六小時一次）。有新版本時，設定齒輪會出現紅點，設定內可點「立即更新」；下載後會驗證發布的 SHA-256，安裝仍需在 Android 中確認。Debug 版設定區域網路更新後可從區域網路檢查更新；未設定時沒有更新功能。獨立的 `playRelease` 版本使用 Google Play 應用程式內更新，沒有 APK 安裝權限；詳見[發布指南](docs/RELEASING.md)。
 
+若要透過區域網路把 debug 版傳到手機，請在 `.env` 設定 `AQUARESTORE_DEV_UPDATE_HOST`，建置 debug APK，然後執行：
+
+```bash
+./scripts/serve-dev-update.sh           # 在背景啟動；每次建置後都可安全地重新執行
+./scripts/serve-dev-update.sh --status  # 另有 --stop 與 --foreground
+```
+
+檔案只會在秘密路徑下提供，建置時也會把這個路徑寫入 App，因此網路上的其他人找不到 debug APK。秘密只產生一次，之後每次建置都相同。在有這個秘密之前安裝的 debug 版仍會詢問舊位址，所以請在建置後執行一次 `./scripts/serve-dev-update.sh --migrate`，讓手機完成更新，再執行一般指令。不需要重新安裝。詳見[發布指南](docs/RELEASING.md)。
+
 發布：
 
 ```bash

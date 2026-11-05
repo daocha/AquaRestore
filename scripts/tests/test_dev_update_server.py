@@ -13,7 +13,7 @@ import time
 import unittest
 
 PROJECT = Path(__file__).resolve().parents[2]
-SECRET = "0123456789abcdef0123456789abcdef"
+PATH_TOKEN = "0123456789abcdef0123456789abcdef"
 APK = "AquaRestore-debug-7.apk"
 
 
@@ -41,10 +41,10 @@ class Project:
         self.port = free_port()
         (self.root / ".env").write_text(
             f"AQUARESTORE_DEV_UPDATE_HOST=127.0.0.1\nAQUARESTORE_DEV_UPDATE_PORT={self.port}\n")
-        self.secret_file = self.root / "secret"
-        self.secret_file.write_text(SECRET + "\n")
+        self.token_file = self.root / "secret"
+        self.token_file.write_text(PATH_TOKEN + "\n")
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("AQUARESTORE_")}
-        self.env["AQUARESTORE_DEV_UPDATE_SECRET_FILE"] = str(self.secret_file)
+        self.env["AQUARESTORE_DEV_UPDATE_SECRET_FILE"] = str(self.token_file)
 
     def run(self, *arguments):
         return subprocess.run([self.root / "scripts/serve-dev-update.sh", *arguments], env=self.env,
@@ -78,25 +78,25 @@ class ServerTest(unittest.TestCase):
 
     def test_the_app_gets_its_files_under_the_secret_path(self):
         self.start()
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json"), (200, b'{"versionCode":7}\n'))
-        self.assertEqual(self.project.get(f"/{SECRET}/{APK}"), (200, b"apk-bytes"))
-        self.assertEqual(self.project.get(f"/{SECRET}/AquaRestore-debug-7.SHA256SUMS")[0], 200)
-        self.assertEqual(self.project.get(f"/{SECRET}/{APK}", "HEAD"), (200, b""))
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json"), (200, b'{"versionCode":7}\n'))
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/{APK}"), (200, b"apk-bytes"))
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/AquaRestore-debug-7.SHA256SUMS")[0], 200)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/{APK}", "HEAD"), (200, b""))
 
     def test_strangers_find_nothing(self):
         self.start()
-        for path in ("/", "/latest.json", f"/{APK}", f"/{SECRET}", f"/{SECRET}/", f"/{SECRET[:-1]}0/latest.json",
-                     f"/{SECRET}/notes.txt", f"/{SECRET}/../private.txt", f"/{SECRET}/%2e%2e/private.txt",
-                     f"/{SECRET}//latest.json", f"/{SECRET}/latest.json/x", "/../../etc/passwd"):
+        for path in ("/", "/latest.json", f"/{APK}", f"/{PATH_TOKEN}", f"/{PATH_TOKEN}/", f"/{PATH_TOKEN[:-1]}0/latest.json",
+                     f"/{PATH_TOKEN}/notes.txt", f"/{PATH_TOKEN}/../private.txt", f"/{PATH_TOKEN}/%2e%2e/private.txt",
+                     f"/{PATH_TOKEN}//latest.json", f"/{PATH_TOKEN}/latest.json/x", "/../../etc/passwd"):
             status, body = self.project.get(path)
             self.assertEqual(status, 404, path)
-            self.assertNotIn(SECRET.encode(), body, path)
+            self.assertNotIn(PATH_TOKEN.encode(), body, path)
             self.assertNotIn(b"AquaRestore-debug", body, path)
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json", "POST")[0], 501)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json", "POST")[0], 501)
 
     def test_the_secret_stays_out_of_output_log_and_command_line(self):
         result = self.start()
-        self.project.get(f"/{SECRET}/latest.json")
+        self.project.get(f"/{PATH_TOKEN}/latest.json")
         self.project.get("/not-the-secret")
         time.sleep(0.2)
         log = (self.project.root / "android/dist/dev-update-server.log").read_text()
@@ -104,7 +104,7 @@ class ServerTest(unittest.TestCase):
                                  capture_output=True, text=True).stdout
         self.assertIn("latest.json", log)
         for text in (result.stdout, result.stderr, log, command, self.project.run("--status").stdout):
-            self.assertNotIn(SECRET, text)
+            self.assertNotIn(PATH_TOKEN, text)
 
     def test_running_it_again_is_safe(self):
         self.start()
@@ -112,14 +112,14 @@ class ServerTest(unittest.TestCase):
         again = self.start()
         self.assertIn("Already running", again.stdout)
         self.assertEqual(self.project.pid(), first)
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json")[0], 200)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json")[0], 200)
 
     def test_a_new_build_is_served_without_a_restart(self):
         self.start()
         (self.project.updates / "latest.json").write_text('{"versionCode":8}\n')
         (self.project.updates / "AquaRestore-debug-8.apk").write_bytes(b"newer")
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json")[1], b'{"versionCode":8}\n')
-        self.assertEqual(self.project.get(f"/{SECRET}/AquaRestore-debug-8.apk")[1], b"newer")
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json")[1], b'{"versionCode":8}\n')
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/AquaRestore-debug-8.apk")[1], b"newer")
 
     def test_status_and_stop(self):
         self.assertEqual(self.project.run("--status").returncode, 3)
@@ -136,12 +136,12 @@ class ServerTest(unittest.TestCase):
         self.start("--migrate")
         self.assertEqual(self.project.get("/latest.json")[0], 200)
         self.assertEqual(self.project.get(f"/{APK}")[1], b"apk-bytes")
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json")[0], 200)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json")[0], 200)
         self.assertEqual(self.project.get("/")[0], 404)
         self.assertEqual(self.project.get("/notes.txt")[0], 404)
         self.start()
         self.assertEqual(self.project.get("/latest.json")[0], 404)
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json")[0], 200)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json")[0], 200)
 
     def test_it_replaces_the_old_plain_server_for_this_folder(self):
         # Started by hand, so the command is what the old script ran: python3 -m http.server --bind ... --directory ...
@@ -155,7 +155,7 @@ class ServerTest(unittest.TestCase):
         self.start()
         self.assertEqual(old.wait(timeout=5), old.returncode)
         self.assertEqual(self.project.get("/latest.json")[0], 404)
-        self.assertEqual(self.project.get(f"/{SECRET}/latest.json")[0], 200)
+        self.assertEqual(self.project.get(f"/{PATH_TOKEN}/latest.json")[0], 200)
 
     def test_it_never_stops_another_program_on_the_port(self):
         other = subprocess.Popen([sys.executable, "-m", "http.server", "--bind", "127.0.0.1", str(self.project.port)],
@@ -180,9 +180,9 @@ class ServerTest(unittest.TestCase):
         (self.project.updates / "latest.json").unlink()
         self.assertIn("build the debug APK first", self.project.run().stderr)
         (self.project.updates / "latest.json").write_text("{}\n")
-        self.project.secret_file.unlink()
+        self.project.token_file.unlink()
         self.assertIn("build the debug APK first", self.project.run().stderr)
-        self.project.secret_file.write_text("too short\n")
+        self.project.token_file.write_text("too short\n")
         result = self.project.run()
         self.assertEqual(result.returncode, 1)
         self.assertIn("32-digit", result.stderr)

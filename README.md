@@ -139,6 +139,15 @@ This produces `dist/AquaRestore-debug.apk` and runs the tests and lint by defaul
 
 The release APK checks the latest published GitHub release quietly on app open (at most once every six hours). When a newer version is available, Settings shows a red dot and an **Update now** button. The downloaded APK is checked against its published SHA-256 and Android asks you to approve installation. Debug builds can check for updates over a configured LAN; without that configuration, they have no updater. A separate `playRelease` variant uses Google Play's in-app updates and has no APK-install permission; see the [release guide](docs/RELEASING.md).
 
+To send debug builds to a phone over your LAN, set `AQUARESTORE_DEV_UPDATE_HOST` in `.env`, build the debug APK, then run:
+
+```bash
+./scripts/serve-dev-update.sh           # starts in the background; safe to run again after every build
+./scripts/serve-dev-update.sh --status  # also --stop and --foreground
+```
+
+The files are served only under a secret path that the build also puts in the app, so others on the network cannot find the debug APK. The secret is made once and stays the same across builds. A debug build installed before this secret existed still asks at the old address, so once, after building, run `./scripts/serve-dev-update.sh --migrate`, let the phone update, then run the plain command again. No reinstall is needed. See the [release guide](docs/RELEASING.md).
+
 To release:
 
 ```bash
