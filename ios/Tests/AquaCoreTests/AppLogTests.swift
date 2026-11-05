@@ -13,9 +13,25 @@ final class AppLogTests: XCTestCase {
 
     override func setUp() {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("log-\(UUID().uuidString)", isDirectory: true)
+        AppLog.enabled = true
         AppLog.start(folder: folder)
     }
-    override func tearDown() { try? FileManager.default.removeItem(at: folder) }
+    override func tearDown() {
+        AppLog.enabled = false
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    func testNothingIsKeptWhileDeveloperToolsAreOff() {
+        AppLog.enabled = false
+        log("AquaRestore: while off")
+        AppLog.write("AquaRestore: written while off")
+        AppLog.progress("export", percent: 1)
+        XCTAssertEqual("", AppLog.read())
+        AppLog.enabled = true
+        log("AquaRestore: while on")
+        XCTAssertTrue(AppLog.read().contains("while on"))
+        XCTAssertFalse(AppLog.read().contains("while off"))
+    }
 
     func testLinesAreReadBack() {
         log("AquaRestore: first")

@@ -103,7 +103,7 @@ class ExportService : Service() {
             startForeground(7, notification(null), type)
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AquaRestore:Export").apply { acquire(6 * 60 * 60 * 1000L) }
         } catch (e: Exception) {
-            android.util.Log.e("AquaRestore", "Could not start export service", e)
+            AppLog.e("Could not start export service", e)
             Exports.request = null
             Exports.status.value = ExportStatus(error = "exportFailed", batch = batch)
             stopSelf(startId)
@@ -121,7 +121,7 @@ class ExportService : Service() {
                 // A timeout is reported as a failure, so the user is told why it stopped, also by notification.
                 terminal = if (timedOut) ExportStatus(error = "timedOut") else ExportStatus(stage = "cancelled")
             } catch (e: Exception) {
-                android.util.Log.e("AquaRestore", "Export failed", e)
+                AppLog.e("Export failed", e)
                 terminal = ExportStatus(error = (e as? MediaProblem)?.key ?: "exportFailed")
             } finally {
                 Exports.request = null
@@ -131,7 +131,7 @@ class ExportService : Service() {
                 stopSelf(startId)
                 // Sent before the status changes; the system still shows it a moment later, asynchronously.
                 if (!Exports.appVisible) try { notifyResult(terminal.copy(batch = batch)) }
-                    catch (e: Exception) { android.util.Log.w("AquaRestore", "Could not post the export result", e) }
+                    catch (e: Exception) { AppLog.w("Could not post the export result", e) }
                 ComparisonWork.finish(terminal.copy(batch = batch))
             }
         }
@@ -197,7 +197,7 @@ class ExportService : Service() {
                 batch = batch!!.copy(saved = batch!!.saved + saved)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
-                android.util.Log.w("AquaRestore", "Batch photo failed", e)
+                AppLog.w("Batch photo failed", e)
                 batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
                     (e as? MediaProblem)?.key ?: if (reading) "photoUnreadable" else "exportFailed"))
             } catch (_: OutOfMemoryError) {
@@ -243,7 +243,7 @@ class ExportService : Service() {
                 batch = batch!!.copy(saved = batch!!.saved + saved)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
-                android.util.Log.w("AquaRestore", "Batch video failed", e)
+                AppLog.w("Batch video failed", e)
                 batch = batch!!.copy(failures = batch!!.failures + PhotoExportFailure(batch!!.currentName!!,
                     (e as? MediaProblem)?.key ?: if (reading) "videoUnreadable" else "exportFailed"))
             }

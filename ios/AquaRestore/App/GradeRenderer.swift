@@ -220,6 +220,13 @@ enum FrameProbe {
     private static let lock = NSLock()
     private static var logged = 0
     private static var requested = 0
+    private static var on = false
+
+    /// Follows developer tools. While it is off no frame is read back or saved.
+    static var enabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return on }
+        set { lock.lock(); on = newValue; lock.unlock() }
+    }
 
     /// A new video starts counting again, so every clip gets its own first frames in the log.
     static func reset() { lock.lock(); logged = 0; requested = 0; lock.unlock() }
@@ -236,8 +243,8 @@ enum FrameProbe {
     /// The first three frames, then one in sixty for the first fifteen seconds' worth, with the video time they are for:
     /// a picture that does not change shows up as the same numbers at different times.
     static func log(source: CVPixelBuffer, output: CVPixelBuffer, hdr: HdrMode, time: Double) {
-        lock.lock(); logged += 1; let mine = logged; lock.unlock()
-        guard mine <= 3 || (mine % 60 == 0 && mine <= 900) else { return }
+        lock.lock(); logged += 1; let mine = logged; let active = on; lock.unlock()
+        guard active, mine <= 3 || (mine % 60 == 0 && mine <= 900) else { return }
         NSLog("AquaRestore: frame probe \(mine) at \(String(format: "%.2f", time)) s: decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
         // The first frame of each video is saved as a picture, so a garbled preview can be looked at: the decoded frame
         // and the graded one show which of the two went wrong.

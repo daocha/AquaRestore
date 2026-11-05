@@ -136,7 +136,7 @@ object MediaIO {
                 val duration = meta(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
                 val declaredRate = if (track.containsKey(MediaFormat.KEY_FRAME_RATE)) track.getNumber(MediaFormat.KEY_FRAME_RATE)?.toFloat() else null
                 val measuredRate = measuredFrameRate(extractor, tracks.indexOf(track))
-                android.util.Log.i("AquaRestore", "Frame rate: measured $measuredRate, declared $declaredRate")
+                AppLog.i("Frame rate: measured $measuredRate, declared $declaredRate")
                 val frameRate = wholeFrameRate((measuredRate ?: declaredRate)?.takeIf { it.isFinite() && it > 0 } ?: 30f)
                 val trackRate = if (track.containsKey(MediaFormat.KEY_BIT_RATE)) track.getInteger(MediaFormat.KEY_BIT_RATE) else 0
                 val totalRate = meta(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull() ?: 0L
@@ -176,9 +176,9 @@ object MediaIO {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, source.uri)
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.DEBUG && AppLog.enabled) {
                 fun meta(key: Int) = retriever.extractMetadata(key)
-                android.util.Log.i("AquaRestore", "Analysis source: ${source.name} " +
+                AppLog.i("Analysis source: ${source.name} " +
                     "${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)}x${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)} " +
                     "rotation=${meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)} " +
                     "standard=${meta(MediaMetadataRetriever.METADATA_KEY_COLOR_STANDARD)} " +
@@ -202,29 +202,29 @@ object MediaIO {
         if (source.video) {
             videoFrames(context, source) { timeUs, frame ->
                 frames += pixels(frame)
-                if (BuildConfig.DEBUG) described += "at ${timeUs / 1000}ms " + describe(frame, frames.last())
+                if (BuildConfig.DEBUG && AppLog.enabled) described += "at ${timeUs / 1000}ms " + describe(frame, frames.last())
             }
         } else {
             val frame = bitmap(context, source.uri, 192)
             frames += pixels(frame)
-            if (BuildConfig.DEBUG) {
-                android.util.Log.i("AquaRestore", "Analysis source: ${source.name} ${source.width}x${source.height} photo")
+            if (BuildConfig.DEBUG && AppLog.enabled) {
+                AppLog.i("Analysis source: ${source.name} ${source.width}x${source.height} photo")
                 described += describe(frame, frames.last())
             }
             frame.recycle()
         }
         if (frames.isEmpty()) throw MediaProblem("analysisFailed")
         AutoGrade.analyze(frames, hdr = source.keepsHdr).also { analysis ->
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.DEBUG && AppLog.enabled) {
                 // One line per frame keeps each under logcat's line limit.
                 described.forEachIndexed { i, line ->
-                    android.util.Log.i("AquaRestore", "Analysis frame ${i + 1}/${frames.size} $line")
-                    android.util.Log.i("AquaRestore", "Analysis frame ${i + 1} alone: " +
+                    AppLog.i("Analysis frame ${i + 1}/${frames.size} $line")
+                    AppLog.i("Analysis frame ${i + 1} alone: " +
                         describe(AutoGrade.analyze(listOf(frames[i]), hdr = source.keepsHdr).grade))
                 }
-                android.util.Log.i("AquaRestore", "Analysis grade: ${describe(analysis.grade)}")
-                android.util.Log.i("AquaRestore", "Analysis applied: ${describe(analysis.grade.effective())}")
-                android.util.Log.i("AquaRestore", "Analysis cast=${analysis.cast} confidence=${analysis.confidence} redLoss=${analysis.redLoss}")
+                AppLog.i("Analysis grade: ${describe(analysis.grade)}")
+                AppLog.i("Analysis applied: ${describe(analysis.grade.effective())}")
+                AppLog.i("Analysis cast=${analysis.cast} confidence=${analysis.confidence} redLoss=${analysis.redLoss}")
             }
         }
     }
@@ -238,8 +238,8 @@ object MediaIO {
                 DevTools.saveDownload(context, "frames", name, "image/png") {
                     check(frame.compress(Bitmap.CompressFormat.PNG, 100, it))
                 }
-            }.onFailure { android.util.Log.w("AquaRestore", "Analysis frame not saved", it) }.getOrNull()
-            if (path != null) { saved++; android.util.Log.i("AquaRestore", "Analysis frame saved: $path") }
+            }.onFailure { AppLog.w("Analysis frame not saved", it) }.getOrNull()
+            if (path != null) { saved++; AppLog.i("Analysis frame saved: $path") }
         }
         if (source.video) {
             var index = 0
@@ -302,7 +302,7 @@ object MediaIO {
             // Lead-in frames before an edit list's start have negative times, so the end is the track index, not -1.
             while (size < 121 && extractor.sampleTrackIndex >= 0) { add(extractor.sampleTime); extractor.advance() }
         })
-    }.onFailure { android.util.Log.w("AquaRestore", "Frame rate not measured", it) }.getOrNull()
+    }.onFailure { AppLog.w("Frame rate not measured", it) }.getOrNull()
 
     /** One frame from the middle of each of [count] equal slots, for the trim bar. */
     /** One frame near the middle of each of [count] equal slots, for the trim bar. */

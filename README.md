@@ -106,6 +106,8 @@ Choose **Batch restore photos** on the home screen to restore photos without ope
 
 On both platforms, tap the version number in Settings ten times to unlock the developer tools: the log viewer, Save logs and Save analysis frames. They stay on until the next app update, or until switched off in Settings.
 
+The app writes its detailed log only while they are on. To capture a problem, unlock them first and then reproduce it.
+
 - **Android:** saved files go to `Download/AquaRestore-analysis`.
 - **iOS:** saved files go to the Files app under On My iPhone › AquaRestore, in `logs` and `frames`. The log viewer also shows the previous run, so what led up to a crash can still be read after reopening the app.
 

@@ -38,8 +38,8 @@ object DevTools {
     /** Changes with every install or update, including debug builds, whose BuildConfig version code stays fixed. */
     private fun installed(context: Context) = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
     fun enabled(context: Context) = runCatching { prefs(context).getLong(KEY, -1L) == installed(context) }.getOrDefault(false)
-    fun enable(context: Context) = prefs(context).edit().putLong(KEY, installed(context)).apply()
-    fun disable(context: Context) = prefs(context).edit().remove(KEY).apply()
+    fun enable(context: Context) { prefs(context).edit().putLong(KEY, installed(context)).apply(); AppLog.enabled = true }
+    fun disable(context: Context) { prefs(context).edit().remove(KEY).apply(); AppLog.enabled = false }
 
     /** Where saved logs and analysis frames go, in separate folders, so they can be copied off the phone. */
     const val FOLDER = "AquaRestore-analysis"
@@ -71,7 +71,7 @@ object DevTools {
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
         runCatching {
             saveDownload(context, "logs", "AquaRestore-log-$stamp.txt", "text/plain") { it.write((header() + text).toByteArray()) }
-        }.onFailure { android.util.Log.w("AquaRestore", "Log not saved", it) }.getOrNull()
+        }.onFailure { AppLog.w("Log not saved", it) }.getOrNull()
     }
 
     private fun header() = "AquaRestore ${BuildConfig.VERSION_NAME} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · " +

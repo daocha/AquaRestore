@@ -2,8 +2,10 @@ import Foundation
 import os
 
 /// Every `NSLog` in this module also goes to `AppLog`, without changing the places that log. Only the finished message
-/// is passed on, so a stray percent sign in a file name or error cannot be read as a format specifier.
+/// is passed on, so a stray percent sign in a file name or error cannot be read as a format specifier. The parameters have
+/// to match Foundation's exactly, or calls to this become ambiguous. While developer tools are off nothing is written.
 func NSLog(_ format: String, _ arguments: CVarArg...) {
+    guard AppLog.enabled else { return }
     let message = arguments.isEmpty ? format : String(format: format, arguments: arguments)
     AppLog.write(message)
     Foundation.NSLog("%@", message)
@@ -19,6 +21,13 @@ enum AppLog {
     private static var size = 0
     private static var lastProgress: [String: Date] = [:]
     private static let limit = 4_000_000
+    private static var on = false
+
+    /// Follows developer tools. While it is off nothing is written or printed, as on Android.
+    static var enabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return on }
+        set { lock.lock(); on = newValue; lock.unlock() }
+    }
 
     private static var current: URL { folder.appendingPathComponent("current.log") }
     private static var previous: URL { folder.appendingPathComponent("previous.log") }
@@ -43,12 +52,13 @@ enum AppLog {
 
     static func write(_ message: String) {
         lock.lock(); defer { lock.unlock() }
-        append(message)
+        if on { append(message) }
     }
 
     /// At most one line every five seconds for each running export, with the free memory.
     static func progress(_ label: String, percent: Int, now: Date = Date()) {
         lock.lock(); defer { lock.unlock() }
+        guard on else { return }
         if let last = lastProgress[label], now.timeIntervalSince(last) < 5 { return }
         lastProgress[label] = now
         append("AquaRestore: \(label) at \(percent)%\(memory)")

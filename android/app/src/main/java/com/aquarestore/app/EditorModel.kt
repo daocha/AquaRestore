@@ -175,7 +175,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                     launch {
                         try { filmstrip.value = MediaIO.filmstrip(context, playable, media.durationMs, 10) }
                         catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { android.util.Log.w("AquaRestore", "Filmstrip unavailable", e) }
+                        catch (e: Exception) { AppLog.w("Filmstrip unavailable", e) }
                     }
                     if (proxy == null) launch { planProxy(media, live) }
                 } else {
@@ -185,7 +185,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) { copy?.delete(); throw e }
             catch (e: Exception) {
                 copy?.delete()
-                android.util.Log.e("AquaRestore", "Import failed", e)
+                AppLog.e("Import failed", e)
                 source.value = null
                 analysis.value = null
                 error.value = (e as? MediaProblem)?.key ?: "importFailed"
@@ -201,7 +201,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun planProxy(media: SourceMedia, live: LivePreview) {
         val hold = media.toneMapped || live == LivePreview.COPY
-        android.util.Log.i("AquaRestore", "Preview " + (if (hold) "waits for a copy" else if (previewGradeEdge > 0)
+        AppLog.i("Preview " + (if (hold) "waits for a copy" else if (previewGradeEdge > 0)
             "plays the original, graded at up to ${previewGradeEdge}px" else "plays the original") +
             (if (media.toneMapped) " (tone-mapped HDR)" else "") + "\n" + withContext(Dispatchers.IO) { MediaIO.liveDecodeReport(media) })
         if (hold || maxOf(media.width, media.height) > 3840) buildProxy(media, hold)
@@ -233,7 +233,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
         catch (e: Exception) {
             // The original keeps playing; a proxy is only an optimization.
             file.delete()
-            android.util.Log.w("AquaRestore", "Preview proxy unavailable", e)
+            AppLog.w("Preview proxy unavailable", e)
         } finally { if (hold) previewPreparing.value = null }
     }
 
@@ -252,10 +252,10 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
                 musicLoading.value = false
                 musicEnvelope.value = try { Soundtrack.envelope(context, track) }
                     catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { android.util.Log.w("AquaRestore", "Waveform unavailable", e); null }
+                    catch (e: Exception) { AppLog.w("Waveform unavailable", e); null }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
-                android.util.Log.e("AquaRestore", "Music import failed", e)
+                AppLog.e("Music import failed", e)
                 error.value = (e as? MediaProblem)?.key ?: "noAudio"
             } finally { musicLoading.value = false }
         }
@@ -350,7 +350,7 @@ class EditorModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 // Full screen keeps the preview; a sharper copy is only an improvement.
-                android.util.Log.w("AquaRestore", "Full-screen detail unavailable", e)
+                AppLog.w("Full-screen detail unavailable", e)
             }
         }
     }
