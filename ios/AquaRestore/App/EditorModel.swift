@@ -77,6 +77,9 @@ final class EditorModel: ObservableObject {
     private var musicTask: Task<Void, Never>?
     private var batchTask: Task<Void, Never>?
     private var backgroundTasks: [Task<Void, Never>] = []
+    /// The preview copy still to be made, kept so that it can restart after an export pauses it.
+    private var pendingPreviewCopy: (media: SourceMedia, hold: Bool)?
+    private var previewCopyTask: Task<Void, Never>?
     private var sourceFolder: URL?
     private var musicFolder: URL?
     private var exportStatusObserver: AnyCancellable?
@@ -90,6 +93,7 @@ final class EditorModel: ObservableObject {
         try? FileManager.default.removeItem(at: Self.importRoot)
         exportStatusObserver = Exports.shared.$status.map(\.busy).removeDuplicates().sink { [weak self] busy in
             if !busy { self?.removeUnusedFolders() }
+            self?.exportBusyChanged(busy)
         }
     }
 
@@ -183,6 +187,7 @@ final class EditorModel: ObservableObject {
         error = nil
         previewURL = nil
         previewPreparing = nil
+        pendingPreviewCopy = nil
         previewOriginal = nil
         previewOriginalImage = nil
         previewGraded = nil
@@ -210,16 +215,16 @@ final class EditorModel: ObservableObject {
                 self.setGrade(recommended.grade)
                 if media.video {
                     // Play the original straight away when the decoder can keep up; the grade is a live GPU effect.
-                    let (live, measured) = await MediaIO.livePreview(media)
+                    let (live, measured) = await MediaIO.livePreview(media, availableMemory: AppLog.availableMemory)
                     try Task.checkCancellation()
                     let hold = live == .copy
                     NSLog("AquaRestore: preview \(hold ? "waits for a copy" : live == .reduced ? "plays the original, graded at up to \(LivePreview.reducedEdge)px" : "plays the original")" +
-                          " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))")
+                          " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))\(AppLog.memory)")
                     if hold { self.previewPreparing = 0 }
                     self.previewURL = media.url
                     self.player.load(media, gradeEdge: live == .full ? 0 : LivePreview.reducedEdge)
                     if hold || max(media.width, media.height) > 3840 {
-                        self.backgroundTasks.append(Task { [weak self] in await self?.buildPreviewCopy(media, hold: hold) })
+                        self.startPreviewCopy(media, hold: hold)
                     }
                     // Thumbnails are built in the background and never hold up the editor.
                     self.backgroundTasks.append(Task { [weak self] in
@@ -251,6 +256,29 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// An export needs the decoder and memory the copy would use, so the copy waits and starts again afterwards.
+    private func exportBusyChanged(_ busy: Bool) {
+        if busy {
+            previewCopyTask?.cancel()
+        } else if let pending = pendingPreviewCopy, source?.url == pending.media.url {
+            startPreviewCopy(pending.media, hold: pending.hold)
+        }
+    }
+
+    private func startPreviewCopy(_ media: SourceMedia, hold: Bool) {
+        pendingPreviewCopy = (media, hold)
+        previewCopyTask?.cancel()
+        previewCopyTask = nil
+        guard !Exports.shared.status.busy else { return }
+        if hold { previewPreparing = 0 }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.buildPreviewCopy(media, hold: hold)
+        }
+        previewCopyTask = task
+        backgroundTasks.append(task)
+    }
+
     /// Re-encodes a lighter, ungraded 1080p copy with the original timeline, so trim and music stay aligned, then swaps
     /// the player to it at the same position. Export keeps reading the original. A copy is only an optimization: if it
     /// fails, the original plays.
@@ -279,6 +307,7 @@ final class EditorModel: ObservableObject {
             copy.url = file
             copy.fps = min(media.fps, 30)
             playbackPositionMs = player.playhead
+            pendingPreviewCopy = nil
             previewPreparing = nil
             previewURL = file
             player.load(copy)
@@ -287,6 +316,7 @@ final class EditorModel: ObservableObject {
             if error is CancellationError { return }
             NSLog("AquaRestore: preview copy unavailable: \(error)")
             guard source?.url == media.url else { return }
+            pendingPreviewCopy = nil
             previewPreparing = nil
             if hold && playbackWanted && !Exports.shared.status.busy { player.play() }
         }
@@ -433,6 +463,7 @@ final class EditorModel: ObservableObject {
         analysis = nil
         previewURL = nil
         previewPreparing = nil
+        pendingPreviewCopy = nil
         previewOriginal = nil
         previewOriginalImage = nil
         previewGraded = nil

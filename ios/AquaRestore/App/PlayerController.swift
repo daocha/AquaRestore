@@ -24,6 +24,8 @@ final class PlayerController: ObservableObject {
     private var itemObservers: [AnyCancellable] = []
     private var originalBoost = GainBox()
     private var musicBoost = GainBox()
+    private var originalAudio: AVAssetTrack?
+    private var musicAudio: AVAssetTrack?
     private var musicPlayer: AVPlayer?
     private var musicEnd: AnyCancellable?
     private var appActive = true
@@ -38,10 +40,24 @@ final class PlayerController: ObservableObject {
     init(model: EditorModel) {
         self.model = model
         AppActivity.observe()
+        // The default audio category goes silent with the Ring/Silent switch, which should not mute a video being edited.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch { NSLog("AquaRestore: audio session unavailable: \(error)") }
         let center = NotificationCenter.default
         observers = [
             center.publisher(for: Notification.Name("UIApplicationWillResignActiveNotification")).sink { [weak self] _ in self?.resignActive() },
             center.publisher(for: Notification.Name("UIApplicationDidBecomeActiveNotification")).sink { [weak self] _ in self?.becomeActive() },
+            center.publisher(for: Notification.Name("UIApplicationDidReceiveMemoryWarningNotification")).sink { _ in
+                NSLog("AquaRestore: memory warning\(AppLog.memory)")
+            },
+            center.publisher(for: AVAudioSession.interruptionNotification).sink { note in
+                NSLog("AquaRestore: audio interrupted: \(note.userInfo?[AVAudioSessionInterruptionTypeKey] ?? "unknown")")
+            },
+            center.publisher(for: AVAudioSession.routeChangeNotification).sink { _ in
+                NSLog("AquaRestore: audio route: \(AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName))")
+            },
             model.$speed.sink { [weak self] value in self?.speed = value; self?.applyRate() },
             model.$originalVolume.sink { [weak self] value in self?.setOriginalVolume(value) },
             model.$musicVolume.sink { [weak self] value in self?.setMusicVolume(value) },
@@ -93,12 +109,7 @@ final class PlayerController: ObservableObject {
                 let item = AVPlayerItem(asset: asset)
                 item.videoComposition = composition
                 item.audioTimePitchAlgorithm = .spectral
-                // Volumes above 100% go through a boost stage in the audio pipeline; AVPlayer's own volume stops at 1.
-                if let audio {
-                    let mix = AVMutableAudioMix()
-                    mix.inputParameters = [GainTap.parameters(audio, self.originalBoost)]
-                    item.audioMix = mix
-                }
+                self.originalAudio = audio
                 let player = AVPlayer(playerItem: item)
                 player.actionAtItemEnd = .none
                 self.item = item
@@ -140,7 +151,25 @@ final class PlayerController: ObservableObject {
     private func watchStart(_ item: AVPlayerItem, _ media: SourceMedia) async {
         try? await Task.sleep(nanoseconds: 2_500_000_000)
         guard let player, self.item === item else { return }
-        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(model.gradeState.requests) error=\(String(describing: item.error))")
+        NSLog("AquaRestore: playback check hdr=\(media.hdr.rawValue) rate=\(player.rate) time=\(player.currentTime().seconds)s status=\(item.status.rawValue) frame requests=\(model.gradeState.requests) error=\(String(describing: item.error))\(AppLog.memory)")
+        logAudio(player, item)
+        // Again once it has had time to play, since the first check can come before any sound.
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        if self.player === player, self.item === item { logAudio(player, item) }
+    }
+
+    /// What the output path looks like, for when a preview plays without sound. Above 100% volume, no deliveries means
+    /// the file's audio is not reaching the pipeline, and a zero peak means it is silent there.
+    private func logAudio(_ player: AVPlayer, _ item: AVPlayerItem) {
+        let session = AVAudioSession.sharedInstance()
+        let tracks = item.tracks.filter { $0.assetTrack?.mediaType == .audio }
+        // Deliveries and peak stay at zero until the boost stage is added, at volumes above 100%.
+        NSLog("AquaRestore: audio check tracks=\(tracks.count) enabled=\(tracks.filter(\.isEnabled).count) mix=\(item.audioMix != nil) " +
+              "volume=\(player.volume) muted=\(player.isMuted) rate=\(player.rate) gain=\(originalBoost.gain) " +
+              "deliveries=\(originalBoost.deliveries) peak=\(originalBoost.peak) " +
+              "category=\(session.category.rawValue) mode=\(session.mode.rawValue) output=\(session.outputVolume) " +
+              "otherAudio=\(session.isOtherAudioPlaying) route=\(session.currentRoute.outputs.map(\.portName))")
+        originalBoost.peak = 0
     }
 
     func unload() {
@@ -150,6 +179,7 @@ final class PlayerController: ObservableObject {
         player?.pause()
         player = nil
         item = nil
+        originalAudio = nil
         playhead = 0
         durationMs = 0
         aspect = nil
@@ -249,6 +279,16 @@ final class PlayerController: ObservableObject {
     private func setOriginalVolume(_ value: Float) {
         player?.volume = min(value, 1)
         originalBoost.gain = max(value, 1)
+        if value > 1 { installBoost(on: item, originalAudio, originalBoost) }
+    }
+
+    /// AVPlayer's own volume stops at 1, so volumes above 100% go through a boost stage in the audio pipeline. It is only
+    /// added once needed: at normal volume the audio takes the same plain path as Photos and an unchanged export.
+    private func installBoost(on item: AVPlayerItem?, _ track: AVAssetTrack?, _ box: GainBox) {
+        guard let item, let track, item.audioMix == nil else { return }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = [GainTap.parameters(track, box)]
+        item.audioMix = mix
     }
 
     // MARK: Trim
@@ -357,14 +397,14 @@ final class PlayerController: ObservableObject {
         musicEnd = nil
         guard let track else { return }
         musicBoost = GainBox()
+        musicAudio = nil
         let item = AVPlayerItem(url: track.url)
         let boost = musicBoost
         Task { [weak self] in
             let asset = AVURLAsset(url: track.url)
             guard let audio = try? await asset.loadTracks(withMediaType: .audio).first, let self, self.musicBoost === boost else { return }
-            let mix = AVMutableAudioMix()
-            mix.inputParameters = [GainTap.parameters(audio, boost)]
-            item.audioMix = mix
+            self.musicAudio = audio
+            if self.model.musicVolume > 1 { self.installBoost(on: item, audio, boost) }
         }
         let player = AVPlayer(playerItem: item)
         player.actionAtItemEnd = .none
@@ -378,6 +418,7 @@ final class PlayerController: ObservableObject {
     private func setMusicVolume(_ value: Float) {
         musicPlayer?.volume = min(value, 1)
         musicBoost.gain = max(value, 1)
+        if value > 1 { installBoost(on: musicPlayer?.currentItem, musicAudio, musicBoost) }
     }
 
     private func syncMusic(_ position: Int64, _ range: MsRange) {

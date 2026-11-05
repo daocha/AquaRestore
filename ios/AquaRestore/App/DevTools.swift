@@ -1,5 +1,4 @@
 import Foundation
-import OSLog
 
 /// Hidden developer tools, as on Android: unlocked by tapping the version in Settings ten times, and on until
 /// the next install or update, or until switched off. For now they only show Batch restore videos.
@@ -47,37 +46,15 @@ enum DevFiles {
     }
 }
 
-/// This app's own log lines, as on Android: everything it logged since it started, or since the last Clear.
+/// This app's own log lines: everything it logged since it started and in the run before, or since the last Clear.
 enum DevLog {
     /// Sharing and the clipboard pass text through the system, which slows down badly with very large text.
     static let shareLimit = 400_000
-    private static let lock = NSLock()
-    private static var _clearedAt: Date?
-
-    /// An app cannot erase the system log, so clearing hides everything written before now.
-    static func clear() { lock.lock(); _clearedAt = Date(); lock.unlock() }
-    private static var clearedAt: Date? { lock.lock(); defer { lock.unlock() }; return _clearedAt }
+    /// Removes the log files, including what the last run left.
+    static func clear() { AppLog.clear() }
 
     static func read() async -> String {
-        await Task.detached(priority: .userInitiated) { () -> String in
-            do {
-                let store = try OSLogStore(scope: .currentProcessIdentifier)
-                let since = clearedAt
-                let position = since.map { store.position(date: $0) }
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
-                // The app writes every line with NSLog, starting with its name, as Android logs under its tag.
-                let lines = try store.getEntries(at: position).compactMap { entry -> String? in
-                    guard let log = entry as? OSLogEntryLog, log.composedMessage.hasPrefix("AquaRestore") else { return nil }
-                    if let since, log.date < since { return nil }
-                    return "\(formatter.string(from: log.date)) \(log.composedMessage)"
-                }
-                return lines.suffix(3000).joined(separator: "\n")
-            } catch {
-                return "Could not read the log: \(error)"
-            }
-        }.value
+        await Task.detached(priority: .userInitiated) { AppLog.read() }.value
     }
 
     static var header: String {
