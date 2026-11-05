@@ -43,6 +43,15 @@ When you tap **Invite**, the invite text is copied to your clipboard and the sys
 
 Language, theme, editing preferences and your saved referral state are stored on your device. The developer has no access to the copy on your device; the referral service keeps its own records as described above. You control the original media and exported copies; removing the app does not remove files saved to Photos, shared storage, other apps or cloud providers. Delete those copies from their respective locations if you no longer want them.
 
+## Developer tools
+
+Developer tools are hidden and off until you unlock them by tapping the version number in Settings ten times. They are meant for reporting problems. While they are off, the app writes no log and saves no analysis pictures.
+
+While they are on, the app keeps a log on your device, which can include the names of your files. Saved logs and analysis pictures are copies of your data: the pictures show your photos and videos at full quality. Nothing is sent to the developer unless you choose to share it.
+
+- **Android:** logs and analysis frames are saved when you tap the button for them, to `Download/AquaRestore-analysis` in shared storage. Other apps with access to that storage, and anyone using a file manager on the device, may be able to read them. They remain after you turn developer tools off or remove the app, until you delete them.
+- **iOS:** logs and analysis frames are saved to the app's Documents folder, shown in the Files app as On My iPhone › AquaRestore. While developer tools are on, the app can also save pictures of video frames there on its own during playback. They remain after you turn developer tools off, until you delete them or remove the app.
+
 ## Children
 
 AquaRestore is not directed at children and does not knowingly collect children's personal information. It provides no advertising or tracking. The app does not ask for anyone's age, so the device identifier described above is handled the same way for every install.
