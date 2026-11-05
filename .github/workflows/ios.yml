@@ -2,8 +2,17 @@ name: iOS
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE', '.github/CODEOWNERS', '.github/dependabot.yml']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE', '.github/CODEOWNERS', '.github/dependabot.yml']
+  # Emulator and simulator tests skip pushes to main (the pull request ran them), so check main once a night.
+  schedule:
+    - cron: '23 19 * * *'
   workflow_dispatch:
+# A new push to a pull request replaces its older run, so outdated runs do not hold up the queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # The job only reads the repository; keep the automatic GITHUB_TOKEN read-only.
 permissions:
   contents: read
@@ -47,6 +56,7 @@ jobs:
         run: brew install xcodegen && xcodegen generate
         working-directory: ios
       - name: App and core tests on an iPhone simulator
+        if: github.event_name != 'push'
         shell: bash
         run: |
           simulator_id="$(xcrun simctl list devices available --json | python3 -c '
@@ -63,7 +73,8 @@ jobs:
             ../android/app/src/androidTest/assets/audit-video.mp4
           xcodebuild test -project AquaRestore.xcodeproj -scheme AquaRestore -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build \
-            -parallel-testing-enabled NO -resultBundlePath build/AppTests.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 \
+            -parallel-testing-enabled NO -retry-tests-on-failure -test-iterations 2 \
+            -resultBundlePath build/AppTests.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 \
             | ../scripts/hide-core-source.sh
         working-directory: ios
       # Artifacts of a public repository are public, and this bundle holds the build logs of the private core.

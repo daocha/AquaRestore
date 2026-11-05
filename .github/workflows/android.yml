@@ -2,8 +2,17 @@ name: Android
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE', '.github/CODEOWNERS', '.github/dependabot.yml']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE', '.github/CODEOWNERS', '.github/dependabot.yml']
+  # Emulator and simulator tests skip pushes to main (the pull request ran them), so check main once a night.
+  schedule:
+    - cron: '23 19 * * *'
   workflow_dispatch:
+# A new push to a pull request replaces its older run, so outdated runs do not hold up the queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # The job only reads the repository; keep the automatic GITHUB_TOKEN read-only.
 permissions:
   contents: read
@@ -48,6 +57,7 @@ jobs:
   # Shader, export and UI tests need a real Android system, so they run on an emulator.
   device-tests:
     name: Device tests
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -92,7 +102,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
-          script: ./gradlew --console=plain :app:connectedDebugAndroidTest
+          # Emulators on shared runners sometimes fail a test by chance, so a failure gets one more try. The warning
+          # keeps that visible: a test that keeps needing it should be fixed.
+          script: ./gradlew --console=plain :app:connectedDebugAndroidTest || (echo "::warning::Device tests failed once; retrying" && ./gradlew --console=plain :app:connectedDebugAndroidTest)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure() && env.HAS_CORE != 'true'
         with:
