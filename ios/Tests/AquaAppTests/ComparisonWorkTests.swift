@@ -31,6 +31,22 @@ final class ComparisonWorkTests: XCTestCase {
     }
 
     @MainActor
+    func testASkippedComparisonIsNotReportedAsAFailure() throws {
+        defer { ComparisonWork.dismiss(); Exports.shared.status = ExportStatus() }
+        // A file that does not exist ends the work at once, leaving this test to say how.
+        let source = SourceMedia(url: URL(fileURLWithPath: "/nonexistent/skipped.mp4"), name: "skipped.mp4", video: true, width: 160, height: 240)
+        ComparisonWork.reset()
+        let entry = try XCTUnwrap(ComparisonWork.submit(ExportRequest(source: source, grade: .neutral, options: ExportOptions(), chinese: false)))
+        XCTAssertTrue(entry.done)
+        entry.skipped = true
+        ComparisonWork.accept(entry)
+        ComparisonWork.finish(ExportStatus(stage: "saved", saved: true))
+        XCTAssertTrue(Exports.shared.status.saved)
+        XCTAssertFalse(Exports.shared.status.comparisonUnavailable)
+        XCTAssertFalse(Exports.shared.status.comparisonsBusy)
+    }
+
+    @MainActor
     func testActionRowSizeDoesNotChangeWhileSaving() {
         func size(_ working: Bool) -> CGSize {
             let host = UIHostingController(rootView: ComparisonActions(working: working, download: {}, share: {}))

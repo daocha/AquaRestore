@@ -24,14 +24,16 @@ final class LivePreviewTests: XCTestCase {
         XCTAssertEqual(.original, LivePreview.decide(fps: 60, measuredDecodeFps: nil))
     }
 
-    func testAComparisonWaitsOnlyForLargerFramesWithoutRoom() {
+    func testThePreviewGivesWayOnlyWhenTheExportWouldNotFit() {
         let mb: UInt64 = 1_048_576
-        XCTAssertFalse(LivePreview.comparisonWaits(width: 3840, height: 3360, availableMemory: 2_100 * mb))
-        XCTAssertFalse(LivePreview.comparisonWaits(width: 3360, height: 3840, availableMemory: 0))
-        XCTAssertTrue(LivePreview.comparisonWaits(width: 7680, height: 4320, availableMemory: 0))
-        XCTAssertTrue(LivePreview.comparisonWaits(width: 7680, height: 4320, availableMemory: 3_000 * mb))
-        XCTAssertFalse(LivePreview.comparisonWaits(width: 7680, height: 4320, availableMemory: 6_400 * mb))
-        XCTAssertTrue(LivePreview.comparisonWaits(width: 3841, height: 1000, availableMemory: 2_499 * mb))
-        XCTAssertFalse(LivePreview.comparisonWaits(width: 3841, height: 1000, availableMemory: 2_500 * mb))
+        // An iPhone SE (3rd generation): 1059 and 1317 MB free when this export started with the preview open, which failed,
+        // and 2062 MB free before the preview had started, the most it reports.
+        XCTAssertTrue(LivePreview.previewYields(width: 2160, height: 3840, hdr: true, availableMemory: 1_059 * mb))
+        XCTAssertTrue(LivePreview.previewYields(width: 2160, height: 3840, hdr: true, availableMemory: 1_317 * mb))
+        XCTAssertTrue(LivePreview.previewYields(width: 2160, height: 3840, hdr: true, availableMemory: 2_062 * mb))
+        XCTAssertFalse(LivePreview.previewYields(width: 2160, height: 3840, hdr: true, availableMemory: 3_000 * mb))
+        XCTAssertFalse(LivePreview.previewYields(width: 2160, height: 3840, hdr: false, availableMemory: 1_317 * mb))
+        XCTAssertFalse(LivePreview.previewYields(width: 1080, height: 1920, hdr: true, availableMemory: 1_317 * mb))
+        XCTAssertTrue(LivePreview.previewYields(width: 1080, height: 1920, hdr: false, availableMemory: 0))
     }
 }

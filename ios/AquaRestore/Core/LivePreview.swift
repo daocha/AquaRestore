@@ -13,12 +13,19 @@ enum LivePreview: Equatable {
         Double(width) * Double(height) * Double(fps) <= 3840.0 * 2160 * 61
     }
 
-    /// Whether a comparison of a video heavier than 4K60 waits for its export to succeed. Up to a 3840px long edge it runs
-    /// alongside the export, so the result is not held up. Larger frames need room for a second decoder: asking what is
-    /// free rather than which model it is means later iPhones need no changes. The figures are estimates. Zero, where
-    /// the system reports nothing, counts as no room.
-    static func comparisonWaits(width: Int, height: Int, availableMemory: UInt64) -> Bool {
-        max(width, height) > 3840 && availableMemory < max(2_500 * 1_048_576, UInt64(width) * UInt64(height) * 200)
+    /// About what one video being decoded and graded holds: 11 full-size frames, half-float for HDR. The preview of a 4K
+    /// HDR video used 715 to 928 MB on an iPhone SE (3rd generation).
+    static func pipelineMemory(width: Int, height: Int, hdr: Bool) -> UInt64 {
+        UInt64(width) * UInt64(height) * (hdr ? 8 : 4) * 11
+    }
+
+    /// Whether a paused preview gives up its decoder and memory for an export. With the preview, the export and the
+    /// comparison all open on a 4K HDR video, an iPhone SE (3rd generation) had its media service reset within seconds;
+    /// without the preview the export finished. This asks whether three pipelines fit. It is checked before the preview's
+    /// own use counts against it too, and asking what is free rather than which model it is lets larger iPhones keep the
+    /// preview. Zero, where the system reports nothing, counts as no room.
+    static func previewYields(width: Int, height: Int, hdr: Bool, availableMemory: UInt64) -> Bool {
+        availableMemory < pipelineMemory(width: width, height: height, hdr: hdr) * 3
     }
 
     /// iOS declares no decoder limits, so a heavier video is judged by how fast a sample of it decoded: the decoder still
