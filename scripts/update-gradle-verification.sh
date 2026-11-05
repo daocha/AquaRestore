@@ -6,6 +6,12 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 metadata="$root/android/gradle/verification-metadata.xml"
 cd "$root/android"
+# Gradle records only what it downloads, so anything already in its cache would be left out and fail on a clean machine.
+# Start from an empty cache and an empty list, which also takes a few minutes and drops what is no longer used.
+GRADLE_USER_HOME="$(mktemp -d "${TMPDIR:-/tmp}/gradle-verification.XXXXXX")"
+export GRADLE_USER_HOME
+trap 'rm -rf "$GRADLE_USER_HOME"' EXIT
+rm -f "$metadata"
 # An empty backend URL lets the release tasks run whatever the local .env sets. Nothing here is signed or published.
 AQUARESTORE_REFERRAL_BACKEND_URL='' ./gradlew --console=plain --no-daemon --write-verification-metadata sha256 \
   :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest \
