@@ -2,7 +2,6 @@ package com.aquarestore.app
 
 import android.content.Context
 import android.provider.Settings
-import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -94,7 +93,7 @@ object ReferralCampaign {
             }
             if (changed) revision++
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { Log.w("AquaRestore", "Referral registration deferred: ${failure.javaClass.simpleName}") }
+        catch (failure: Exception) { AppLog.w("Referral registration deferred: ${failure.javaClass.simpleName}") }
         finally { registering.set(false) }
     }
     private fun save(context: Context, state: ReferralState, edit: android.content.SharedPreferences.Editor = prefs(context).edit()) {

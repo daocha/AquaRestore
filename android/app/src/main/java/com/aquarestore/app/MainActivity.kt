@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.enabled = DevTools.enabled(this)
         CacheCleanup.onProcessStart(this)
         enableEdgeToEdge()
         setContent { AquaApp() }
@@ -1113,7 +1114,7 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
         // Removed before release: releasing a busy 4K player can time out, which is reported as an error.
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                android.util.Log.e("AquaRestore", "Preview playback failed", error)
+                AppLog.e("Preview playback failed", error)
                 model.error.value = "playbackFailed"
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -1395,7 +1396,7 @@ private fun SettingsDialog(model: EditorModel, s: Strings, update: UpdateUi?, ch
                     scope.launch {
                         val saved = try {
                             runCatching { MediaIO.saveAnalysisFrames(context, media) }
-                                .onFailure { android.util.Log.w("AquaRestore", "Analysis frames not saved", it) }.getOrDefault(0)
+                                .onFailure { AppLog.w("Analysis frames not saved", it) }.getOrDefault(0)
                         } finally { savingFrames = false }
                         android.widget.Toast.makeText(context, if (saved > 0)
                             s.text("Saved $saved frames to Download/${DevTools.FOLDER}/frames", "已儲存 $saved 張畫面至 Download/${DevTools.FOLDER}/frames")

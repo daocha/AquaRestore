@@ -5,6 +5,8 @@ struct AquaRestoreApp: App {
     @StateObject private var model = EditorModel()
     @Environment(\.scenePhase) private var scenePhase
     init() {
+        // Before anything logs, so a run with developer tools on is kept from its first line.
+        _ = DevTools.shared
         AppLog.start()
         ShareMediaMaker.cleanup()
     }

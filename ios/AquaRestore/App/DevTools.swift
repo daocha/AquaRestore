@@ -10,15 +10,24 @@ final class DevTools: ObservableObject {
 
     @Published private(set) var enabled: Bool
 
-    private init() { enabled = UserDefaults.standard.string(forKey: Self.key) == Self.installed }
+    private init() {
+        enabled = UserDefaults.standard.string(forKey: Self.key) == Self.installed
+        Self.apply(enabled)
+    }
+
+    /// The log, and the frame pictures saved beside it, follow these tools.
+    private static func apply(_ on: Bool) {
+        AppLog.enabled = on
+        FrameProbe.enabled = on
+    }
 
     /// Changes with every install or update, including debug builds, whose version numbers stay fixed: iOS puts
     /// each installation in a new container, so the app's path changes. A file's date would not change when the
     /// same build is installed again.
     private static var installed: String { Bundle.main.bundlePath }
 
-    func enable() { UserDefaults.standard.set(Self.installed, forKey: Self.key); enabled = true }
-    func disable() { UserDefaults.standard.removeObject(forKey: Self.key); enabled = false }
+    func enable() { UserDefaults.standard.set(Self.installed, forKey: Self.key); enabled = true; Self.apply(true) }
+    func disable() { UserDefaults.standard.removeObject(forKey: Self.key); enabled = false; Self.apply(false) }
 
     nonisolated static var version: String {
         let info = Bundle.main.infoDictionary ?? [:]

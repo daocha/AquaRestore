@@ -43,8 +43,8 @@ object ShareMediaMaker {
                 result += video(context, request)
             }
         } catch (e: CancellationException) { result.forEach { it.file.delete() }; throw e }
-        catch (e: Exception) { android.util.Log.w("AquaRestore", "Comparison preview unavailable", e) }
-        catch (_: OutOfMemoryError) { android.util.Log.w("AquaRestore", "Comparison preview needs too much memory") }
+        catch (e: Exception) { AppLog.w("Comparison preview unavailable", e) }
+        catch (_: OutOfMemoryError) { AppLog.w("Comparison preview needs too much memory") }
         finally {
             parallelMovie?.let { movie ->
                 if (result.none { it.video }) {
@@ -120,7 +120,7 @@ object ShareMediaMaker {
         } catch (e: TimeoutCancellationException) {
             file.delete(); android.util.Log.w("AquaRestore", "Comparison video stopped by its 60-second limit"); return emptyList()
         } catch (e: CancellationException) { file.delete(); throw e }
-        catch (e: Exception) { file.delete(); android.util.Log.w("AquaRestore", "Comparison video unavailable", e); return emptyList() }
+        catch (e: Exception) { file.delete(); AppLog.w("Comparison video unavailable", e); return emptyList() }
         finally { mark.recycle() }
     }
 
