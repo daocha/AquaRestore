@@ -26,12 +26,15 @@ AquaRestore is public. Its tuned color grading is not: it lives in the private
 
 ## Changing the core
 
-1. In `core/`: `git switch main && git pull`, make the change, run the tests, commit, and push to
-   AquaRestore-Core. Core is private, so it has no branch rules.
-2. Here: `git add core` and commit the new pointer on a branch. `main` is protected, so open a pull
+1. In `core/`: `git switch main && git pull`, create a branch, make the change, run the tests, commit, push
+   the branch and open a pull request on AquaRestore-Core. Every core change goes through a pull request,
+   and core's pre-push hook refuses a direct push to `main`.
+2. After it is merged, in `core/`: `git switch main && git pull`.
+3. Here: `git add core` and commit the new pointer on a branch. `main` is protected, so open a pull
    request for every change in this repository.
 
-Order matters: a pointer to a core commit that is not pushed breaks CI and every other clone.
+Order matters: a pointer to a core commit that is not on core's `main` breaks CI and every other clone once
+its branch is gone, because merging can replace a branch's commits.
 After `git pull`, run `git submodule update`, because pulling does not move `core/`.
 
 ## Building and testing
