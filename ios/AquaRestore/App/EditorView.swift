@@ -311,7 +311,6 @@ struct EditorView: View {
                                 MText(s.text("Your export is saved. Keep AquaRestore open while comparison previews finish.", "作品已儲存，請保持 AquaRestore 開啟，等待比較預覽完成。")) }
                         }
                         if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
-                        if export.comparisonUnavailable { MText(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。")) }
                         if let batch = export.batch {
                             ScrollIfNeeded(maxHeight: 320) {
                                 VStack(alignment: .leading, spacing: 12) {

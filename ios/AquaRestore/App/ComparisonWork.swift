@@ -4,11 +4,10 @@ import UIKit
 @MainActor
 enum ComparisonWork {
     final class Entry {
-        var expected = 2
         var accepted = false
         var rejected = false
         var done = false
-        /// Left out on purpose, so the user does not wait for it. Nothing is shown for it, since it is not a failure.
+        /// Left out on purpose, so the user does not wait for it. The result then shows only the saved export.
         var skipped = false
         /// It will not run during the export, so `accept` decides at once whether it runs afterwards.
         var postponed = false
@@ -44,7 +43,7 @@ enum ComparisonWork {
     }
     static func submit(_ request: ExportRequest) -> Entry? {
         guard let owner = session, owner.entries.filter({ !$0.rejected }).count < 2 else { return nil }
-        let entry = Entry(); entry.expected = request.source.video ? 1 : 2; owner.entries.append(entry)
+        let entry = Entry(); owner.entries.append(entry)
         if request.source.video {
             entry.clipMs = SharingPlan.clip(Int64(Double(request.options.trimmedMs(request.source.durationMs)) / Double(request.options.speed))).length
         }
@@ -209,7 +208,6 @@ enum ComparisonWork {
         let entries = owner.entries.filter { $0.accepted && !$0.rejected }
         terminal.comparisons = entries.flatMap(\.previewAssets)
         terminal.comparisonsBusy = entries.contains { !$0.done && !$0.skipped }
-        terminal.comparisonUnavailable = entries.contains { $0.done && !$0.skipped && $0.assets.count < $0.expected }
         Platform.keepScreenAwake(terminal.busy || terminal.comparisonsBusy)
         Exports.shared.status = terminal
     }
