@@ -15,7 +15,7 @@ final class DevTools: ObservableObject {
         Self.apply(enabled)
     }
 
-    /// The log, and the frame pictures saved beside it, follow these tools.
+    /// The log, and the frame measurements written to it, follow these tools.
     private static func apply(_ on: Bool) {
         AppLog.enabled = on
         FrameProbe.enabled = on

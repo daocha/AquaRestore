@@ -50,7 +50,7 @@ Developer tools are hidden and off until you unlock them by tapping the version 
 While they are on, the app keeps a log on your device, which can include the names of your files. Saved logs and analysis pictures are copies of your data: the pictures show your photos and videos at full quality. Nothing is sent to the developer unless you choose to share it.
 
 - **Android:** logs and analysis frames are saved when you tap the button for them, to `Download/AquaRestore-analysis` in shared storage. Other apps with access to that storage, and anyone using a file manager on the device, may be able to read them. They remain after you turn developer tools off or remove the app, until you delete them.
-- **iOS:** logs and analysis frames are saved to the app's Documents folder, shown in the Files app as On My iPhone › AquaRestore. While developer tools are on, the app can also save pictures of video frames there on its own during playback. They remain after you turn developer tools off, until you delete them or remove the app.
+- **iOS:** logs and analysis frames are saved when you tap the button for them, to the app's Documents folder, shown in the Files app as On My iPhone › AquaRestore. They remain after you turn developer tools off, until you delete them or remove the app. Earlier versions also saved two small pictures of a video frame to a FrameProbe folder there while developer tools were on.
 
 ## Children
 
