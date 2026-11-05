@@ -19,13 +19,17 @@ internal object ReferralIdentity {
     private const val alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     fun deviceId(packageName: String, deviceId: String): String = MessageDigest.getInstance("SHA-256")
         .digest("referral-v1\n$packageName\n$deviceId".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    /** Must match referral_code in the referral server, so a code can be shown before the device registers. */
     fun code(deviceId: String): String {
-        var value = BigInteger(deviceId.take(14), 16)
+        val input = "referral-code-v2\n".toByteArray(Charsets.UTF_8) + deviceId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        var value = BigInteger(1, MessageDigest.getInstance("SHA-256").digest(input).copyOf(7))
         val base = BigInteger.valueOf(62)
         var result = ""
         while (value > BigInteger.ZERO) { val parts = value.divideAndRemainder(base); result = alphabet[parts[1].toInt()] + result; value = parts[0] }
         return result.padStart(10, '0')
     }
+    /** The code the server issued wins: a device registered before this formula, or a rare collision, has a different one. */
+    fun ownCode(identity: String, issued: String?): String = issued ?: code(identity)
     /** Whether a friend's code is worth sending: well formed and not this device's own code. */
     fun acceptable(code: String, ownCode: String): Boolean = Regex("[0-9a-zA-Z]{10}").matches(code) && code != ownCode
     private val labelledCode = Regex("(?:code|推薦碼)\\s*[:：]\\s*([0-9a-zA-Z]{10})(?![0-9a-zA-Z])", RegexOption.IGNORE_CASE)
@@ -46,14 +50,16 @@ internal object ReferralInvite {
             "我的推薦碼：\n$code\n\n下載 App：$appUrl\n然後在「設定 → 邀請朋友」輸入推薦碼。")
 }
 
-internal data class ReferralState(val count: Int, val referredBy: String?, val photo: Boolean, val video: Boolean) {
+internal data class ReferralState(val count: Int, val referredBy: String?, val photo: Boolean, val video: Boolean, val code: String? = null) {
     companion object {
         fun parse(json: JSONObject): ReferralState {
             val count = json.getInt("referralCount")
             require(count >= 0)
             val unlocks = json.getJSONObject("unlocked")
+            val code = if (json.isNull("referralCode")) null else json.getString("referralCode")
+            require(code == null || ReferralIdentity.acceptable(code, ""))
             return ReferralState(count, if (json.isNull("referredByCode")) null else json.getString("referredByCode"),
-                unlocks.getBoolean("batchPhoto"), unlocks.getBoolean("batchVideo"))
+                unlocks.getBoolean("batchPhoto"), unlocks.getBoolean("batchVideo"), code)
         }
     }
 }
@@ -73,7 +79,13 @@ object ReferralCampaign {
         check(!id.isNullOrBlank()) { "Device identity unavailable" }
         return ReferralIdentity.deviceId(context.packageName, id)
     }
-    fun code(context: Context) = ReferralIdentity.code(identity(context))
+    // Tied to the backend and identity: a new backend or device has not seen this registration.
+    private fun registration(context: Context) = BuildConfig.REFERRAL_BACKEND_URL + "\n" + identity(context)
+    fun code(context: Context): String {
+        val saved = prefs(context)
+        val issued = saved.getString("referralCode", null)?.takeIf { saved.getString("referralRegistration", null) == registration(context) }
+        return ReferralIdentity.ownCode(identity(context), issued)
+    }
     fun referredBy(context: Context): String? = prefs(context).getString("referredByCode", null)
     fun count(context: Context) = prefs(context).getInt("referralCount", 0)
     /**
@@ -84,9 +96,9 @@ object ReferralCampaign {
         if (!active || !registering.compareAndSet(false, true)) return
         try {
             val changed = withContext(Dispatchers.IO) {
-                // Tied to the backend and identity: a new backend or device has not seen this registration.
-                val registration = BuildConfig.REFERRAL_BACKEND_URL + "\n" + identity(context)
-                if (prefs(context).getString("referralRegistration", null) == registration) return@withContext false
+                val registration = registration(context)
+                // An install registered before codes were saved registers once more to learn its code.
+                if (prefs(context).getString("referralRegistration", null) == registration && prefs(context).contains("referralCode")) return@withContext false
                 val state = ReferralState.parse(exchange(deviceUrl(context) + "/register", JSONObject()).second)
                 save(context, state, prefs(context).edit().putString("referralRegistration", registration))
                 true
@@ -99,6 +111,7 @@ object ReferralCampaign {
     private fun save(context: Context, state: ReferralState, edit: android.content.SharedPreferences.Editor = prefs(context).edit()) {
         edit.putInt("referralCount", state.count)
         state.referredBy?.let { edit.putString("referredByCode", it) }
+        state.code?.let { edit.putString("referralCode", it) }
         if (state.photo) edit.putBoolean("batchPhotoUnlocked", true)
         if (state.video) edit.putBoolean("batchVideoUnlocked", true)
         check(edit.commit())

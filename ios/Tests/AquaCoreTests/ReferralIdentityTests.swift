@@ -9,10 +9,16 @@ final class ReferralIdentityTests: XCTestCase {
     func testStablePackageScopedIdentityMatchesAndroidAndServer() {
         let identity = ReferralIdentity.deviceID(package: "com.aquarestore.app.debug", deviceID: "example-device")
         XCTAssertEqual("c0601a35a34fdbb2e2301d1aa9eaf67449ebe97535273a9be2b9c35eda096e4a", identity)
-        XCTAssertEqual("40094aXX1F", ReferralIdentity.code(deviceID: identity))
+        XCTAssertEqual("27rmwzCkFT", ReferralIdentity.code(deviceID: identity))
         XCTAssertNotEqual(identity, ReferralIdentity.deviceID(package: "com.aquarestore.app", deviceID: "example-device"))
-        XCTAssertEqual("0000000000", ReferralIdentity.code(deviceID: String(repeating: "0", count: 64)))
-        XCTAssertEqual(10, ReferralIdentity.code(deviceID: String(repeating: "f", count: 64)).count)
+        XCTAssertEqual("1WMXIE6mD6", ReferralIdentity.code(deviceID: String(repeating: "0", count: 64)))
+        XCTAssertEqual("30StFvia8u", ReferralIdentity.code(deviceID: String(repeating: "f", count: 64)))
+    }
+
+    func testTheCodeTheServerIssuedWinsOverTheCalculatedOne() {
+        let identity = String(repeating: "0", count: 64)
+        XCTAssertEqual("1WMXIE6mD6", ReferralIdentity.ownCode(deviceID: identity, issued: nil))
+        XCTAssertEqual("40094aXX1F", ReferralIdentity.ownCode(deviceID: identity, issued: "40094aXX1F"))
     }
 
     func testOnlyWellFormedCodesFromOtherDevicesAreSent() {
