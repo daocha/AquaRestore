@@ -389,9 +389,11 @@ final class PlayerController: ObservableObject {
     /// The clock runs but the compositor is no longer asked for frames, so the picture freezes while the sound goes on.
     /// With an HDR clip in the iOS Simulator this happens when playback starts from the beginning, at the start and again
     /// at each loop; moving the playhead a little ahead and playing starts it again, as a tap on the trim bar does.
+    /// Above normal speed a gap only means the decoder is behind, since it has to read every frame, four times as fast at
+    /// 4×. Jumping would send it back to a keyframe with more to read, and the picture would freeze instead of catching up.
     private func watchForStall(_ player: AVPlayer, _ item: AVPlayerItem, _ position: Int64) {
         let count = model.gradeState.requests
-        guard player.rate != 0, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
+        guard player.rate != 0, speed <= 1, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
             requestsSeen = count; lastRequestAt = Date(); return
         }
         if count != requestsSeen { requestsSeen = count; lastRequestAt = Date(); return }
