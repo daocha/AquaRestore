@@ -41,6 +41,10 @@ enum LivePreview: Equatable {
         availableMemory < pipelineMemory(width: width, height: height, hdr: hdr) * 3
     }
 
+    /// How long the compositor can go without being asked for a frame before playback counts as stuck. Above normal speed
+    /// the decoder can fall behind for a while without being stuck, so it gets longer.
+    static func stallSeconds(speed: Float) -> Double { speed > 1 ? 3 : 1.2 }
+
     /// iOS declares no decoder limits, so a heavier video is judged by how fast a sample of it decoded: the decoder still
     /// reads every full-size frame, so a copy is for one that cannot keep up. If the sample could not be measured, the
     /// original still plays.

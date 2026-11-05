@@ -408,20 +408,27 @@ final class PlayerController: ObservableObject {
     /// The clock runs but the compositor is no longer asked for frames, so the picture freezes while the sound goes on.
     /// With an HDR clip in the iOS Simulator this happens when playback starts from the beginning, at the start and again
     /// at each loop; moving the playhead a little ahead and playing starts it again, as a tap on the trim bar does.
-    /// Above normal speed a gap only means the decoder is behind, since it has to read every frame, four times as fast at
-    /// 4×. Jumping would send it back to a keyframe with more to read, and the picture would freeze instead of catching up.
+    /// Above normal speed the decoder has to read every frame, four times as fast at 4×, so a short gap only means it is behind,
+    /// and an exact jump would send it back to a keyframe with more to read. A longer gap there means the player is stuck, as a
+    /// seek by hand shows by freeing it, so it jumps to the next keyframe, which leaves nothing extra to read.
     private func watchForStall(_ player: AVPlayer, _ item: AVPlayerItem, _ position: Int64) {
         let count = model.gradeState.requests
-        guard player.rate != 0, speed <= 1, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
+        guard player.rate != 0, item.status == .readyToPlay, !model.trimming, appActive, !exporting else {
             requestsSeen = count; lastRequestAt = Date(); return
         }
         if count != requestsSeen { requestsSeen = count; lastRequestAt = Date(); return }
-        guard Date().timeIntervalSince(lastRequestAt) > 1.2 else { return }
+        let limit = LivePreview.stallSeconds(speed: speed)
+        guard Date().timeIntervalSince(lastRequestAt) > limit else { return }
         lastRequestAt = Date()
         let range = model.trim
         let ahead = min(position + 500, max(range.upperBound - 1, range.lowerBound))
-        NSLog("AquaRestore: video stalled at \(position) ms (no frame requested for 1.2 s while playing); jumping to \(ahead) ms and playing")
-        seek(ahead)
+        NSLog("AquaRestore: video stalled at \(position) ms (no frame requested for \(limit) s at \(speed)x, player status \(player.timeControlStatus.rawValue), waiting for \(player.reasonForWaitingToPlay?.rawValue ?? "nothing")); jumping to \(ahead) ms and playing")
+        if speed > 1 {
+            playhead = ahead
+            player.seek(to: CMTime(value: ahead, timescale: 1000), toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+        } else {
+            seek(ahead)
+        }
         play()
     }
 

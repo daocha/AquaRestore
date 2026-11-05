@@ -6,6 +6,13 @@ import XCTest
 #endif
 
 final class LivePreviewTests: XCTestCase {
+    func testFastPlaybackWaitsLongerBeforeCountingAsStuck() {
+        XCTAssertEqual(LivePreview.stallSeconds(speed: 0.5), 1.2)
+        XCTAssertEqual(LivePreview.stallSeconds(speed: 1), 1.2)
+        XCTAssertEqual(LivePreview.stallSeconds(speed: 2), 3)
+        XCTAssertEqual(LivePreview.stallSeconds(speed: 4), 3)
+    }
+
     func testAFailedPreviewGetsOneFreshStartAtATime() {
         let start = Date()
         var retry = PlaybackRetry()
