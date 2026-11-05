@@ -71,8 +71,9 @@ stop_pid() {
 case "$action" in
   status)
     if pid="$(running_pid)"; then
-      printf 'Running on port %s (process %s)%s\n' "$port" "$pid" \
-        "$(case "$(command_of "$pid")" in *--migrate*) printf ', also answering builds from before the secret' ;; esac)"
+      note=''
+      case "$(command_of "$pid")" in *--migrate*) note=', also answering builds from before the secret' ;; esac
+      printf 'Running on port %s (process %s)%s\n' "$port" "$pid" "$note"
       exit 0
     fi
     printf 'Not running.\n'
