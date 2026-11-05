@@ -1,9 +1,5 @@
 <img src="AquaRestore-banner.png" >
 
-[English](README.md) | **繁體中文**
-
-# AquaRestore
-
 [![Release](https://img.shields.io/github/v/release/daocha/AquaRestore?label=release&color=green)](https://github.com/daocha/AquaRestore/releases/latest)
 [![License: PolyForm Strict](https://img.shields.io/badge/license-PolyForm%20Strict%201.0.0-blue)](LICENSE)
 [![Android CI](https://img.shields.io/github/actions/workflow/status/daocha/AquaRestore/android.yml?branch=main&label=Android%20CI&logo=githubactions&logoColor=white)](https://github.com/daocha/AquaRestore/actions/workflows/android.yml)
@@ -13,6 +9,10 @@
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)](ios)
 [![Android](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)](#android-version)
 [![iOS](https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white)](#ios-version)
+
+[English](README.md) | **繁體中文**
+
+# AquaRestore
 
 AquaRestore 提供原生 Android 與 iOS App，還原水下影片與圖片的色彩。所有影像處理均在裝置上完成。
 
