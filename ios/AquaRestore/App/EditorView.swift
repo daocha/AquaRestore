@@ -312,7 +312,6 @@ struct EditorView: View {
                         }
                         if !export.comparisons.isEmpty { SharePreview(items: export.comparisons) }
                         if export.comparisonUnavailable { MText(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。")) }
-                        if export.comparisonSkipped { MText(s.text("Your export is saved. The comparison preview was skipped so you don't have to wait for it.", "作品已儲存。為免讓你久等，已略過比較預覽。")) }
                         if let batch = export.batch {
                             ScrollIfNeeded(maxHeight: 320) {
                                 VStack(alignment: .leading, spacing: 12) {

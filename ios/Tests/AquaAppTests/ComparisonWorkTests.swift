@@ -41,7 +41,7 @@ final class ComparisonWorkTests: XCTestCase {
         entry.skipped = true
         ComparisonWork.accept(entry)
         ComparisonWork.finish(ExportStatus(stage: "saved", saved: true))
-        XCTAssertTrue(Exports.shared.status.comparisonSkipped)
+        XCTAssertTrue(Exports.shared.status.saved)
         XCTAssertFalse(Exports.shared.status.comparisonUnavailable)
         XCTAssertFalse(Exports.shared.status.comparisonsBusy)
     }

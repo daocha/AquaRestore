@@ -174,6 +174,20 @@ final class PlayerController: ObservableObject {
         // Again once it has had time to play, since the first check can come before any sound.
         try? await Task.sleep(nanoseconds: 5_000_000_000)
         if self.player === player, self.item === item { logAudio(player, item) }
+        // Then every five seconds, so a preview that looks slow can be measured rather than guessed at.
+        var seen = model.gradeState.requests
+        var since = Date()
+        while !Task.isCancelled, AppLog.enabled, self.player === player, self.item === item {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if Task.isCancelled { return }
+            let requests = model.gradeState.requests, now = Date()
+            if player.rate != 0 {
+                let shown = item.tracks.first { $0.assetTrack?.mediaType == .video }?.currentVideoFrameRate ?? 0
+                let asked = Double(requests - seen) / max(now.timeIntervalSince(since), 0.001)
+                NSLog("AquaRestore: preview playing at \(player.currentTime().seconds)s: shown \(String(format: "%.1f", shown)) fps, \(String(format: "%.1f", asked)) frames asked for per second, heat level \(ProcessInfo.processInfo.thermalState.rawValue)\(AppLog.memory)")
+            }
+            seen = requests; since = now
+        }
     }
 
     /// What the output path looks like, for when a preview plays without sound. Above 100% volume, no deliveries means

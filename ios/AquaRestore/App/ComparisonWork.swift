@@ -8,7 +8,7 @@ enum ComparisonWork {
         var accepted = false
         var rejected = false
         var done = false
-        /// Left out on purpose, so the user does not wait for it, which is not a failure.
+        /// Left out on purpose, so the user does not wait for it. Nothing is shown for it, since it is not a failure.
         var skipped = false
         /// It will not run during the export, so `accept` decides at once whether it runs afterwards.
         var postponed = false
@@ -210,7 +210,6 @@ enum ComparisonWork {
         terminal.comparisons = entries.flatMap(\.previewAssets)
         terminal.comparisonsBusy = entries.contains { !$0.done && !$0.skipped }
         terminal.comparisonUnavailable = entries.contains { $0.done && !$0.skipped && $0.assets.count < $0.expected }
-        terminal.comparisonSkipped = entries.contains(where: \.skipped)
         Platform.keepScreenAwake(terminal.busy || terminal.comparisonsBusy)
         Exports.shared.status = terminal
     }
