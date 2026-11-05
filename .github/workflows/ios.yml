@@ -14,7 +14,7 @@ jobs:
     env:
       HAS_CORE: ${{ secrets.CORE_DEPLOY_KEY != '' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The tuned grading is a private submodule. Fork PRs get no secrets and build with the basic stub.
       - name: Fetch the private grading core
         if: env.HAS_CORE == 'true'
@@ -81,7 +81,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Use the basic stub core
         run: scripts/use-core-stub.sh
       - name: Generate the Xcode project
