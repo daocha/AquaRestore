@@ -14,7 +14,8 @@ enum ShareMediaMaker {
     static func cleanup() { _ = processCleanup }
     static func remove(_ items: [ShareMedia]) { items.forEach { try? FileManager.default.removeItem(at: $0.url) } }
 
-    static func make(_ request: ExportRequest, onAsset: (@Sendable (ShareMedia) -> Void)? = nil) async -> [ShareMedia] {
+    static func make(_ request: ExportRequest, onAsset: (@Sendable (ShareMedia) -> Void)? = nil,
+                     progress: (@Sendable (Double) -> Void)? = nil) async -> [ShareMedia] {
         guard request.source.width >= 2, request.source.height >= 2 else { return [] }
         if !request.source.video { return await makePhoto(request, onAsset: onAsset) }
         let flag = CancelFlag()
@@ -35,13 +36,16 @@ enum ShareMediaMaker {
                         let preview = ExportRequest(source: input, grade: request.grade, options: options, chinese: request.chinese)
                         let url = root.appendingPathComponent("\(UUID().uuidString).mp4"); pending = url
                         try await ForegroundExport.run(waiting: {}) {
-                            try await Exporter.exportVideo(preview, to: url, comparison: true) { _, _ in }
+                            // A video's progress runs up to 90, leaving the rest for saving it.
+                            try await Exporter.exportVideo(preview, to: url, comparison: true) { value, _ in
+                                if let value { progress?(Double(value) / 90) }
+                            }
                         }
                         result.append(ShareMedia(url: url, video: true)); pending = nil
                 } catch {
                     if let pending { try? FileManager.default.removeItem(at: pending) }
                     if flag.isSet {
-                        NSLog("AquaRestore: comparison preview stopped by its time limit or by dismissing: \(error)")
+                        NSLog("AquaRestore: comparison preview stopped by its time limit, to make room or by dismissing: \(error)")
                         remove(result); return []
                     }
                     NSLog("AquaRestore: comparison preview unavailable: \(error)")
@@ -49,7 +53,7 @@ enum ShareMediaMaker {
                 return result
         }
         let deadline = Task.detached {
-            do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: UInt64(ComparisonRoom.timeLimitSeconds) * 1_000_000_000) } catch { return }
             flag.set(); worker.cancel()
         }
         defer { deadline.cancel() }

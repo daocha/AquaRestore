@@ -20,6 +20,11 @@ final class PlayerController: ObservableObject {
     private var item: AVPlayerItem?
     private var timer: Timer?
     private var loadTask: Task<Void, Never>?
+    private var watchTask: Task<Void, Never>?
+    /// What is playing, so that a preview given up for an export can come back.
+    private var loaded: (media: SourceMedia, gradeEdge: Int)?
+    /// The preview has given up its memory until the export and its comparison end.
+    private var released = false
     private var observers: [AnyCancellable] = []
     private var itemObservers: [AnyCancellable] = []
     private var originalBoost = GainBox()
@@ -49,8 +54,9 @@ final class PlayerController: ObservableObject {
         observers = [
             center.publisher(for: Notification.Name("UIApplicationWillResignActiveNotification")).sink { [weak self] _ in self?.resignActive() },
             center.publisher(for: Notification.Name("UIApplicationDidBecomeActiveNotification")).sink { [weak self] _ in self?.becomeActive() },
-            center.publisher(for: Notification.Name("UIApplicationDidReceiveMemoryWarningNotification")).sink { _ in
+            center.publisher(for: Notification.Name("UIApplicationDidReceiveMemoryWarningNotification")).sink { [weak self] _ in
                 NSLog("AquaRestore: memory warning\(AppLog.memory)")
+                if self?.exporting == true { self?.releaseForExport() }
             },
             center.publisher(for: AVAudioSession.interruptionNotification).sink { note in
                 NSLog("AquaRestore: audio interrupted: \(note.userInfo?[AVAudioSessionInterruptionTypeKey] ?? "unknown")")
@@ -76,7 +82,16 @@ final class PlayerController: ObservableObject {
             Exports.shared.$status.map { $0.busy || $0.comparisonsBusy }.removeDuplicates().sink { [weak self] busy in
                 guard let self else { return }
                 self.exporting = busy
-                if busy { self.pause() } else if self.model.playbackWanted && self.appActive { self.play() }
+                if busy {
+                    self.pause()
+                    if let source = self.model.source, LivePreview.previewYields(width: source.width, height: source.height,
+                                                                                 hdr: source.isHdr, availableMemory: AppLog.availableMemory) {
+                        self.releaseForExport()
+                    }
+                } else if self.released, let loaded = self.loaded {
+                    self.released = false
+                    self.load(loaded.media, gradeEdge: loaded.gradeEdge)
+                } else if self.model.playbackWanted && self.appActive { self.play() }
             },
         ]
     }
@@ -85,7 +100,10 @@ final class PlayerController: ObservableObject {
 
     /// `gradeEdge` limits the long edge the preview is graded at; 0 grades at the video's full size.
     func load(_ media: SourceMedia, gradeEdge: Int = 0) {
+        // A preview that gave up its memory for an export stays away until the export ends, then comes back as this.
+        if released { loaded = (media, gradeEdge); return }
         unload()
+        loaded = (media, gradeEdge)
         loopingSince = nil
         FrameProbe.reset()
         requestsSeen = model.gradeState.requests
@@ -122,7 +140,7 @@ final class PlayerController: ObservableObject {
                 self.applyRate()
                 self.startTimer()
                 // The watchdog runs on its own, so a seek that never completes cannot switch it off.
-                Task { [weak self] in await self?.watchStart(item, media) }
+                self.watchTask = Task { [weak self] in await self?.watchStart(item, media) }
                 // Start only once the item is ready, from the seek's completion, rather than seeking and playing while it is
                 // still preparing: with an HDR clip in the iOS Simulator that left the video waiting for ever for its first
                 // frame. Readiness is polled, with a limit, so that it can never stop playback from starting.
@@ -173,20 +191,38 @@ final class PlayerController: ObservableObject {
     }
 
     func unload() {
+        stop()
+        loaded = nil
+        released = false
+        playhead = 0
+        durationMs = 0
+        aspect = nil
+    }
+
+    /// Frees the player and its decoded frames. The check that logs playback holds on to them while it waits, so it stops too.
+    private func stop() {
         loadTask?.cancel(); loadTask = nil
+        watchTask?.cancel(); watchTask = nil
         timer?.invalidate(); timer = nil
         itemObservers = []
         player?.pause()
         player = nil
         item = nil
         originalAudio = nil
-        playhead = 0
-        durationMs = 0
-        aspect = nil
         isPlaying = false
         updateGradeRate()
         resume = false
         musicPlayer?.pause()
+    }
+
+    /// Makes room for an export. The position, length and shape stay, so the controls do not move and playback comes back
+    /// where it was; only the picture is black until then.
+    private func releaseForExport() {
+        guard loaded != nil, !released else { return }
+        model.playbackPositionMs = playhead
+        stop()
+        released = true
+        NSLog("AquaRestore: preview released for the export\(AppLog.memory)")
     }
 
     private func observe(_ item: AVPlayerItem, _ player: AVPlayer) {

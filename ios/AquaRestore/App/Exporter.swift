@@ -22,6 +22,7 @@ struct ExportStatus: Equatable {
     var batch: BatchExportStatus?
     var comparisons: [ShareMedia] = []
     var comparisonUnavailable = false
+    var comparisonSkipped = false
     var comparisonsBusy = false
 }
 
@@ -88,7 +89,7 @@ final class Exports: ObservableObject {
             var terminal = ExportStatus(error: "exportFailed")
             let comparison = ComparisonWork.submit(request)
             do {
-                try await Exporter.run(request) { progress, stage in
+                try await Exporter.run(request, load: comparison?.load) { progress, stage in
                     DispatchQueue.main.async { [weak self] in
                         guard let self, self.status.busy else { return }
                         self.status = ExportStatus(busy: true, progress: progress,
@@ -158,7 +159,7 @@ final class Exports: ObservableObject {
                         self.batchItem = index
                         let item = ExportRequest(source: source, grade: grade, options: options, chinese: request.chinese)
                         comparison = ComparisonWork.submit(item)
-                        try await Exporter.run(item) { progress, stage in
+                        try await Exporter.run(item, load: comparison?.load) { progress, stage in
                             DispatchQueue.main.async { if self.batchItem == index { self.publish(progress, stage) } }
                         }
                         self.batchItem = -1
@@ -232,7 +233,7 @@ enum BatchRun {
 enum Exporter {
     typealias Update = @Sendable (Int?, String) -> Void
 
-    static func run(_ request: ExportRequest, update: @escaping Update) async throws {
+    static func run(_ request: ExportRequest, load: ExportLoad? = nil, update: @escaping Update) async throws {
         await MainActor.run { AppActivity.observe() }
         let o = request.options
         let source = request.source
@@ -242,7 +243,7 @@ enum Exporter {
             let file = ExportFile(extension: ext)
             update(0, "exporting")
             if source.video {
-                try await exportVideo(request, to: file.url, update: update)
+                try await exportVideo(request, to: file.url, load: load, update: update)
             } else {
                 try await exportPhoto(request, to: file.url, lossless: lossless, update: update)
             }
@@ -280,7 +281,7 @@ enum Exporter {
 
     // MARK: Video
 
-    static func exportVideo(_ request: ExportRequest, to temp: URL, comparison: Bool = false, update: @escaping Update) async throws {
+    static func exportVideo(_ request: ExportRequest, to temp: URL, comparison: Bool = false, load: ExportLoad? = nil, update: @escaping Update) async throws {
         let generation = AppActivity.generation
         let source = request.source
         let o = request.options
@@ -464,7 +465,7 @@ enum Exporter {
             throw reader.error ?? MediaProblem("exportFailed")
         }
         writer.startSession(atSourceTime: .zero)
-        NSLog("AquaRestore: video export started: \(width)x\(height) hdr=\(source.hdr.rawValue) codec=\(useHevc ? "hevc" : "h264") bitrate=\(bitrate) length=\(composition.duration.seconds)s")
+        NSLog("AquaRestore: \(label) video started: \(width)x\(height) hdr=\(source.hdr.rawValue) codec=\(useHevc ? "hevc" : "h264") bitrate=\(bitrate) length=\(composition.duration.seconds)s")
         let started = Date()
 
         let flag = CancelFlag()
@@ -472,11 +473,12 @@ enum Exporter {
         let finished = CancelFlag()
         let frames = FrameCounter()
         let totalSeconds = max(composition.duration.seconds, 0.001)
+        load?.begin(total: totalSeconds, now: started)
         let group = DispatchGroup()
 
-        func pump(_ input: AVAssetWriterInput, _ output: AVAssetReaderOutput, label: String, video: Bool) {
+        func pump(_ input: AVAssetWriterInput, _ output: AVAssetReaderOutput, video: Bool) {
             group.enter()
-            let queue = DispatchQueue(label: "AquaRestore.export.\(label)")
+            let queue = DispatchQueue(label: "AquaRestore.\(label).\(video ? "video" : "audio")")
             // A dedicated pump can exit even when a cancelled writer stops asking for media data.
             queue.async {
                 defer { group.leave() }
@@ -487,7 +489,8 @@ enum Exporter {
                     if flag.isSet || interrupted.isSet { break }
                     let time = CMSampleBufferGetPresentationTimeStamp(sample)
                     if video {
-                        if frames.add() { NSLog("AquaRestore: video export read its first frame after \(String(format: "%.1f", Date().timeIntervalSince(started))) s") }
+                        if frames.add() { NSLog("AquaRestore: \(label) video read its first frame after \(String(format: "%.1f", Date().timeIntervalSince(started))) s") }
+                        load?.frame(at: time.seconds)
                         update(Int(min(time.seconds / totalSeconds, 1) * 90), "exporting")
                         AppLog.progress(label, percent: Int(min(time.seconds / totalSeconds, 1) * 100))
                         if let cadence, !cadence.accept(timeUs: Int64((time.seconds * 1_000_000).rounded())) { continue }
@@ -497,8 +500,8 @@ enum Exporter {
                 if writer.status == .writing { input.markAsFinished() }
             }
         }
-        pump(videoInput, videoOutput, label: "video", video: true)
-        if let audioInput, let audioOutput { pump(audioInput, audioOutput, label: "audio", video: false) }
+        pump(videoInput, videoOutput, video: true)
+        if let audioInput, let audioOutput { pump(audioInput, audioOutput, video: false) }
 
         // If the video step never produces a frame (the HDR pipeline on some devices), stop with an error rather than
         // waiting for ever. Time spent in the background does not count.
@@ -507,7 +510,7 @@ enum Exporter {
                 if frames.count > 0 || flag.isSet || failed.isSet || finished.isSet || interrupted.isSet { return }
                 let next = waited + (AppActivity.active ? 5 : 0)
                 if next >= 30 {
-                    NSLog("AquaRestore: video export received no frames in 30 s; stopping")
+                    NSLog("AquaRestore: \(label) video received no frames in 30 s; stopping")
                     failed.set()
                     reader.cancelReading()
                 } else { watch(next) }
@@ -515,10 +518,21 @@ enum Exporter {
         }
         watch(0)
 
+        // Twice a second, because a crash from running out of memory leaves nothing else in the log. The comparison runs in
+        // the same process, so the export's lines cover it.
+        func sampleMemory() {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                if flag.isSet || failed.isSet || finished.isSet || interrupted.isSet { return }
+                NSLog("AquaRestore: \(label) read \(frames.count) frames\(AppLog.memory)")
+                sampleMemory()
+            }
+        }
+        if !comparison && AppLog.enabled { sampleMemory() }
+
         try await withTaskCancellationHandler {
             group.notify(queue: cleanup) {
                 finished.set()
-                NSLog("AquaRestore: video export read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
+                NSLog("AquaRestore: \(label) video read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
                 if flag.isSet {
                     reader.cancelReading(); writer.cancelWriting()
                     completion.resolve(.failure(CancellationError()))
@@ -532,7 +546,7 @@ enum Exporter {
                 } else {
                     writer.finishWriting {
                         let size = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int) ?? nil
-                        NSLog("AquaRestore: video export writer status \(writer.status.rawValue), file \(size.map(String.init) ?? "missing") bytes, error \(String(describing: writer.error))")
+                        NSLog("AquaRestore: \(label) video writer status \(writer.status.rawValue), file \(size.map(String.init) ?? "missing") bytes, error \(String(describing: writer.error))")
                         if writer.status == .completed { completion.resolve(.success(())) }
                         else { completion.resolve(.failure(writer.error ?? MediaProblem("exportFailed"))) }
                     }
