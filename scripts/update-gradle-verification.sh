@@ -12,8 +12,9 @@ GRADLE_USER_HOME="$(mktemp -d "${TMPDIR:-/tmp}/gradle-verification.XXXXXX")"
 export GRADLE_USER_HOME
 trap 'rm -rf "$GRADLE_USER_HOME"' EXIT
 rm -f "$metadata"
-# An empty backend URL lets the release tasks run whatever the local .env sets. Nothing here is signed or published.
-AQUARESTORE_REFERRAL_BACKEND_URL='' ./gradlew --console=plain --no-daemon --write-verification-metadata sha256 \
+# An empty backend URL lets the release tasks run whatever the local .env sets. An empty host keeps this from replacing
+# the build the LAN update server offers. Nothing here is signed or published.
+AQUARESTORE_REFERRAL_BACKEND_URL='' AQUARESTORE_DEV_UPDATE_HOST='' ./gradlew --console=plain --no-daemon --write-verification-metadata sha256 \
   clean :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest \
   :app:assembleRelease :app:lintRelease :app:bundlePlayRelease :app:assemblePlayRelease :app:lintPlayRelease
 
