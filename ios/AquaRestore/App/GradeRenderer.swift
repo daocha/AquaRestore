@@ -1,6 +1,5 @@
 import AVFoundation
 import CoreVideo
-import ImageIO
 import Metal
 
 /// Thread-safe grade snapshot shared with the render thread. Slider changes only replace the value;
@@ -222,7 +221,7 @@ enum FrameProbe {
     private static var requested = 0
     private static var on = false
 
-    /// Follows developer tools. While it is off no frame is read back or saved.
+    /// Follows developer tools. While it is off no frame is read back.
     static var enabled: Bool {
         get { lock.lock(); defer { lock.unlock() }; return on }
         set { lock.lock(); on = newValue; lock.unlock() }
@@ -246,9 +245,6 @@ enum FrameProbe {
         lock.lock(); logged += 1; let mine = logged; let active = on; lock.unlock()
         guard active, mine <= 3 || (mine % 60 == 0 && mine <= 900) else { return }
         NSLog("AquaRestore: frame probe \(mine) at \(String(format: "%.2f", time)) s: decoded \(describe(source)), graded \(describe(output)), hdr \(hdr.rawValue)")
-        // The first frame of each video is saved as a picture, so a garbled preview can be looked at: the decoded frame
-        // and the graded one show which of the two went wrong.
-        if mine == 1 { save(source, as: "decoded.png"); save(output, as: "graded.png") }
     }
 
     /// A half-float value as a Float, without relying on `Float16` (not available on every simulator architecture).
@@ -258,51 +254,6 @@ enum FrameProbe {
         if exponent == 0 { return sign * fraction * 5.960_464_5e-8 }
         if exponent == 31 { return fraction == 0 ? sign * Float.infinity : Float.nan }
         return sign * (1 + fraction / 1024) * Float(sign: .plus, exponent: exponent - 15, significand: 1)
-    }
-
-    /// Saves a small copy of the frame, from either of the two pixel formats the compositor uses (8-bit and half-float).
-    private static func save(_ buffer: CVPixelBuffer, as name: String) {
-        let format = CVPixelBufferGetPixelFormatType(buffer)
-        guard format == kCVPixelFormatType_32BGRA || format == kCVPixelFormatType_64RGBAHalf else { return }
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
-        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), row = CVPixelBufferGetBytesPerRow(buffer)
-        // Small enough to open and share quickly.
-        let scale = min(1, 540 / CGFloat(max(width, height)))
-        let w = max(1, Int(CGFloat(width) * scale)), h = max(1, Int(CGFloat(height) * scale))
-        var rgba = [UInt8](repeating: 255, count: w * h * 4)
-        for y in 0..<h {
-            let sy = min(height - 1, y * height / h)
-            for x in 0..<w {
-                let sx = min(width - 1, x * width / w)
-                let out = (y * w + x) * 4
-                if format == kCVPixelFormatType_32BGRA {
-                    let p = base.assumingMemoryBound(to: UInt8.self), o = sy * row + sx * 4
-                    rgba[out] = p[o + 2]; rgba[out + 1] = p[o + 1]; rgba[out + 2] = p[o]
-                } else {
-                    let p = base.assumingMemoryBound(to: UInt16.self), o = sy * (row / 2) + sx * 4
-                    for c in 0..<3 { rgba[out + c] = UInt8(min(max(half(p[o + c]), 0), 1) * 255) }
-                }
-            }
-        }
-        guard let provider = CGDataProvider(data: Data(rgba) as CFData),
-              let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
-                                  shouldInterpolate: false, intent: .defaultIntent),
-              let folder = probeFolder(),
-              let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
-        CGImageDestinationAddImage(destination, image, nil)
-        if CGImageDestinationFinalize(destination) { NSLog("AquaRestore: frame probe picture saved: Documents/FrameProbe/\(name)") }
-    }
-
-    /// The app's Documents folder, which the Files app shows as On My iPhone › AquaRestore. This file is compiled on its
-    /// own by the native checks, so it does not use the app's other helpers.
-    private static func probeFolder() -> URL? {
-        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
-        let folder = documents.appendingPathComponent("FrameProbe", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
     }
 
     private static func describe(_ buffer: CVPixelBuffer) -> String {
