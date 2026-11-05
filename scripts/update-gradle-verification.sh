@@ -14,7 +14,7 @@ trap 'rm -rf "$GRADLE_USER_HOME"' EXIT
 rm -f "$metadata"
 # An empty backend URL lets the release tasks run whatever the local .env sets. Nothing here is signed or published.
 AQUARESTORE_REFERRAL_BACKEND_URL='' ./gradlew --console=plain --no-daemon --write-verification-metadata sha256 \
-  :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest \
+  clean :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest \
   :app:assembleRelease :app:lintRelease :app:bundlePlayRelease :app:assemblePlayRelease :app:lintPlayRelease
 
 # Gradle records only what this computer downloaded, and aapt2 has a separate download per system. CI runs on Linux.
