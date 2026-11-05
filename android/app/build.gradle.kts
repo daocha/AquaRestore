@@ -45,15 +45,7 @@ android {
         manifestPlaceholders["appLabel"] = "AquaRestore"
         buildConfigField("String", "DEV_UPDATE_URL", "\"\"")
     }
-    val releaseKeystore = providers.environmentVariable("AQUARESTORE_KEYSTORE_FILE").orNull
-    signingConfigs {
-        if (releaseKeystore != null) create("localRelease") {
-            storeFile = file(releaseKeystore)
-            storePassword = providers.environmentVariable("AQUARESTORE_KEYSTORE_PASSWORD").orNull
-            keyAlias = providers.environmentVariable("AQUARESTORE_KEY_ALIAS").orNull
-            keyPassword = providers.environmentVariable("AQUARESTORE_KEY_PASSWORD").orNull
-        }
-    }
+    // Release builds come out unsigned: Gradle runs third-party code, so scripts/_signing-common.sh signs them after it exits.
     buildTypes {
         // Own package name and label so the debug build installs next to (not over) a release build signed with a different key.
         debug {
@@ -73,7 +65,6 @@ android {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             buildConfigField("String", "UPDATE_CHANNEL", "\"github\"")
-            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("localRelease")
         }
         // Upload this variant to Play. It has no APK-install permission or GitHub update route.
         create("playRelease") {

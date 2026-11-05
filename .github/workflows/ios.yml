@@ -43,8 +43,10 @@ jobs:
         if: env.HAS_CORE == 'true'
         shell: bash
         run: core/tools/parity/test.sh --allow-no-gpu 2>&1 | scripts/hide-core-source.sh
-      - name: Generate the Xcode project
-        run: brew install xcodegen && xcodegen generate
+      - name: Install XcodeGen
+        run: scripts/install-xcodegen.sh
+      - name: Generate the Xcode project with the pinned tool
+        run: xcodegen generate
         working-directory: ios
       - name: App and core tests on an iPhone simulator
         shell: bash
@@ -84,8 +86,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Use the basic stub core
         run: scripts/use-core-stub.sh
-      - name: Generate the Xcode project
-        run: brew install xcodegen && xcodegen generate
+      - name: Install XcodeGen
+        run: scripts/install-xcodegen.sh
+      - name: Generate the Xcode project with the pinned tool
+        run: xcodegen generate
         working-directory: ios
       - name: Compile the app and test bundles
         run: |

@@ -94,7 +94,11 @@ You can put these two non-secret settings in that computer's `~/.zshrc`. Passwor
 - `AQUARESTORE_KEYSTORE_PASSWORD`
 - `AQUARESTORE_KEY_PASSWORD` (defaults to the keystore password when unset)
 
-Passwords never need to be on the command line, in Gradle properties or in project files. JKS / keystore / p12 files and common signing config files are in `.gitignore`. Release builds use a single-use Gradle process with in-process Kotlin compilation, so no long-lived compile daemon holds the passwords.
+Passwords never need to be on the command line, in Gradle properties or in project files. JKS / keystore / p12 files and common signing config files are in `.gitignore`. Gradle never receives the passwords: it runs code from every plugin and library it downloads, so it builds unsigned, and `apksigner` or `jarsigner` signs its output after it exits.
+
+### Verified build downloads
+
+`android/gradle/verification-metadata.xml` lists the SHA-256 of every Gradle plugin and library, and `distributionSha256Sum` pins Gradle itself, so a download that changed fails the build. After changing a dependency, including on a Dependabot pull request, run `scripts/update-gradle-verification.sh` and read the diff: only the packages you meant to change should move. CI installs XcodeGen with `scripts/install-xcodegen.sh`, which checks a pinned hash.
 
 `scripts/print-signing-fingerprint.sh [cert.pem]` prints the key's SHA-256 fingerprint (to compare with Play Console's **App integrity** page or to register the package for Android developer verification), and can save the public certificate. It needs only a JDK or openssl, not the Android SDK, and never creates a key.
 

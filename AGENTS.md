@@ -40,6 +40,8 @@ After `git pull`, run `git submodule update`, because pulling does not move `cor
   (shader tests: `:app:connectedDebugAndroidTest` on a device or emulator).
 - iOS: `swift test` in `ios/` (needs Xcode); the app builds with `scripts/build-ios-debug.sh`.
 - Script tests: `python3 -m unittest discover -s scripts/tests -v`.
+- After changing a Gradle dependency or plugin, run `scripts/update-gradle-verification.sh`; the build checks every download
+  against `android/gradle/verification-metadata.xml`.
 - Without access to the core, `scripts/use-core-stub.sh` fills `core/` with the stub.
 
 ## Building the debug APK on the maintainer's Mac
