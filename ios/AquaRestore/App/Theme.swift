@@ -262,6 +262,9 @@ struct M3TextButton: View {
     let title: String
     var fontSize: CGFloat? = nil
     var padding: CGFloat = 12
+    /// Compose's minimum yields to a narrower parent, but SwiftUI's would push the parent wider, so a tight row sets 0.
+    var minWidth: CGFloat = 58
+    var maxLines = 1
     var icon: MaterialIcon? = nil
     var iconTrailing = false
     let action: () -> Void
@@ -270,12 +273,13 @@ struct M3TextButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 if let icon, !iconTrailing { MIcon(icon, size: 18, color: color) }
-                Text(title).sp(fontSize, nil, lineHeight: TypeScale.labelLarge.lineHeight).lineLimit(1).foregroundColor(color)
+                Text(title).sp(fontSize, nil, lineHeight: TypeScale.labelLarge.lineHeight).lineLimit(maxLines)
+                    .multilineTextAlignment(.center).foregroundColor(color)
                 if let icon, iconTrailing { MIcon(icon, size: 18, color: color) }
             }
             .textBase(.labelLarge)
             .padding(.horizontal, padding)
-            .frame(minWidth: 58)
+            .frame(minWidth: minWidth)
             .frame(height: 40)
             .contentShape(Capsule())
         }

@@ -757,11 +757,11 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
     }
     Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
         if (!speedExpanded && trimTarget == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Whatever room the buttons leave; "Full clip" shortens rather than pushing them off the row.
+            // Whatever room the buttons leave; "Full clip" wraps rather than pushing them off the row.
             Box(Modifier.weight(1f)) {
                 if (range.first > 0 || range.last < duration) TextButton(onClick = onFullClip, enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text(s.text("Full clip", "完整長度"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    contentPadding = PaddingValues(horizontal = 2.dp)) {
+                    Text(s.text("Full clip", "完整長度"), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                 }
             }
             Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White) {

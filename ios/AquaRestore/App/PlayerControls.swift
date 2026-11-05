@@ -134,10 +134,11 @@ struct VideoControls: View {
 
     private func row(trimmed: Bool) -> some View {
         HStack(spacing: 6) {
-            // Whatever room the buttons leave; "Full clip" shortens rather than pushing them off the row.
+            // Whatever room the buttons leave; "Full clip" wraps rather than pushing them off the row. On a 375 pt iPhone that
+            // room is under 40 pt, and asking for more widens the whole screen's layout, which has no way to scroll sideways.
             HStack(spacing: 0) {
                 if trimmed {
-                    M3TextButton(title: s.text("Full clip", "完整長度"), padding: 8) { setTrim(0...duration) }
+                    M3TextButton(title: s.text("Full clip", "完整長度"), padding: 2, minWidth: 0, maxLines: 2) { setTrim(0...duration) }
                         .disabled(!enabled)
                 }
                 Spacer(minLength: 0)
