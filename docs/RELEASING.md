@@ -69,7 +69,11 @@ With it set, the debug build:
 - Allows HTTP to that address only, and gets the network and APK install permissions; without `.env` (for example in CI) nothing changes.
 - Writes `android/dist/dev-update/` after `assembleDebug`: the APK, `SHA256SUMS` and `latest.json`.
 
-Then run `scripts/serve-dev-update.sh`, which binds to that address only. The debug build on the phone checks every time it comes to the foreground, or manually from settings.
+Then run `scripts/serve-dev-update.sh`, which binds to that address only. It starts in the background, and running it again is safe: it does nothing if the server is already running, and a running server serves new builds by itself. `--status` and `--stop` do what they say. The debug build on the phone checks every time it comes to the foreground, or manually from settings.
+
+The files are served only under a secret path, so others on the LAN get a 404 and cannot list or download the debug APK, which holds the private core. The build makes the secret once and keeps it in `~/.android/aquarestore-dev-update-secret`, next to the debug key, so it stays the same across builds and new clones. If that file is lost, the installed debug build cannot find the server until it is installed again by hand. The traffic is plain HTTP, so this does not stop someone watching the network.
+
+A debug build from before the secret asks at the old address. Run `scripts/serve-dev-update.sh --migrate` once so it can update itself, then run the plain command again.
 The address is written only into the debug APK, never into the source or Git; do not distribute a debug APK built with it.
 Android accepts only updates signed with the same key as the installed build, so others on the LAN cannot replace it with their own APK.
 
