@@ -34,7 +34,7 @@ struct Strings {
         "analysisFailed": ("Could not read sample frames. Please try another file.", "無法讀取抽樣畫面，請嘗試其他檔案。"),
         "importFailed": ("Could not prepare this file. Check available storage and try another video or image.", "無法準備此檔案，請檢查剩餘空間或嘗試其他影片與圖片。"),
         "exportFailed": ("Export failed. Check free storage and try Custom with a lower resolution. Original requires a compatible encoder; it never silently reduces quality.", "匯出失敗。請檢查剩餘空間，或選擇自訂並降低解析度。Original 需要相容編碼器，不會自動降低畫質。"),
-        "playbackFailed": ("Preview playback failed on this device. Please import the file again.", "此裝置無法播放預覽，請重新匯入檔案。"),
+        "playbackFailed": ("Preview playback failed on this device. Tap play to try again, or import the file again.", "此裝置無法播放預覽。請點按播放重試，或重新匯入檔案。"),
         "noAudio": ("This file has no playable audio. Please choose a music file.", "此檔案沒有可播放的音訊，請選擇音樂檔案。"),
         "insufficient": ("Not enough color information", "畫面缺乏可判斷的色彩資訊"),
         "photosDenied": ("AquaRestore needs permission to add photos. Allow it in Settings › AquaRestore › Photos.", "AquaRestore 需要新增照片的權限，請至「設定 › AquaRestore › 照片」允許。"),

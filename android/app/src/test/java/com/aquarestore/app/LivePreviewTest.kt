@@ -37,13 +37,13 @@ class LivePreviewTest {
         assertEquals(LivePreview.COPY, livePreview(7680, 4320, 60f, listOf(galaxyS10)))
     }
 
-    @Test fun aFailedPreviewGetsOneFreshStartAtATime() {
+    @Test fun aFailedPreviewStartsAgainAfterGrowingPauses() {
         val retry = PlaybackRetry()
-        assertTrue(retry.allowed(1_000))
-        assertFalse(retry.allowed(1_500))
-        assertFalse(retry.allowed(30_999))
-        assertTrue(retry.allowed(31_000))
-        assertFalse(retry.allowed(31_001))
+        assertEquals(1_000L, retry.nextDelayMs(1_000))
+        assertEquals(3_000L, retry.nextDelayMs(3_000))
+        assertNull(retry.nextDelayMs(7_000))
+        assertNull(retry.nextDelayMs(20_000))
+        assertEquals(1_000L, retry.nextDelayMs(33_000))
     }
 
     @Test fun noDecoderAcceptingTheFrameGetsACopy() {

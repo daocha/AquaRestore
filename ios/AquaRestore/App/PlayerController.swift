@@ -26,6 +26,9 @@ final class PlayerController: ObservableObject {
     /// The preview has given up its memory until the export and its comparison end.
     private var released = false
     private var retry = PlaybackRetry()
+    private var retryTask: Task<Void, Never>?
+    /// Starting again did not help. The play button tries once more, rather than doing nothing until the file is imported again.
+    @Published private(set) var gaveUp = false
     private var observers: [AnyCancellable] = []
     private var itemObservers: [AnyCancellable] = []
     private var originalBoost = GainBox()
@@ -91,8 +94,9 @@ final class PlayerController: ObservableObject {
                                                                                  hdr: source.isHdr, availableMemory: AppLog.availableMemory) {
                         self.releaseForExport()
                     }
-                } else if self.released, let loaded = self.loaded {
+                } else if self.released || self.gaveUp, let loaded = self.loaded {
                     self.released = false
+                    self.retry = PlaybackRetry()
                     self.load(loaded.media, gradeEdge: loaded.gradeEdge)
                 } else if self.model.playbackWanted && self.appActive { self.play() }
             },
@@ -171,7 +175,7 @@ final class PlayerController: ObservableObject {
                 }
             } catch is CancellationError {
             } catch {
-                self?.model.error = "playbackFailed"
+                if !Task.isCancelled { self?.playbackFailed(String(describing: error)) }
             }
         }
     }
@@ -217,6 +221,7 @@ final class PlayerController: ObservableObject {
 
     func unload() {
         stop()
+        gaveUp = false
         loaded = nil
         released = false
         playhead = 0
@@ -226,6 +231,7 @@ final class PlayerController: ObservableObject {
 
     /// Frees the player and its decoded frames. The check that logs playback holds on to them while it waits, so it stops too.
     private func stop() {
+        retryTask?.cancel(); retryTask = nil
         loadTask?.cancel(); loadTask = nil
         watchTask?.cancel(); watchTask = nil
         timer?.invalidate(); timer = nil
@@ -250,22 +256,44 @@ final class PlayerController: ObservableObject {
         NSLog("AquaRestore: preview released for the export\(AppLog.memory)")
     }
 
-    /// A failed item never plays again, even once what stopped it has passed, so the play button would do nothing from then on.
-    /// During an export the preview comes back when the export ends; otherwise it is built again once before saying so.
-    private func itemFailed(_ failed: AVPlayerItem) {
-        guard self.item === failed, let loaded else { return }
-        NSLog("AquaRestore: preview playback failed: \(String(describing: failed.error))\(AppLog.memory)")
+    /// A failed item never plays again, even once what stopped it has passed. During an export the preview comes back when the
+    /// export ends; otherwise it is built again after a pause, with its memory free meanwhile, before saying it failed.
+    private func playbackFailed(_ reason: String) {
+        guard let loaded else { return }
+        NSLog("AquaRestore: preview playback failed: \(reason)\(AppLog.memory)")
         if exporting { releaseForExport(); return }
-        guard retry.allowed() else { model.error = "playbackFailed"; return }
-        model.playbackPositionMs = playhead
-        load(loaded.media, gradeEdge: loaded.gradeEdge)
+        guard let delay = retry.nextDelay() else {
+            NSLog("AquaRestore: preview gave up starting again")
+            gaveUp = true
+            model.error = "playbackFailed"
+            return
+        }
+        keepPosition()
+        stop()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            // An export that began meanwhile, without needing the preview to give way, brings it back when it ends.
+            if self.exporting { self.released = true; return }
+            self.load(loaded.media, gradeEdge: loaded.gradeEdge)
+        }
+    }
+
+    /// Building the player starts its playhead from zero, so a failure before its first seek must not count as the position.
+    private func keepPosition() {
+        if playhead > 0 { model.playbackPositionMs = playhead }
     }
 
     private func observe(_ item: AVPlayerItem, _ player: AVPlayer) {
         itemObservers = [
             item.publisher(for: \.status).sink { [weak self] status in
                 if status == .readyToPlay { NSLog("AquaRestore: preview ready \(item.presentationSize) tracks=\(item.tracks.count)") }
-                if status == .failed { Task { @MainActor [weak self] in self?.itemFailed(item) } }
+                if status == .failed {
+                    Task { @MainActor [weak self] in
+                        guard let self, self.item === item else { return }
+                        self.playbackFailed(String(describing: item.error))
+                    }
+                }
             },
             // The loop stays inside the trim range; ending the whole clip wraps to the trim start.
             NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: item).sink { [weak self] _ in
@@ -276,7 +304,8 @@ final class PlayerController: ObservableObject {
                 guard let self else { return }
                 self.isPlaying = status != .paused
                 self.updateGradeRate()
-                if self.appActive && !self.exporting { self.model.playbackWanted = status != .paused }
+                // A failed item also reads as paused, which nobody asked for.
+                if self.appActive && !self.exporting && item.status != .failed { self.model.playbackWanted = status != .paused }
             },
         ]
     }
@@ -292,6 +321,13 @@ final class PlayerController: ObservableObject {
     func pause() { player?.pause() }
 
     func togglePlay() {
+        if gaveUp, let loaded {
+            retry = PlaybackRetry()
+            keepPosition()
+            model.playbackWanted = true
+            load(loaded.media, gradeEdge: loaded.gradeEdge)
+            return
+        }
         guard let player else { return }
         if player.timeControlStatus == .paused {
             let range = model.trim

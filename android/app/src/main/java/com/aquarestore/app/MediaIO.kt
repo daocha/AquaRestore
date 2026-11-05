@@ -45,20 +45,27 @@ import kotlin.math.roundToInt
 class MediaProblem(val key: String) : Exception(key)
 
 /**
- * A preview that fails gets one fresh start, because what stopped it (another pipeline holding the decoder) usually passes.
- * Failing again soon after means it will not play here, so that is reported. Times are in milliseconds.
+ * A preview that fails starts again after a pause, because what stopped it (a pipeline still letting go of the decoder) usually
+ * passes, though not at once. Still failing after that is reported.
  */
 internal class PlaybackRetry {
+    private var attempts = 0
     private var last: Long? = null
 
-    fun allowed(nowMs: Long): Boolean {
+    /** Milliseconds to wait before starting again, or null when the attempts are used up. Thirty quiet seconds start the count again. */
+    fun nextDelayMs(nowMs: Long): Long? {
         val previous = last
-        if (previous != null && nowMs - previous < WINDOW_MS) return false
+        if (previous != null && nowMs - previous >= WINDOW_MS) attempts = 0
+        val delay = DELAYS_MS.getOrNull(attempts) ?: return null
+        attempts++
         last = nowMs
-        return true
+        return delay
     }
 
-    private companion object { const val WINDOW_MS = 30_000L }
+    private companion object {
+        val DELAYS_MS = listOf(1_000L, 3_000L)
+        const val WINDOW_MS = 30_000L
+    }
 }
 
 /** How the preview plays a video: the original, shrunk as it plays so it never grades above 1920px, or a copy. */
