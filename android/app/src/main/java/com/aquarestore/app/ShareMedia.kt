@@ -106,18 +106,38 @@ object ShareMediaMaker {
             val effects = MediaIO.resizeEffect(source, maxOf(w, h)) + listOf<androidx.media3.common.Effect>(
                 FrameRateCap(30f), ComparisonEffect(request.grade, length * 1000),
                 androidx.media3.effect.OverlayEffect(java.util.ArrayList<androidx.media3.effect.TextureOverlay>().apply {
-                    add(androidx.media3.effect.BitmapOverlay.createStaticBitmapOverlay(mark)) })
+                    add(creditOverlay(mark, source.hdrTransfer)) })
             )
+            android.util.Log.i("AquaRestore", "Comparison video starting: ${source.width}x${source.height} hdr=${source.keepsHdr} to ${w}x$h")
             withTimeout(60_000) {
                 MediaIO.transform(context, source, file, effects,
                     maxOf(500_000, w * h * 4), if (source.keepsHdr) "video/hevc" else "video/avc", true,
                     speed = if (source.video) request.options.speed else 1f, startMs = start, endMs = end,
                     audio = AudioMix(originalVolume = 0f), imageDurationMs = if (source.video) 0 else 6000) { }
             }
+            android.util.Log.i("AquaRestore", "Comparison video finished")
             return listOf(ShareMedia(file, true))
+        } catch (e: TimeoutCancellationException) {
+            file.delete(); android.util.Log.w("AquaRestore", "Comparison video stopped by its 60-second limit"); return emptyList()
         } catch (e: CancellationException) { file.delete(); throw e }
         catch (e: Exception) { file.delete(); android.util.Log.w("AquaRestore", "Comparison video unavailable", e); return emptyList() }
         finally { mark.recycle() }
+    }
+
+    /**
+     * The credit over a comparison video. In HDR, Media3 only accepts a plain bitmap overlay if it has an Ultra HDR gainmap,
+     * and fails on the first frame otherwise, while its text overlay takes any bitmap. Its white would be the brightest the
+     * format can hold, so it is scaled to the usual HDR reference white of 203 nits. SDR ignores the multiplier.
+     */
+    internal fun creditOverlay(credit: Bitmap, hdrTransfer: Int): androidx.media3.effect.TextOverlay {
+        val settings = androidx.media3.effect.StaticOverlaySettings.Builder()
+            .setHdrLuminanceMultiplier(if (hdrTransfer == androidx.media3.common.C.COLOR_TRANSFER_ST2084) 203f / 10_000f else 0.265f)
+            .build()
+        return object : androidx.media3.effect.TextOverlay() {
+            override fun getText(presentationTimeUs: Long) = android.text.SpannableString("")
+            override fun getBitmap(presentationTimeUs: Long) = credit
+            override fun getOverlaySettings(presentationTimeUs: Long): androidx.media3.common.OverlaySettings = settings
+        }
     }
 
     suspend fun save(context: Context, media: ShareMedia): Uri = withContext(Dispatchers.IO) {

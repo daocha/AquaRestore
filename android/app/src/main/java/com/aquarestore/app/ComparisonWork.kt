@@ -51,6 +51,7 @@ object ComparisonWork {
     fun finish(terminal: ExportStatus) {
         val owner = session ?: run { Exports.status.value = terminal; return }
         owner.terminal = terminal
+        android.util.Log.i("AquaRestore", "Export ended, comparisons still running: ${owner.entries.count { !it.done }}")
         refresh(owner)
     }
     private fun refresh(owner: Session) {
