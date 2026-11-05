@@ -352,8 +352,8 @@ class GradeCompositor: NSObject, AVVideoCompositing {
     private let lock = NSLock()
     /// Used only on `queue`.
     private var cadence: (rate: Float, frames: FrameCadence)?
-    /// The last graded frame, repeated for frames over `GradeState.frameRate`. Guarded by `lock`.
-    private var lastOutput: CVPixelBuffer?
+    /// Fills in for frames over `GradeState.frameRate`.
+    private let repeats = FrameRepeater<CVPixelBuffer, AVAsynchronousVideoCompositionRequest>()
 
     var sourcePixelBufferAttributes: [String: any Sendable]? {
         [kCVPixelBufferPixelFormatTypeKey as String: [Self.pixelFormat], kCVPixelBufferMetalCompatibilityKey as String: true]
@@ -397,8 +397,13 @@ class GradeCompositor: NSObject, AVVideoCompositing {
             if rate > 0, request.sourceFrame(byTrackID: instruction.trackID) != nil {
                 if self.cadence?.rate != rate { self.cadence = (rate, FrameCadence(fps: rate)) }
                 let accepted = self.cadence?.frames.accept(timeUs: Int64(request.compositionTime.seconds * 1_000_000)) ?? true
-                self.lock.lock(); let last = self.lastOutput; self.lock.unlock()
-                if !accepted, let last { request.finish(withComposedVideoFrame: last); return }
+                if !accepted {
+                    switch self.repeats.repeatFrame(for: request) {
+                    case .now(let frame): request.finish(withComposedVideoFrame: frame); return
+                    case .waiting: return
+                    case .nothing: break
+                    }
+                }
             }
             guard let output = request.renderContext.newPixelBuffer() else {
                 GradeLog.failure("render context gave no output buffer (\(request.renderContext.size))")
@@ -417,6 +422,7 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: GradeError.metalUnavailable)
                 return
             }
+            let grading = rate > 0 ? self.repeats.begin() : nil
             grader.render(instruction, source: source, output: output, time: request.compositionTime.seconds) { ok in
                 #if os(iOS)
                 if ok, let duration = instruction.comparisonDuration {
@@ -424,8 +430,11 @@ class GradeCompositor: NSObject, AVVideoCompositing {
                     return
                 }
                 #endif
-                if ok && rate > 0 { self.lock.lock(); self.lastOutput = output; self.lock.unlock() }
+                let ended = grading.map { self.repeats.finish($0, frame: ok ? output : nil) }
                 if ok { request.finish(withComposedVideoFrame: output) } else { request.finish(with: GradeError.textureFailed) }
+                for waiting in ended?.waiters ?? [] {
+                    if let frame = ended?.show { waiting.finish(withComposedVideoFrame: frame) } else { waiting.finish(with: GradeError.textureFailed) }
+                }
             }
         }
     }

@@ -21,3 +21,42 @@ final class FrameCadence {
     }
     func reset() { origin = nil; slot = -1; last = 0 }
 }
+
+/// What a frame left out by the cadence shows instead: the newest graded picture. Grading finishes later on the GPU, so
+/// "the last one finished" can be older than a frame already shown, and the picture would step back and forth. A left-out
+/// frame that arrives during grading therefore waits for that grading to finish.
+final class FrameRepeater<Frame, Waiter> {
+    final class Grading { fileprivate var waiters: [Waiter] = [] }
+    enum Repeat { case now(Frame), waiting, nothing }
+
+    private let lock = NSLock()
+    private var newest: Frame?
+    private var latest: Grading?
+
+    /// A frame has started grading.
+    func begin() -> Grading {
+        lock.lock(); defer { lock.unlock() }
+        let grading = Grading()
+        latest = grading
+        return grading
+    }
+
+    /// For a left-out frame. `nothing` means there is no picture to repeat, so it has to be graded itself.
+    func repeatFrame(for waiter: Waiter) -> Repeat {
+        lock.lock(); defer { lock.unlock() }
+        if let latest { latest.waiters.append(waiter); return .waiting }
+        if let newest { return .now(newest) }
+        return .nothing
+    }
+
+    /// Grading has ended, with no frame if it failed. Returns who was waiting and what they should show, the older picture
+    /// after a failure, if there is one.
+    func finish(_ grading: Grading, frame: Frame?) -> (waiters: [Waiter], show: Frame?) {
+        lock.lock(); defer { lock.unlock() }
+        if let frame { newest = frame }
+        if latest === grading { latest = nil }
+        let waiters = grading.waiters
+        grading.waiters = []
+        return (waiters, newest)
+    }
+}
