@@ -1,5 +1,19 @@
 <img src="AquaRestore-banner.png" >
 
+<div align="center">
+
+[![Release](https://img.shields.io/github/v/release/daocha/AquaRestore?label=release&color=green)](https://github.com/daocha/AquaRestore/releases/latest)
+[![License: PolyForm Strict](https://img.shields.io/badge/license-PolyForm%20Strict%201.0.0-blue)](LICENSE)
+[![Android CI](https://img.shields.io/github/actions/workflow/status/daocha/AquaRestore/android.yml?branch=main&label=Android%20CI&logo=githubactions&logoColor=white)](https://github.com/daocha/AquaRestore/actions/workflows/android.yml)
+[![iOS CI](https://img.shields.io/github/actions/workflow/status/daocha/AquaRestore/ios.yml?branch=main&label=iOS%20CI&logo=githubactions&logoColor=white)](https://github.com/daocha/AquaRestore/actions/workflows/ios.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/daocha/AquaRestore/codeql.yml?branch=main&label=CodeQL&logo=github)](https://github.com/daocha/AquaRestore/actions/workflows/codeql.yml)
+[![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)](android)
+[![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)](ios)
+[![Android](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)](#android-version)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white)](#ios-version)
+
+</div>
+
 [English](README.md) | **繁體中文**
 
 # AquaRestore
