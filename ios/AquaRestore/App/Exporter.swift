@@ -104,7 +104,7 @@ final class Exports: ObservableObject {
             }
             Platform.keepScreenAwake(false)
             self?.task = nil
-            if !terminal.saved { ComparisonWork.reject(comparison) }
+            if !terminal.saved { await ComparisonWork.stop(comparison) }
             ComparisonWork.finish(terminal)
         }
     }
@@ -164,10 +164,10 @@ final class Exports: ObservableObject {
                         self.batch?.saved += 1
                         ComparisonWork.accept(comparison)
                     } catch is CancellationError {
-                        ComparisonWork.reject(comparison)
+                        await ComparisonWork.stop(comparison)
                         throw CancellationError()
                     } catch {
-                        ComparisonWork.reject(comparison)
+                        await ComparisonWork.stop(comparison)
                         self.batchItem = -1
                         NSLog("AquaRestore: batch item failed: \(error)")
                         self.batch?.failures.append(BatchFailure(name: source.name, error: (error as? MediaProblem)?.key ?? "exportFailed"))
@@ -358,6 +358,7 @@ enum Exporter {
         ])
         videoOutput.videoComposition = videoComposition
         videoOutput.alwaysCopiesSampleData = false
+        guard reader.canAdd(videoOutput) else { throw MediaProblem("exportFailed") }
         reader.add(videoOutput)
 
         var audioOutput: AVAssetReaderOutput?
@@ -446,21 +447,34 @@ enum Exporter {
         let interrupted = CancelFlag()
         let completion = ExportCompletion()
         let cleanup = DispatchQueue(label: "AquaRestore.export.cleanup.\(UUID().uuidString)")
+        // Stopping the reader lets a pump waiting for a frame leave, and the notify below cancels the writer once the pumps have
+        // left: AVFoundation raises an exception Swift cannot catch if a writer stops while another thread is using it. The attempt
+        // ends only then, so the next preview or export never starts while this one still holds its decoder and memory. Reading
+        // may wait on a frame, so nothing blocks on it here, and a decoder that never lets go cannot hold up the user for ever.
+        func stop(because reason: Error) {
+            cleanup.async { reader.cancelReading() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + ExportTeardown.limitSeconds) {
+                completion.resolve(.failure(reason))
+            }
+        }
         let observer = NotificationCenter.default.addObserver(
             forName: AppActivity.didBecomeInactive, object: nil, queue: nil
         ) { _ in
             interrupted.set()
             update(nil, "paused")
-            // Cancellation may wait on a frame; do not block the lifecycle callback or the retry on it.
-            completion.resolve(.failure(ExportInterrupted()))
-            cleanup.async { reader.cancelReading(); writer.cancelWriting() }
+            stop(because: ExportInterrupted())
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         guard AppActivity.active, generation == AppActivity.generation, !interrupted.isSet else { throw ExportInterrupted() }
         guard writer.startWriting() else { throw writer.error ?? MediaProblem("exportFailed") }
         guard reader.startReading() else {
-            writer.cancelWriting()
+            if writer.status == .writing { writer.cancelWriting() }
             throw reader.error ?? MediaProblem("exportFailed")
+        }
+        // A session cannot start on a writer that has failed since, as one can when its encoder finds no memory.
+        guard writer.status == .writing else {
+            reader.cancelReading()
+            throw writer.error ?? MediaProblem("exportFailed")
         }
         writer.startSession(atSourceTime: .zero)
         NSLog("AquaRestore: \(label) video started: \(width)x\(height) hdr=\(source.hdr.rawValue) codec=\(useHevc ? "hevc" : "h264") bitrate=\(bitrate) length=\(composition.duration.seconds)s")
@@ -502,7 +516,9 @@ enum Exporter {
         if let audioInput, let audioOutput { pump(audioInput, audioOutput, video: false) }
 
         // If the video step never produces a frame (the HDR pipeline on some devices), stop with an error rather than
-        // waiting for ever. Time spent in the background does not count.
+        // waiting for ever. Time spent in the background does not count. Held weakly, so that waiting here keeps no ended
+        // reader's memory.
+        weak var watchedReader = reader
         func watch(_ waited: Int) {
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
                 if frames.count > 0 || flag.isSet || failed.isSet || finished.isSet || interrupted.isSet { return }
@@ -510,7 +526,7 @@ enum Exporter {
                 if next >= 30 {
                     NSLog("AquaRestore: \(label) video received no frames in 30 s; stopping")
                     failed.set()
-                    reader.cancelReading()
+                    watchedReader?.cancelReading()
                 } else { watch(next) }
             }
         }
@@ -531,15 +547,22 @@ enum Exporter {
             group.notify(queue: cleanup) {
                 finished.set()
                 NSLog("AquaRestore: \(label) video read \(frames.count) frames in \(String(format: "%.1f", Date().timeIntervalSince(started))) s; reader status \(reader.status.rawValue), cancelled \(flag.isSet), failed \(failed.isSet)")
+                // Frames that ended here stay pinned by the texture cache until it is told to let them go.
+                MetalGrader.shared?.flushTextures()
+                // Only a writer still writing can be cancelled; AVFoundation raises an exception for one that has ended.
+                func release() {
+                    reader.cancelReading()
+                    if writer.status == .writing { writer.cancelWriting() }
+                }
                 if flag.isSet {
-                    reader.cancelReading(); writer.cancelWriting()
+                    release()
                     completion.resolve(.failure(CancellationError()))
                 } else if interrupted.isSet || generation != AppActivity.generation {
-                    reader.cancelReading(); writer.cancelWriting()
+                    release()
                     completion.resolve(.failure(ExportInterrupted()))
-                } else if failed.isSet || reader.status == .failed {
+                } else if failed.isSet || reader.status == .failed || writer.status != .writing {
                     let error = reader.error ?? writer.error ?? MediaProblem("exportFailed")
-                    reader.cancelReading(); writer.cancelWriting()
+                    release()
                     completion.resolve(.failure(error))
                 } else {
                     writer.finishWriting {
@@ -553,8 +576,7 @@ enum Exporter {
             try await completion.wait()
         } onCancel: {
             flag.set()
-            completion.resolve(.failure(CancellationError()))
-            cleanup.async { reader.cancelReading(); writer.cancelWriting() }
+            stop(because: CancellationError())
         }
     }
 }

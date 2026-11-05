@@ -6,6 +6,16 @@ import XCTest
 #endif
 
 final class LivePreviewTests: XCTestCase {
+    func testAFailedPreviewGetsOneFreshStartAtATime() {
+        let start = Date()
+        var retry = PlaybackRetry()
+        XCTAssertTrue(retry.allowed(now: start))
+        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(0.5)))
+        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(29.9)))
+        XCTAssertTrue(retry.allowed(now: start.addingTimeInterval(30)))
+        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(30.1)))
+    }
+
     func testUpTo4k60NeedsNoMeasuring() {
         XCTAssertTrue(LivePreview.withinLimit(width: 3840, height: 2160, fps: 60))
         XCTAssertTrue(LivePreview.withinLimit(width: 3840, height: 3360, fps: 30))

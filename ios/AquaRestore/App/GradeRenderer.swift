@@ -132,6 +132,11 @@ final class MetalGrader {
         CVMetalTextureCacheCreate(nil, nil, device, [kCVMetalTextureUsage as String: usage] as CFDictionary, &cache)
     }
 
+    /// Lets go of textures no frame still uses. Frames being graded hold their own, so this is safe at any time.
+    func flushTextures() {
+        if let cache { CVMetalTextureCacheFlush(cache, 0) }
+    }
+
     private func texture(_ buffer: CVPixelBuffer) throws -> (MTLTexture, CVMetalTexture) {
         let format: MTLPixelFormat = CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_64RGBAHalf ? .rgba16Float : .bgra8Unorm
         var cvTexture: CVMetalTexture?

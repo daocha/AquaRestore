@@ -30,7 +30,12 @@ enum AppActivity {
 
 struct ExportInterrupted: Error {}
 
-/// Interruption can finish the attempt without waiting for AVFoundation's sample queues to drain.
+enum ExportTeardown {
+    /// How long a stopped export may take to let go of its decoder before it is treated as ended anyway.
+    static let limitSeconds = 5.0
+}
+
+/// An attempt ends once, whichever comes first: its pipeline having shut down, or the limit on waiting for that.
 final class ExportCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<Void, Error>?

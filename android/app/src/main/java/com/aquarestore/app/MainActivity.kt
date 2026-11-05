@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1110,11 +1111,14 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
             if (event == Lifecycle.Event.ON_START && !Exports.status.value.busy && model.previewPreparing.value == null &&
                 model.playbackWanted) player.play()
         }
+        val retry = PlaybackRetry()
         // Removed before release: releasing a busy 4K player can time out, which is reported as an error.
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 AppLog.e("Preview playback failed", error)
-                model.error.value = "playbackFailed"
+                // During an export, the preview starts again when the export ends. Otherwise it gets one fresh start.
+                if (Exports.status.value.busy) return
+                if (retry.allowed(SystemClock.elapsedRealtime())) player.prepare() else model.error.value = "playbackFailed"
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !Exports.status.value.busy &&
@@ -1132,7 +1136,10 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
     }
     LaunchedEffect(held) {
         if (held) player.pause()
-        else if (model.playbackWanted && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
+        else {
+            if (player.playerError != null) player.prepare()
+            if (model.playbackWanted && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
+        }
     }
     LaunchedEffect(player) {
         // Loop inside the trim range; REPEAT_MODE_ONE alone would replay the whole clip.
