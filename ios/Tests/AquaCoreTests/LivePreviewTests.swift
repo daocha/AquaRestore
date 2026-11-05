@@ -13,14 +13,14 @@ final class LivePreviewTests: XCTestCase {
         XCTAssertEqual(LivePreview.stallSeconds(speed: 4), 3)
     }
 
-    func testAFailedPreviewGetsOneFreshStartAtATime() {
+    func testAFailedPreviewStartsAgainAfterGrowingPauses() {
         let start = Date()
         var retry = PlaybackRetry()
-        XCTAssertTrue(retry.allowed(now: start))
-        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(0.5)))
-        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(29.9)))
-        XCTAssertTrue(retry.allowed(now: start.addingTimeInterval(30)))
-        XCTAssertFalse(retry.allowed(now: start.addingTimeInterval(30.1)))
+        XCTAssertEqual(retry.nextDelay(now: start), 1)
+        XCTAssertEqual(retry.nextDelay(now: start.addingTimeInterval(2)), 3)
+        XCTAssertNil(retry.nextDelay(now: start.addingTimeInterval(6)))
+        XCTAssertNil(retry.nextDelay(now: start.addingTimeInterval(20)))
+        XCTAssertEqual(retry.nextDelay(now: start.addingTimeInterval(32)), 1)
     }
 
     func testUpTo4k60NeedsNoMeasuring() {

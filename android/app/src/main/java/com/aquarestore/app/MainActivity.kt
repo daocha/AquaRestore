@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -767,7 +769,11 @@ private fun VideoControls(player: Player?, playhead: State<Long>, duration: Long
             }
             Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.88f), contentColor = Color.White) {
                 Row(Modifier.height(40.dp).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { if (player?.playWhenReady == true) player.pause() else player?.play() },
+                    IconButton(onClick = {
+                        // A failed player does nothing on play until it is prepared again.
+                        if (player?.playerError != null) { player.prepare(); player.play() }
+                        else if (player?.playWhenReady == true) player.pause() else player?.play()
+                    },
                         enabled = enabled && canPlay && player != null, modifier = Modifier.size(40.dp)) {
                         Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             if (playing) s.text("Pause", "暫停") else s.text("Play", "播放"), Modifier.size(22.dp))
@@ -1112,13 +1118,16 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
                 model.playbackWanted) player.play()
         }
         val retry = PlaybackRetry()
+        val retryLater = Handler(Looper.getMainLooper())
         // Removed before release: releasing a busy 4K player can time out, which is reported as an error.
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 AppLog.e("Preview playback failed", error)
-                // During an export, the preview starts again when the export ends. Otherwise it gets one fresh start.
+                // During an export, the preview starts again when the export ends. Otherwise it starts again after a pause.
                 if (Exports.status.value.busy) return
-                if (retry.allowed(SystemClock.elapsedRealtime())) player.prepare() else model.error.value = "playbackFailed"
+                val delay = retry.nextDelayMs(SystemClock.elapsedRealtime())
+                if (delay == null) model.error.value = "playbackFailed"
+                else retryLater.postDelayed({ if (player.playerError != null && !Exports.status.value.busy) player.prepare() }, delay)
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !Exports.status.value.busy &&
@@ -1129,6 +1138,7 @@ private fun VideoPreview(model: EditorModel, exporting: Boolean, maximized: Bool
         lifecycle.addObserver(observer)
         onDispose {
             if (model.previewUri.value == uri) model.playbackPositionMs = player.currentPosition
+            retryLater.removeCallbacksAndMessages(null)
             player.removeListener(listener)
             lifecycle.removeObserver(observer)
             player.release()

@@ -1,15 +1,19 @@
 import Foundation
 
-/// A preview that fails gets one fresh start, because what stopped it (another pipeline holding the decoder, the phone
-/// resetting its media service) usually passes. Failing again soon after means it will not play here, so that is reported.
+/// A preview that fails starts again after a pause, because what stopped it (a pipeline still letting go of the decoder, the
+/// phone resetting its media service) usually passes, though not at once. Still failing after that is reported.
 struct PlaybackRetry {
+    static let delays = [1.0, 3.0]
     static let windowSeconds = 30.0
+    private var attempts = 0
     private var last: Date?
 
-    mutating func allowed(now: Date = Date()) -> Bool {
-        if let last, now.timeIntervalSince(last) < Self.windowSeconds { return false }
-        last = now
-        return true
+    /// Seconds to wait before starting again, or nil when the attempts are used up. Thirty quiet seconds start the count again.
+    mutating func nextDelay(now: Date = Date()) -> Double? {
+        if let last, now.timeIntervalSince(last) >= Self.windowSeconds { attempts = 0 }
+        guard attempts < Self.delays.count else { return nil }
+        defer { attempts += 1; last = now }
+        return Self.delays[attempts]
     }
 }
 

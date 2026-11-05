@@ -158,7 +158,7 @@ struct VideoControls: View {
                     .contentShape(Circle())
             }
             .buttonStyle(MaterialPress(shape: Circle(), color: .white))
-            .disabled(!enabled || player.player == nil || model.previewPreparing != nil)
+            .disabled(!enabled || (player.player == nil && !player.gaveUp) || model.previewPreparing != nil)
             .accessibilityLabel(player.isPlaying ? s.text("Pause", "暫停") : s.text("Play", "播放"))
             // Equal-width digits, so the pill stays the same size as the time runs and does not push Compare about.
             Text("\(clock(player.playhead)) / \(clock(duration))")
