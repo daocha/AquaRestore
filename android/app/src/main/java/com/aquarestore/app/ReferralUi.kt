@@ -109,7 +109,7 @@ internal fun ReferralSettings(s: Strings) {
     }
     HorizontalDivider()
     Text(s.text("Invite friends", "邀請朋友"), fontWeight = FontWeight.SemiBold)
-    val ownCode = remember { runCatching { ReferralCampaign.code(context) }.getOrNull() }
+    val ownCode = remember(ReferralCampaign.revision) { runCatching { ReferralCampaign.code(context) }.getOrNull() }
     if (ownCode != null) OwnReferralCode(s, ownCode) { message = s.text("Invite copied.", "邀請內容已複製。") }
     else Text(s.text("Device identity unavailable. Try reopening the app.", "無法取得裝置識別碼，請重新開啟 App。"))
     Text(s.text("Invite 5 friends for batch photos; 10 for batch videos.", "邀請 5 位朋友解鎖批次照片；10 位解鎖批次影片。"))

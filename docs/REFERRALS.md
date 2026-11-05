@@ -28,7 +28,7 @@ The full reference with sample payloads is `API.md` in the referral server's rep
 }
 ```
 
-On any 200 the app saves that it is registered, for this backend and device identity, and never calls again. It also saves the returned state, which restores the referrer and grants after app data is cleared, so `alreadyRegistered: true` is not an error. On any failure it saves nothing and retries silently on the next launch. Tapping **Invite** also retries, so a device that was offline at launch exists on the server before a friend tries its code.
+The app shows its referral code immediately, using the same formula as the server. On any 200 the app saves that it is registered, for this backend and device identity, and the returned `referralCode`, which it shows from then on because it wins if the two differ. It then never calls again, except that an install registered before codes were saved registers once more. It also saves the returned state, which restores the referrer and grants after app data is cleared, so `alreadyRegistered: true` is not an error. On any failure it saves nothing and retries silently on the next launch. Tapping **Invite** also retries, so a device that was offline at launch exists on the server before a friend tries its code.
 
 ### Read access state
 

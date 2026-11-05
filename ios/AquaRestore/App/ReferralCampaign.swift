@@ -5,6 +5,7 @@ import Security
 
 struct ReferralState: Decodable {
     struct Unlocks: Decodable { let batchPhoto: Bool; let batchVideo: Bool }
+    let referralCode: String?
     let referralCount: Int
     let referredByCode: String?
     let unlocked: Unlocks
@@ -40,7 +41,14 @@ final class ReferralCampaign: ObservableObject {
         guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else { return nil }
         return identity
     }()
-    var code: String? { deviceID.map { ReferralIdentity.code(deviceID: $0) } }
+    var code: String? {
+        guard let identity = deviceID else { return nil }
+        let saved = UserDefaults.standard
+        let registered = saved.string(forKey: "referralRegistration") == registration(identity)
+        return ReferralIdentity.ownCode(deviceID: identity, issued: registered ? saved.string(forKey: "referralCode") : nil)
+    }
+    // Tied to the backend and identity: a new backend or device has not seen this registration.
+    private func registration(_ identity: String) -> String { BatchAccess.shared.backendURL + "\n" + identity }
     private var registering = false
     private func deviceURL(_ identity: String) -> String { BatchAccess.shared.backendURL + "/v1/apps/\(package)/devices/\(identity)" }
 
@@ -48,9 +56,10 @@ final class ReferralCampaign: ObservableObject {
     /// after cleared app data. Silent: a failure leaves the device unregistered, so the next launch tries again.
     func registerIfNeeded() async {
         guard active, !registering, let identity = deviceID else { return }
-        // Tied to the backend and identity: a new backend or device has not seen this registration.
-        let registration = BatchAccess.shared.backendURL + "\n" + identity
-        guard UserDefaults.standard.string(forKey: "referralRegistration") != registration else { return }
+        let registration = registration(identity)
+        // An install registered before codes were saved registers once more to learn its code.
+        guard UserDefaults.standard.string(forKey: "referralRegistration") != registration
+                || UserDefaults.standard.string(forKey: "referralCode") == nil else { return }
         registering = true
         defer { registering = false }
         do {
@@ -60,7 +69,8 @@ final class ReferralCampaign: ObservableObject {
         } catch { NSLog("AquaRestore: referral registration deferred: \(type(of: error))") }
     }
     private func save(_ state: ReferralState) throws {
-        guard state.referralCount >= 0 else { throw ReferralFailure.unavailable }
+        guard state.referralCount >= 0, state.referralCode.map({ ReferralIdentity.acceptable($0, ownCode: "") }) ?? true else { throw ReferralFailure.unavailable }
+        if let issued = state.referralCode { UserDefaults.standard.set(issued, forKey: "referralCode") }
         count = state.referralCount
         UserDefaults.standard.set(count, forKey: "referralCount")
         if let code = state.referredByCode {

@@ -5,13 +5,23 @@ enum ReferralIdentity {
     static func deviceID(package: String, deviceID: String) -> String {
         SHA256.hash(data: Data("referral-v1\n\(package)\n\(deviceID)".utf8)).map { String(format: "%02x", $0) }.joined()
     }
+    /// Must match referral_code in the referral server, so a code can be shown before the device registers.
     static func code(deviceID: String) -> String {
         let alphabet = Array("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        var value = UInt64(deviceID.prefix(14), radix: 16)!
+        var input = Data("referral-code-v2\n".utf8)
+        var index = deviceID.startIndex
+        while index < deviceID.endIndex {
+            let next = deviceID.index(index, offsetBy: 2)
+            input.append(UInt8(deviceID[index..<next], radix: 16)!)
+            index = next
+        }
+        var value = SHA256.hash(data: input).prefix(7).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
         var result = ""
         repeat { result = String(alphabet[Int(value % 62)]) + result; value /= 62 } while value > 0
         return String(repeating: "0", count: max(0, 10 - result.count)) + result
     }
+    /// The code the server issued wins: a device registered before this formula, or a rare collision, has a different one.
+    static func ownCode(deviceID: String, issued: String?) -> String { issued ?? code(deviceID: deviceID) }
     /// Whether a friend's code is worth sending: well formed and not this device's own code.
     static func acceptable(_ code: String, ownCode: String) -> Bool {
         code != ownCode && code.range(of: "^[0-9a-zA-Z]{10}$", options: .regularExpression) != nil

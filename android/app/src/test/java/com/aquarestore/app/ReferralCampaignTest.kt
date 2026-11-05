@@ -8,10 +8,15 @@ class ReferralCampaignTest {
     @Test fun identityIsStableScopedToPackageAndMatchesIosAndServer() {
         val identity = ReferralIdentity.deviceId("com.aquarestore.app.debug", "example-device")
         assertEquals("c0601a35a34fdbb2e2301d1aa9eaf67449ebe97535273a9be2b9c35eda096e4a", identity)
-        assertEquals("40094aXX1F", ReferralIdentity.code(identity))
+        assertEquals("27rmwzCkFT", ReferralIdentity.code(identity))
         assertNotEquals(identity, ReferralIdentity.deviceId("com.aquarestore.app", "example-device"))
-        assertEquals("0000000000", ReferralIdentity.code("0".repeat(64)))
-        assertTrue(Regex("[0-9a-zA-Z]{10}").matches(ReferralIdentity.code("f".repeat(64))))
+        assertEquals("1WMXIE6mD6", ReferralIdentity.code("0".repeat(64)))
+        assertEquals("30StFvia8u", ReferralIdentity.code("f".repeat(64)))
+    }
+    @Test fun theCodeTheServerIssuedWinsOverTheCalculatedOne() {
+        val identity = "0".repeat(64)
+        assertEquals("1WMXIE6mD6", ReferralIdentity.ownCode(identity, null))
+        assertEquals("40094aXX1F", ReferralIdentity.ownCode(identity, "40094aXX1F"))
     }
     @Test fun stateRestoresExistingBindingAndReadsIndependentGrants() {
         val state = ReferralState.parse(JSONObject("""{"referralCount":5,"referredByCode":"40094aXX1F","unlocked":{"batchPhoto":true,"batchVideo":false}}"""))
@@ -23,6 +28,11 @@ class ReferralCampaignTest {
     @Test fun registrationResponseWithItsExtraFieldRestoresState() {
         val state = ReferralState.parse(JSONObject("""{"referralCode":"40094aXX1F","referralCount":0,"referredByCode":"0000000001","unlocked":{"batchPhoto":false,"batchVideo":false},"alreadyRegistered":true}"""))
         assertEquals("0000000001", state.referredBy)
+        assertEquals("40094aXX1F", state.code)
+    }
+    @Test fun aDeviceStateWithoutACodeIsAllowedButAMalformedCodeIsNot() {
+        assertNull(ReferralState.parse(JSONObject("""{"referralCode":null,"referralCount":0,"referredByCode":null,"unlocked":{"batchPhoto":false,"batchVideo":false}}""")).code)
+        assertTrue(runCatching { ReferralState.parse(JSONObject("""{"referralCode":"short","referralCount":0,"unlocked":{"batchPhoto":false,"batchVideo":false}}""")) }.isFailure)
     }
     @Test fun onlyWellFormedCodesFromOtherDevicesAreSent() {
         assertTrue(ReferralIdentity.acceptable("40094aXX1F", "0000000001"))
