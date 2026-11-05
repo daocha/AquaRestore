@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Released together, and the app needs them on one version.
+      media3:
+        patterns: ["androidx.media3:*"]
+      kotlin:
+        patterns: ["org.jetbrains.kotlin*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
