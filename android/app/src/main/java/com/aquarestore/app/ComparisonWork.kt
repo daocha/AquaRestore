@@ -59,8 +59,6 @@ object ComparisonWork {
         val terminal = owner.terminal ?: return
         val entries = owner.entries.filter { it.accepted && !it.rejected }
         Exports.status.value = terminal.copy(comparisons = entries.flatMap { it.assets },
-            comparisonsBusy = entries.any { !it.done },
-            comparisonUnavailable = entries.any { it.done && it.assets.isEmpty() } ||
-                entries.any { it.done && it.assets.size == 1 && !it.assets[0].video })
+            comparisonsBusy = entries.any { !it.done })
     }
 }

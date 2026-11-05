@@ -22,7 +22,7 @@ data class ExportRequest(val source: SourceMedia, val grade: Grade, val options:
     val audio: AudioMix = AudioMix()) : ExportWork
 data class ExportStatus(val busy: Boolean = false, val progress: Int? = null,
     val stage: String = "exporting", val uri: Uri? = null, val error: String? = null,
-    val batch: BatchExportStatus? = null, val comparisons: List<ShareMedia> = emptyList(), val comparisonUnavailable: Boolean = false, val comparisonsBusy: Boolean = false)
+    val batch: BatchExportStatus? = null, val comparisons: List<ShareMedia> = emptyList(), val comparisonsBusy: Boolean = false)
 
 const val EXPORT_RESULT_NOTIFICATION = 8
 

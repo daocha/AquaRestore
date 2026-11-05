@@ -31,7 +31,7 @@ final class ComparisonWorkTests: XCTestCase {
     }
 
     @MainActor
-    func testASkippedComparisonIsNotReportedAsAFailure() throws {
+    func testASkippedComparisonLeavesNothingToWaitFor() throws {
         defer { ComparisonWork.dismiss(); Exports.shared.status = ExportStatus() }
         // A file that does not exist ends the work at once, leaving this test to say how.
         let source = SourceMedia(url: URL(fileURLWithPath: "/nonexistent/skipped.mp4"), name: "skipped.mp4", video: true, width: 160, height: 240)
@@ -42,7 +42,6 @@ final class ComparisonWorkTests: XCTestCase {
         ComparisonWork.accept(entry)
         ComparisonWork.finish(ExportStatus(stage: "saved", saved: true))
         XCTAssertTrue(Exports.shared.status.saved)
-        XCTAssertFalse(Exports.shared.status.comparisonUnavailable)
         XCTAssertFalse(Exports.shared.status.comparisonsBusy)
     }
 

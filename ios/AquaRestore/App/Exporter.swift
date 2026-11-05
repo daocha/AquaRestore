@@ -21,7 +21,6 @@ struct ExportStatus: Equatable {
     var error: String?
     var batch: BatchExportStatus?
     var comparisons: [ShareMedia] = []
-    var comparisonUnavailable = false
     var comparisonsBusy = false
 }
 

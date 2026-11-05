@@ -467,7 +467,6 @@ private fun Editor(model: EditorModel, s: Strings) {
                         }
                     }
                     if (export.comparisons.isNotEmpty()) SharePreview(export.comparisons, s) { resultWorking = it }
-                    if (export.comparisonUnavailable) Text(s.text("Your export is saved. Some comparison previews could not be created.", "作品已儲存，部分比較預覽無法建立。"))
                     export.error?.let { Text(s[it]) }
                     val batch = export.batch
                     if (batch != null) {
