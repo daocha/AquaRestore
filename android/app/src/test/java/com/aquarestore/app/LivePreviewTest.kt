@@ -13,21 +13,21 @@ class LivePreviewTest {
 
     private val galaxyS10 = decoder(Point(4096, 2304, 60), Point(4096, 2160, 96), Point(3840, 2160, 120), Point(1920, 1088, 240), Point(1280, 720, 480))
 
-    @Test fun declaredSpeedAtASmallerFrameGradesTheOriginalSmaller() {
+    @Test fun declaredSpeedAtASmallerFramePlaysTheOriginal() {
         assertEquals(94, equivalentFps4k(3840, 3360, 60f))
-        assertEquals(LivePreview.REDUCED, livePreview(3840, 3360, 60f, listOf(galaxyS10)))
-        assertEquals(LivePreview.REDUCED, livePreview(3360, 3840, 60f, listOf(galaxyS10)))
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 3360, 60f, listOf(galaxyS10)))
+        assertEquals(LivePreview.ORIGINAL, livePreview(3360, 3840, 60f, listOf(galaxyS10)))
     }
 
-    @Test fun within4k60PlaysAtFullSizeWithoutAnyDeclaration() {
-        assertEquals(LivePreview.FULL, livePreview(3840, 2160, 60f, listOf(galaxyS10)))
-        assertEquals(LivePreview.FULL, livePreview(3840, 2160, 60f, listOf(decoder())))
-        assertEquals(LivePreview.FULL, livePreview(3840, 3360, 30f, listOf(galaxyS10)))
+    @Test fun within4k60PlaysTheOriginalWithoutAnyDeclaration() {
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 2160, 60f, listOf(galaxyS10)))
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 2160, 60f, listOf(decoder())))
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 3360, 30f, listOf(galaxyS10)))
     }
 
-    @Test fun aPointCoveringTheVideoPlaysAtFullSize() {
-        assertEquals(LivePreview.FULL, livePreview(3840, 3360, 60f, listOf(decoder(Point(7680, 4320, 60)))))
-        assertEquals(LivePreview.FULL, livePreview(3840, 3360, 60f, listOf(galaxyS10, decoder(Point(7680, 4320, 60)))))
+    @Test fun aPointCoveringTheVideoPlaysTheOriginal() {
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 3360, 60f, listOf(decoder(Point(7680, 4320, 60)))))
+        assertEquals(LivePreview.ORIGINAL, livePreview(3840, 3360, 60f, listOf(galaxyS10, decoder(Point(7680, 4320, 60)))))
     }
 
     @Test fun tooLittleDeclaredSpeedStillGetsACopy() {

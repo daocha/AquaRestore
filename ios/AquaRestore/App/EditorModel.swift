@@ -215,14 +215,14 @@ final class EditorModel: ObservableObject {
                 self.setGrade(recommended.grade)
                 if media.video {
                     // Play the original straight away when the decoder can keep up; the grade is a live GPU effect.
-                    let (live, measured) = await MediaIO.livePreview(media, availableMemory: AppLog.availableMemory)
+                    let (live, measured) = await MediaIO.livePreview(media)
                     try Task.checkCancellation()
                     let hold = live == .copy
-                    NSLog("AquaRestore: preview \(hold ? "waits for a copy" : live == .reduced ? "plays the original, graded at up to \(LivePreview.reducedEdge)px" : "plays the original")" +
+                    NSLog("AquaRestore: preview \(hold ? "waits for a copy" : "plays the original, graded at up to \(LivePreview.maxEdge)px")" +
                           " (\(media.width)x\(media.height) at \(media.fps) fps, decoded at \(measured.map { String(format: "%.0f fps", $0) } ?? "not measured"))\(AppLog.memory)")
                     if hold { self.previewPreparing = 0 }
                     self.previewURL = media.url
-                    self.player.load(media, gradeEdge: live == .full ? 0 : LivePreview.reducedEdge)
+                    self.player.load(media, gradeEdge: LivePreview.maxEdge)
                     if hold || max(media.width, media.height) > 3840 {
                         self.startPreviewCopy(media, hold: hold)
                     }
@@ -287,7 +287,7 @@ final class EditorModel: ObservableObject {
         let file = folder.appendingPathComponent("preview-\(UUID().uuidString).mp4")
         var options = ExportOptions()
         options.original = false
-        options.longEdge = LivePreview.reducedEdge
+        options.longEdge = LivePreview.maxEdge
         options.fps = 30
         let request = ExportRequest(source: media, grade: .neutral, options: options, chinese: false)
         let update: Exporter.Update = { [weak self] progress, _ in

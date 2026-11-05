@@ -44,8 +44,8 @@ import kotlin.math.roundToInt
 
 class MediaProblem(val key: String) : Exception(key)
 
-/** How the preview plays a video: the original with full-size grading, the original with lighter grading, or a copy. */
-internal enum class LivePreview { FULL, REDUCED, COPY }
+/** How the preview plays a video: the original, shrunk as it plays so it never grades above 1920px, or a copy. */
+internal enum class LivePreview { ORIGINAL, COPY }
 
 /** The frame rate at 3840x2160 that takes the same pixels per second as this video. */
 internal fun equivalentFps4k(width: Int, height: Int, fps: Float): Int =
@@ -55,14 +55,14 @@ internal fun equivalentFps4k(width: Int, height: Int, fps: Float): Int =
  * [decoders] holds, for each hardware decoder that accepts the frame size, whether a size and rate is covered by a
  * performance point it declares. Up to 4K at 60 fps of pixels per second plays live: some decoders declare only 4K30
  * performance points yet sustain 4K60. Above that, separately declared limits are often generous, so a performance
- * point must cover the video. A frame larger than any declared point only needs the same pixels per second: such a
- * decoder can keep up, but grading every full-size frame may not, so the preview grades it smaller.
+ * point must cover the video. A frame larger than any declared point only needs the same pixels per second. A
+ * decoder still reads every full-size frame, so a copy is for one that cannot keep up.
  */
 internal fun livePreview(width: Int, height: Int, fps: Float, decoders: List<(Int, Int, Int) -> Boolean>): LivePreview = when {
     decoders.isEmpty() -> LivePreview.COPY
-    width.toDouble() * height * fps <= 3840.0 * 2160 * 61 -> LivePreview.FULL
-    decoders.any { it(width, height, ceil(fps).toInt().coerceAtLeast(1)) } -> LivePreview.FULL
-    decoders.any { it(3840, 2160, equivalentFps4k(width, height, fps)) } -> LivePreview.REDUCED
+    width.toDouble() * height * fps <= 3840.0 * 2160 * 61 -> LivePreview.ORIGINAL
+    decoders.any { it(width, height, ceil(fps).toInt().coerceAtLeast(1)) } -> LivePreview.ORIGINAL
+    decoders.any { it(3840, 2160, equivalentFps4k(width, height, fps)) } -> LivePreview.ORIGINAL
     else -> LivePreview.COPY
 }
 
@@ -410,7 +410,7 @@ object MediaIO {
                 caps.supportedPerformancePoints?.any { it.covers(needed) } == true
             }
         })
-    }.getOrDefault(LivePreview.FULL)
+    }.getOrDefault(LivePreview.ORIGINAL)
 
     /** What [livePreview] saw, decoder by decoder, for the log. */
     fun liveDecodeReport(source: SourceMedia): String = runCatching {
