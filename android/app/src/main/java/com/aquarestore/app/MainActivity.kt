@@ -61,6 +61,8 @@ import androidx.compose.ui.layout.positionInRoot
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -144,6 +146,18 @@ class MainActivity : ComponentActivity() {
 
 private val Aqua = Color(0xFF45DDC2)
 private val Night = Color(0xFF09191F)
+
+/** The logo's two halves as a wordmark: "Aqua" in the ocean blue of the before side, "Restore" in the app's teal accent, the restored side's arrow colour. */
+@Composable
+private fun AppTitle() {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val before = if (dark) Color(0xFF5F95C8) else Color(0xFF2C7BC4)
+    val after = MaterialTheme.colorScheme.primary
+    Text(androidx.compose.ui.text.buildAnnotatedString {
+        withStyle(androidx.compose.ui.text.SpanStyle(color = before)) { append("Aqua") }
+        withStyle(androidx.compose.ui.text.SpanStyle(color = after)) { append("Restore") }
+    }, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+}
 
 @Composable
 private fun AquaApp(model: EditorModel = viewModel()) {
@@ -297,7 +311,7 @@ private fun Editor(model: EditorModel, s: Strings) {
         if (!maximized) CenterAlignedTopAppBar(title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 AppLogo(Modifier.size(30.dp))
-                Text("AquaRestore", fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                AppTitle()
             }
         }, navigationIcon = {
             // Editing actions live in the bar so the editor keeps the full height for preview and controls.
