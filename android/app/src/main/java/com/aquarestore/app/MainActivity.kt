@@ -1472,10 +1472,10 @@ private fun BatchUnlockControl(context: Context, s: Strings) {
                     error = when (failure.errorCode) {
                         "invalid_unlock_code" -> s.text("Incorrect unlock code", "解鎖碼不正確")
                         "unlock_code_exhausted" -> s.text("Unlock code has reached its maximum uses.", "此解鎖碼已達使用次數上限。")
-                        else -> s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                        else -> s.referralFailure(failure, redeem = true)
                     }
-                } catch (_: Exception) {
-                    error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                } catch (failure: Exception) {
+                    error = s.referralFailure(failure, redeem = true)
                 } finally { unlocking = false }
             } }, enabled = !unlocking && code.isNotBlank()) { Text(s.text("Unlock", "解鎖")) }
         },

@@ -149,12 +149,27 @@ struct ReferralSettings: View {
                         } catch ReferralFailure.api("invalid_referral_code") {
                             onError(invalidCode)
                         } catch {
-                            onError(s.text("Could not submit the code. Check your connection and try again.", "無法提交推薦碼。請檢查網路連線後重試。"))
+                            onError(s.referralFailure(error, redeem: false))
                         }
                     }
                 }.disabled(busy || campaign.code == nil || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let message { MText(message, size: 12) }
+        }
+    }
+}
+
+extension Strings {
+    /// Why a code submission failed. A rejected proof or a failed device check is not a connection problem.
+    func referralFailure(_ error: Error, redeem: Bool) -> String {
+        switch error {
+        case ReferralFailure.api:
+            return text("The server could not verify this device. Try again later.", "伺服器無法驗證此裝置，請稍後再試。")
+        case is URLError, ReferralFailure.unavailable:
+            return redeem ? text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                          : text("Could not submit the code. Check your connection and try again.", "無法提交推薦碼。請檢查網路連線後重試。")
+        default:
+            return text("This device could not complete verification. Try again, or update the app.", "此裝置無法完成驗證。請重試或更新 App。")
         }
     }
 }

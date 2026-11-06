@@ -145,7 +145,7 @@ internal fun ReferralSettings(s: Strings) {
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     error = if ((failure as? ReferralApiException)?.errorCode == "invalid_referral_code") invalidCode
-                    else s.text("Could not submit the code. Check your connection and try again.", "無法提交推薦碼。請檢查網路連線後重試。")
+                    else s.referralFailure(failure, redeem = false)
                 }
                 finally { busy = false }
             }
@@ -154,4 +154,14 @@ internal fun ReferralSettings(s: Strings) {
         }
     }
     message?.let { Text(it) }
+}
+
+/** Why a code submission failed. A rejected proof or a failed device check is not a connection problem. */
+internal fun Strings.referralFailure(failure: Exception, redeem: Boolean): String = when {
+    failure is ReferralApiException && failure.errorCode != "unavailable" ->
+        text("The server could not verify this device. Try again later.", "伺服器無法驗證此裝置，請稍後再試。")
+    failure is java.io.IOException || failure is ReferralApiException ->
+        if (redeem) text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+        else text("Could not submit the code. Check your connection and try again.", "無法提交推薦碼。請檢查網路連線後重試。")
+    else -> text("This device could not complete verification. Try again, or update the app.", "此裝置無法完成驗證。請重試或更新 App。")
 }

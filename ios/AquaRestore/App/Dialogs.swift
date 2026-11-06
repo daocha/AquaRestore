@@ -131,10 +131,10 @@ private struct UnlockCodeDialog: View {
                         switch reason {
                         case "invalid_unlock_code": error = s.text("Incorrect unlock code", "解鎖碼不正確")
                         case "unlock_code_exhausted": error = s.text("Unlock code has reached its maximum uses.", "此解鎖碼已達使用次數上限。")
-                        default: error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。")
+                        default: error = s.referralFailure(ReferralFailure.api(reason), redeem: true)
                         }
                     } catch {
-                        if !Task.isCancelled { self.error = s.text("Could not redeem the code. Check your connection and try again.", "無法兌換解鎖碼。請檢查網路連線後重試。") }
+                        if !Task.isCancelled { self.error = s.referralFailure(error, redeem: true) }
                     }
                 }
             }.disabled(unlocking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
