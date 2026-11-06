@@ -45,6 +45,24 @@ struct BatchQuestDialog: View {
     }
 }
 
+/// Dialog text in which each `backtick-quoted` run is shown in the referral code font, so the look-alike
+/// characters it names (l and I, O and 0) can be told apart.
+struct ReferralNoticeText: View {
+    @Environment(\.contentColor) private var inherited
+    let text: String
+    var body: some View {
+        let runs = text.components(separatedBy: "`")
+        // Odd-numbered runs sit between a pair of backticks.
+        runs.enumerated().reduce(Text("")) { result, run in
+            result + (run.offset % 2 == 1 ? Text(run.element).font(.system(.body, design: .monospaced).weight(.semibold)) : Text(run.element))
+        }
+        .sp()
+        .foregroundColor(inherited)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// Monospaced, because codes are read and retyped: this font tells l from I and O from 0.
 private struct ReferralCode: View {
     let label: String
@@ -97,8 +115,8 @@ struct ReferralSettings: View {
     @State private var busy = false
     @State private var message: String?
     private var invalidCode: String {
-        s.text("This referral code is invalid. Codes are case-sensitive and some characters look alike, such as l and I or O and 0. Paste the code if you can.",
-               "此推薦碼無效。推薦碼區分大小寫，部分字元外觀相近（如 l 與 I、O 與 0），建議直接貼上。")
+        s.text("This referral code is invalid. Codes are case-sensitive and some characters look alike, such as `l` and `I` or `O` and `0`. Paste the code if you can.",
+               "此推薦碼無效。推薦碼區分大小寫，部分字元外觀相近（如 `l` 與 `I`、`O` 與 `0`），建議直接貼上。")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

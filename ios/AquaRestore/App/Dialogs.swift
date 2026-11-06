@@ -24,7 +24,7 @@ struct SettingsDialog: View {
             if showUnlock { UnlockCodeDialog { showUnlock = false } }
             if let referralError {
                 M3Dialog(title: s.text("Referral code", "推薦碼"), dismiss: { self.referralError = nil }) {
-                    MText(referralError)
+                    ReferralNoticeText(text: referralError)
                 } buttons: {
                     M3TextButton(title: s.text("OK", "知道了")) { self.referralError = nil }
                 }

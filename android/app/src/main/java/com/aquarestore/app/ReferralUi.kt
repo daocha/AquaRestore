@@ -13,8 +13,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -59,6 +63,14 @@ internal fun BatchQuestDialog(s: Strings, video: Boolean, onUnlocked: () -> Unit
     }, confirmButton = { TextButton(onClick = dismiss) { Text(s.text("Done", "完成")) } })
 }
 
+/** Shows each `backtick-quoted` run in the referral code font, so the look-alike characters it names can be told apart. */
+private fun codeFontRuns(text: String): AnnotatedString = buildAnnotatedString {
+    text.split('`').forEachIndexed { index, run ->
+        if (index % 2 == 1) withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)) { append(run) }
+        else append(run)
+    }
+}
+
 /** Monospaced, because codes are read and retyped: this font tells l from I and O from 0. */
 @Composable
 private fun ReferralCode(label: String, code: String, modifier: Modifier = Modifier) {
@@ -100,11 +112,11 @@ internal fun ReferralSettings(s: Strings) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val invalidCode = s.text("This referral code is invalid. Codes are case-sensitive and some characters look alike, such as l and I or O and 0. Paste the code if you can.",
-        "此推薦碼無效。推薦碼區分大小寫，部分字元外觀相近（如 l 與 I、O 與 0），建議直接貼上。")
+    val invalidCode = s.text("This referral code is invalid. Codes are case-sensitive and some characters look alike, such as `l` and `I` or `O` and `0`. Paste the code if you can.",
+        "此推薦碼無效。推薦碼區分大小寫，部分字元外觀相近（如 `l` 與 `I`、`O` 與 `0`），建議直接貼上。")
     // In a popup: the submit button can sit at the bottom of the scrolling settings, with anything below it out of view.
     error?.let { text ->
-        AlertDialog(onDismissRequest = { error = null }, title = { Text(s.text("Referral code", "推薦碼")) }, text = { Text(text) },
+        AlertDialog(onDismissRequest = { error = null }, title = { Text(s.text("Referral code", "推薦碼")) }, text = { Text(codeFontRuns(text)) },
             confirmButton = { TextButton(onClick = { error = null }) { Text(s.text("OK", "知道了")) } })
     }
     HorizontalDivider()
