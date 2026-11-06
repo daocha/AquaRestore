@@ -37,7 +37,7 @@ enum ReferralIdentity {
 
 enum ReferralInvite {
     /// The numeric Apple ID from App Store Connect. Until the listing exists, invites say to search the App Store.
-    static let appStoreID: String? = nil
+    static let appStoreID: String? = "6829494205"
     /// The code stays on a line of its own so the recipient can select just the code.
     static func message(_ s: Strings, code: String, appStoreID: String? = appStoreID) -> String {
         let link = appStoreID.map { "https://apps.apple.com/app/id\($0)" }
