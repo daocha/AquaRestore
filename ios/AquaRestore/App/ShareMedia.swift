@@ -171,15 +171,23 @@ enum ShareMediaMaker {
         let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: CGRect(x: rect.midX - size.width/2, y: rect.midY - size.height/2, width: size.width, height: size.height))
     }
-    private static func label(_ text: String, x: CGFloat, y: CGFloat, size: CGFloat) {
+    @discardableResult
+    private static func label(_ text: String, x: CGFloat, y: CGFloat, size: CGFloat, color: UIColor = .white) -> CGFloat {
         let shadow = NSShadow(); shadow.shadowColor = UIColor.black; shadow.shadowBlurRadius = size * 0.15
-        (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: size), .foregroundColor: UIColor.white, .shadow: shadow])
+        (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: size), .foregroundColor: color, .shadow: shadow])
+        return (text as NSString).size(withAttributes: [.font: UIFont.boldSystemFont(ofSize: size)]).width
     }
     private static func brand(width: CGFloat, height: CGFloat, scale: CGFloat = 1) {
         let size = max(8, min(width, height) * 0.035) * scale
         let x = width * 0.025, y = height - size * 1.5
         UIImage(named: "ShareLogo")?.draw(in: CGRect(x: x, y: y, width: size, height: size))
-        label("AquaRestore", x: x + size * 1.25, y: y + size * 0.1, size: size * 0.7)
+        // The app title's two colours (dark theme): "Aqua" in the before side's ocean blue, "Restore" in the teal accent.
+        let left = x + size * 1.25
+        // The capitals are centred on the logo's height, so the name and the logo share one line.
+        let font = UIFont.boldSystemFont(ofSize: size * 0.7)
+        let top = y + size / 2 - (font.ascender - font.capHeight / 2)
+        let aqua = label("Aqua", x: left, y: top, size: size * 0.7, color: UIColor(red: 0x5F/255, green: 0x95/255, blue: 0xC8/255, alpha: 1))
+        label("Restore", x: left + aqua, y: top, size: size * 0.7, color: UIColor(red: 0x45/255, green: 0xDD/255, blue: 0xC2/255, alpha: 1))
     }
     private static func render(_ size: CGSize, drawing: (CGContext) -> Void) -> UIImage {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
@@ -199,7 +207,7 @@ enum ShareMediaMaker {
             draw(before, in: first); draw(after, in: second)
             label("Original", x: w * 0.025, y: h * 0.025, size: min(w,h) * 0.035)
             label("Restored", x: second.minX + w * 0.025, y: second.minY + h * 0.025, size: min(w,h) * 0.035)
-            brand(width: w, height: h)
+            brand(width: w, height: h, scale: 2)
         }
     }
     private static func encode(_ url: URL, width: Int, height: Int, duration: Int64, flag: CancelFlag,

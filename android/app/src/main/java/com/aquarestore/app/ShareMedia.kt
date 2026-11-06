@@ -72,7 +72,7 @@ object ShareMediaMaker {
         fit(canvas, before, first); fit(canvas, after, second)
         label(canvas, "Original", first.left + w * .025f, first.top + h * .055f, min(w, h) * .035f)
         label(canvas, "Restored", second.left + w * .025f, second.top + h * .055f, min(w, h) * .035f)
-        brand(context, canvas, w, h)
+        brand(context, canvas, w, h, scale = 2f)
         return image
     }
     private fun fit(canvas: Canvas, bitmap: Bitmap, rect: RectF) {
@@ -80,16 +80,23 @@ object ShareMediaMaker {
         val w = bitmap.width * scale; val h = bitmap.height * scale
         canvas.drawBitmap(bitmap, null, RectF(rect.centerX() - w/2, rect.centerY() - h/2, rect.centerX() + w/2, rect.centerY() + h/2), Paint(Paint.FILTER_BITMAP_FLAG))
     }
-    private fun label(c: Canvas, text: String, x: Float, y: Float, size: Float) {
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = size; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(size * .15f, 0f, 1f, Color.BLACK) }
+    private fun label(c: Canvas, text: String, x: Float, y: Float, size: Float, color: Int = Color.WHITE): Float {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; textSize = size; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(size * .15f, 0f, 1f, Color.BLACK) }
         c.drawText(text, x, y, p)
+        return p.measureText(text)
     }
     private fun brand(context: Context, c: Canvas, w: Int, h: Int, scale: Float = 1f) {
         val size = max(8f, min(w, h) * .035f) * scale
         val left = w * .025f; val bottom = h - size * .5f
         val logo = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)!!
         logo.setBounds(left.toInt(), (bottom - size).toInt(), (left + size).toInt(), bottom.toInt()); logo.draw(c)
-        label(c, "AquaRestore", left + size * 1.25f, bottom - size * .1f, size * .7f)
+        // The app title's two colours (dark theme): "Aqua" in the before side's ocean blue, "Restore" in the teal accent.
+        val x = left + size * 1.25f
+        // The capitals are centred on the logo's height, so the name and the logo share one line.
+        val caps = android.graphics.Rect().also { Paint().apply { textSize = size * .7f; typeface = Typeface.DEFAULT_BOLD }.getTextBounds("A", 0, 1, it) }.height()
+        val baseline = bottom - size / 2 + caps / 2f
+        val aqua = label(c, "Aqua", x, baseline, size * .7f, Color.rgb(0x5F, 0x95, 0xC8))
+        label(c, "Restore", x + aqua, baseline, size * .7f, Color.rgb(0x45, 0xDD, 0xC2))
     }
 
     private suspend fun video(context: Context, request: ExportRequest): List<ShareMedia> {

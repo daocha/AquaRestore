@@ -65,13 +65,22 @@ private struct LoopingComparison: View {
             .onDisappear { player.pause(); looper = nil; player.removeAllItems() }
     }
 }
-private struct ComparisonPlayer: UIViewControllerRepresentable {
+/// A bare player layer. AVPlayerViewController inside the paging TabView can go blank when the view updates, as it does
+/// when the collage arrives while the video is already playing; a layer keeps drawing its player through any update.
+private struct ComparisonPlayer: UIViewRepresentable {
     let player: AVPlayer
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let view = AVPlayerViewController(); view.player = player; view.showsPlaybackControls = false
+    final class LayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+    func makeUIView(context: Context) -> LayerView {
+        let view = LayerView(); view.backgroundColor = .clear
+        view.playerLayer.videoGravity = .resizeAspect; view.playerLayer.player = player
         return view
     }
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {}
+    func updateUIView(_ view: LayerView, context: Context) {
+        if view.playerLayer.player !== player { view.playerLayer.player = player }
+    }
 }
 struct ActivityShare: UIViewControllerRepresentable {
     let items: [Any]
