@@ -137,7 +137,11 @@ struct EditorView: View {
             }
             HStack(spacing: 9) {
                 AppLogo(size: 30)
-                MText("AquaRestore", size: 22, weight: .bold, color: c.onSurface, maxLines: 1).textBase(.titleLarge)
+                // The logo's two halves as a wordmark: "Aqua" in the before side's ocean blue, "Restore" in the app's teal accent, the restored side's arrow colour.
+                HStack(spacing: 0) {
+                    MText("Aqua", size: 22, weight: .bold, color: c.dark ? Color(hex: 0x5F95C8) : Color(hex: 0x2C7BC4), maxLines: 1)
+                    MText("Restore", size: 22, weight: .bold, color: c.primary, maxLines: 1)
+                }.textBase(.titleLarge)
             }
             HStack(spacing: 0) {
                 if hasEditor {
