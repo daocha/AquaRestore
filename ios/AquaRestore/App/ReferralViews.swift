@@ -45,6 +45,10 @@ struct BatchQuestDialog: View {
     }
 }
 
+private func referralCodeFont(_ size: CGFloat) -> Font {
+    .custom("RobotoMono-Regular", size: size, relativeTo: .body).weight(.semibold)
+}
+
 /// Dialog text in which each `backtick-quoted` run is shown in the referral code font, so the look-alike
 /// characters it names (l and I, O and 0) can be told apart.
 struct ReferralNoticeText: View {
@@ -54,7 +58,7 @@ struct ReferralNoticeText: View {
         let runs = text.components(separatedBy: "`")
         // Odd-numbered runs sit between a pair of backticks.
         runs.enumerated().reduce(Text("")) { result, run in
-            result + (run.offset % 2 == 1 ? Text(run.element).font(.system(.body, design: .monospaced).weight(.semibold)) : Text(run.element))
+            result + (run.offset % 2 == 1 ? Text(run.element).font(referralCodeFont(16)) : Text(run.element))
         }
         .sp()
         .foregroundColor(inherited)
@@ -63,14 +67,14 @@ struct ReferralNoticeText: View {
     }
 }
 
-/// Monospaced, because codes are read and retyped: this font tells l from I and O from 0.
+/// Use the same bundled code face on every device.
 private struct ReferralCode: View {
     let label: String
     let code: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             MText(label)
-            Text(code).font(.system(.body, design: .monospaced).weight(.semibold)).textSelection(.enabled)
+            Text(code).font(referralCodeFont(22)).tracking(1).lineLimit(1).textSelection(.enabled)
         }
     }
 }
@@ -85,6 +89,7 @@ private struct OwnReferralCode: View {
     let onInvited: () -> Void
     @Environment(\.strings) private var s
     @State private var invite: InviteShare?
+    @State private var copied = false
     /// Copies first, so the invite is still on the clipboard if the share sheet is dismissed.
     @MainActor private func shareInvite() {
         let text = ReferralInvite.message(s, code: code)
@@ -95,11 +100,24 @@ private struct OwnReferralCode: View {
         Task { await ReferralCampaign.shared.registerIfNeeded() }
     }
     var body: some View {
-        HStack(spacing: 8) {
-            ReferralCode(label: s.text("Your referral code", "你的推薦碼"), code: code)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            M3Button(title: s.text("Invite", "邀請"), style: .outlined) { shareInvite() }
+        VStack(alignment: .leading, spacing: 8) {
+            MText(s.text("Your referral code", "你的推薦碼"))
+            HStack(spacing: 8) {
+                Text(code).font(referralCodeFont(22)).tracking(1).lineLimit(1)
+                    .minimumScaleFactor(0.5).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    Platform.copy(code)
+                    copied = true
+                } label: { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel(s.text("Copy code", "複製推薦碼"))
+                M3Button(title: s.text("Invite", "邀請"), style: .outlined) { shareInvite() }
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if copied { MText(s.text("Code copied.", "推薦碼已複製。"), size: 12) }
         }
+        .onChange(of: code) { _ in copied = false }
         .sheet(item: $invite) { ActivityShare(items: [$0.text]) }
     }
 }
@@ -132,6 +150,7 @@ struct ReferralSettings: View {
             } else {
                 TextField(s.text("Friend’s referral code", "朋友的推薦碼"),
                           text: Binding(get: { code }, set: { code = ReferralIdentity.codeIn($0); message = nil }))
+                    .font(referralCodeFont(20))
                     .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .disabled(busy)
                 MText(s.text("You can submit a friend’s code only once.", "朋友的推薦碼只能提交一次。"))

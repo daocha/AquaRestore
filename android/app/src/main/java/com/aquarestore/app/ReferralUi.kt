@@ -16,10 +16,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.Font
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -66,17 +72,21 @@ internal fun BatchQuestDialog(s: Strings, video: Boolean, onUnlocked: () -> Unit
 /** Shows each `backtick-quoted` run in the referral code font, so the look-alike characters it names can be told apart. */
 private fun codeFontRuns(text: String): AnnotatedString = buildAnnotatedString {
     text.split('`').forEachIndexed { index, run ->
-        if (index % 2 == 1) withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)) { append(run) }
+        if (index % 2 == 1) withStyle(SpanStyle(fontFamily = referralCodeFont, fontWeight = FontWeight.SemiBold)) { append(run) }
         else append(run)
     }
 }
 
-/** Monospaced, because codes are read and retyped: this font tells l from I and O from 0. */
+private val referralCodeFont = FontFamily(Font(R.font.roboto_mono))
+
+/** Use the same bundled code face on every device. */
 @Composable
 private fun ReferralCode(label: String, code: String, modifier: Modifier = Modifier) {
-    Column(modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label)
-        SelectionContainer { Text(code, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold) }
+        SelectionContainer {
+            Text(code, fontFamily = referralCodeFont, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, letterSpacing = 1.sp, maxLines = 1)
+        }
     }
 }
 
@@ -92,14 +102,28 @@ private fun shareInvite(context: Context, s: Strings, code: String) {
 private fun OwnReferralCode(s: Strings, code: String, onInvited: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ReferralCode(s.text("Your referral code", "你的推薦碼"), code, Modifier.weight(1f))
-        OutlinedButton(onClick = {
-            shareInvite(context, s, code)
-            onInvited()
-            // A device that was offline at launch must exist on the server before a friend tries this code.
-            scope.launch { ReferralCampaign.registerIfNeeded(context) }
-        }) { Text(s.text("Invite", "邀請")) }
+    var copied by remember(code) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(s.text("Your referral code", "你的推薦碼"))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BoxWithConstraints(Modifier.weight(1f)) {
+                val codeSize = (maxWidth.value / 7f).coerceIn(12f, 22f).sp
+                SelectionContainer {
+                    Text(code, fontFamily = referralCodeFont, fontWeight = FontWeight.SemiBold, fontSize = codeSize, letterSpacing = 1.sp, maxLines = 1)
+                }
+            }
+            OutlinedIconButton(onClick = {
+                context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(s.text("Referral code", "推薦碼"), code))
+                copied = true
+            }) { Icon(Icons.Outlined.ContentCopy, s.text("Copy code", "複製推薦碼")) }
+            OutlinedButton(onClick = {
+                shareInvite(context, s, code)
+                onInvited()
+                // A device that was offline at launch must exist on the server before a friend tries this code.
+                scope.launch { ReferralCampaign.registerIfNeeded(context) }
+            }) { Text(s.text("Invite", "邀請")) }
+        }
+        if (copied) Text(s.text("Code copied.", "推薦碼已複製。"), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -130,7 +154,9 @@ internal fun ReferralSettings(s: Strings) {
         Text(s.text("Referral code saved. It cannot be changed.", "推薦碼已儲存，無法變更。"))
     } else {
         OutlinedTextField(value = code, onValueChange = { code = ReferralIdentity.codeIn(it); message = null },
-            label = { Text(s.text("Friend’s referral code", "朋友的推薦碼")) }, singleLine = true, enabled = !busy)
+            label = { Text(s.text("Friend’s referral code", "朋友的推薦碼")) }, singleLine = true, enabled = !busy,
+            textStyle = LocalTextStyle.current.copy(fontFamily = referralCodeFont, fontSize = 20.sp, letterSpacing = 1.sp),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false))
         Text(s.text("You can submit a friend’s code only once.", "朋友的推薦碼只能提交一次。"))
         OutlinedButton(onClick = {
             val entered = code.trim()
