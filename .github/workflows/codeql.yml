@@ -43,7 +43,7 @@ jobs:
         with:
           # v3 defaults to "tools platform-tools"; the obsolete "tools" package makes newer sdkmanager fail.
           packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
-      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
